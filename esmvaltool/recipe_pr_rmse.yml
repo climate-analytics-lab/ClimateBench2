@@ -1,0 +1,195 @@
+---
+documentation:
+  title: FGOALS-g3 vs GPCP RMSE Time Series
+  description: >
+    Regrid GPCP (obs4MIPs) to FGOALS-g3 grid, compute the ensemble mean of FGOALS-g3 (CMIP6),
+    then calculate RMSE over space (lat/lon) for each time step (2005–2014), and plot a time series.
+
+  authors:
+    - tobin_willa
+
+preprocessors:
+
+  obs_ts_prep:
+    regrid:
+      target_grid: 2x2 # will want to modify this later to regrid to the model resolution
+      scheme: linear
+    regrid_time:
+      calendar: standard # this will ensure all cubes time formatting is the same
+    area_statistics:
+      operator: mean  # area weighted by default
+    convert_units:
+      units: mm day-1 # converting units from kg m-2 s-1 (so numbers are not e-5)
+
+  model_ts_prep:
+    # custom_order: true
+    multi_model_statistics:
+      span: overlap 
+      groupby: [dataset]
+      statistics: [mean]
+      keep_input_datasets: False # if true, all ensemble members will be plotted
+    regrid:
+      target_grid: 2x2 
+      scheme: linear
+    regrid_time:
+      calendar: standard
+    area_statistics:
+      operator: mean
+    convert_units:
+      units: mm day-1
+  
+  model_ens_rmse:
+    custom_order: true
+    multi_model_statistics:
+      span: overlap
+      groupby: [dataset]
+      statistics: [mean]
+      exclude: [reference_dataset]
+      keep_input_datasets: False
+    regrid:
+      target_grid: 2x2
+      scheme: linear
+    regrid_time:
+      calendar: standard
+    convert_units:
+      units: mm day-1
+    area_statistics:
+      operator: mean
+    distance_metric:
+      metric: weighted_rmse # also option for unweighted rmse. shouldnt make a difference when computing on global mean time series since all time stamps are equal
+      keep_reference_dataset: false
+    
+
+diagnostics:
+
+  raw_timeseries_plot:
+    description: plot the global mean (area weighted) ensemble mean and observations
+    themes:
+      - phys
+    realms:
+      - atmos
+    variables:
+
+      models:
+        variable: pr_models
+        short_name: pr
+        mip: Amon
+        derive: false
+        ensemble: mean
+        preprocessor: model_ts_prep
+        additional_datasets:
+          # models that caused recipe to fail: GFDL-ESM4, CESM2, IPSL-CM6A-LR, EC-Earth3. Likely due to not having all ensemble members on ESGF.
+          - {dataset: FGOALS-g3, project: CMIP6, exp: [historical, ssp245], ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          - {dataset: FGOALS-g3, project: CMIP6, exp: [historical, ssp245], ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          - {dataset: FGOALS-g3, project: CMIP6, exp: [historical, ssp245], ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+
+          - {dataset: CanESM5, project: CMIP6, exp: [historical, ssp245], ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          - {dataset: CanESM5, project: CMIP6, exp: [historical, ssp245], ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          - {dataset: CanESM5, project: CMIP6, exp: [historical, ssp245], ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+
+          - {dataset: MIROC6, project: CMIP6, exp: [historical, ssp245], ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          - {dataset: MIROC6, project: CMIP6, exp: [historical, ssp245], ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          - {dataset: MIROC6, project: CMIP6, exp: [historical, ssp245], ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          
+          - {dataset: NorESM2-LM, project: CMIP6, exp: [historical, ssp245], ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          - {dataset: NorESM2-LM, project: CMIP6, exp: [historical, ssp245], ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+          - {dataset: NorESM2-LM, project: CMIP6, exp: [historical, ssp245], ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
+
+      observations:
+        variable: pr_obs
+        short_name: pr
+        mip: Amon
+        derive: false
+        ensemble: none
+        preprocessor: obs_ts_prep
+        additional_datasets:
+          - {dataset: GPCP-SG, project: OBS, tier: 2, mip: Amon, type: atmos, start_year: 2005, end_year: 2024}
+      
+    scripts:
+
+      plot1:
+        script: monitor/multi_datasets.py
+        plots:
+          timeseries:
+            annual_mean_kwargs: false
+            plot_kwargs:
+              GPCP-SG:
+                color: black
+
+  rmse_portrait_plot:
+    description: Area weighted RMSE of historical (2005-2014) vs ssp245 (2015-2024)
+    themes:
+      - phys
+    realms:
+      - atmos
+    variables:
+
+      pr_hist:
+        variable: pr
+        short_name: pr
+        mip: Amon
+        derive: false
+        preprocessor: model_ens_rmse
+        ensemble: mean
+        reference_dataset: GPCP-SG
+        additional_datasets:
+          - {dataset: FGOALS-g3, project: CMIP6, exp: historical, ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          - {dataset: FGOALS-g3, project: CMIP6, exp: historical, ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          - {dataset: FGOALS-g3, project: CMIP6, exp: historical, ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+
+          - {dataset: CanESM5, project: CMIP6, exp: historical, ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          - {dataset: CanESM5, project: CMIP6, exp: historical, ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          - {dataset: CanESM5, project: CMIP6, exp: historical, ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          
+          - {dataset: MIROC6, project: CMIP6, exp: historical, ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          - {dataset: MIROC6, project: CMIP6, exp: historical, ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          - {dataset: MIROC6, project: CMIP6, exp: historical, ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          
+          - {dataset: NorESM2-LM, project: CMIP6, exp: historical, ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          - {dataset: NorESM2-LM, project: CMIP6, exp: historical, ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+          - {dataset: NorESM2-LM, project: CMIP6, exp: historical, ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2014, }
+
+          - {dataset: GPCP-SG, project: OBS, tier: 2, mip: Amon, type: atmos, start_year: 2005, end_year: 2014, reference_for_metric: true}
+      
+      pr_ssp:
+        variable: pr
+        short_name: pr
+        mip: Amon
+        derive: false
+        preprocessor: model_ens_rmse
+        ensemble: mean
+        reference_dataset: GPCP-SG
+        additional_datasets:
+          - {dataset: FGOALS-g3, project: CMIP6, exp: ssp245, ensemble: r1i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          - {dataset: FGOALS-g3, project: CMIP6, exp: ssp245, ensemble: r2i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          - {dataset: FGOALS-g3, project: CMIP6, exp: ssp245, ensemble: r3i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+
+          - {dataset: CanESM5, project: CMIP6, exp: ssp245, ensemble: r1i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          - {dataset: CanESM5, project: CMIP6, exp: ssp245, ensemble: r2i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          - {dataset: CanESM5, project: CMIP6, exp: ssp245, ensemble: r3i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          
+          - {dataset: MIROC6, project: CMIP6, exp: ssp245, ensemble: r1i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          - {dataset: MIROC6, project: CMIP6, exp: ssp245, ensemble: r2i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          - {dataset: MIROC6, project: CMIP6, exp: ssp245, ensemble: r3i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          
+          - {dataset: NorESM2-LM, project: CMIP6, exp: ssp245, ensemble: r1i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          - {dataset: NorESM2-LM, project: CMIP6, exp: ssp245, ensemble: r2i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+          - {dataset: NorESM2-LM, project: CMIP6, exp: ssp245, ensemble: r3i1p1f1, grid: gn, start_year: 2015, end_year: 2024, }
+
+          - {dataset: GPCP-SG, project: OBS, tier: 2, mip: Amon, type: atmos, start_year: 2015, end_year: 2024, reference_for_metric: true}
+
+    scripts:
+      plot1:
+        script: portrait_plot.py
+        x_by: dataset
+        y_by: exp  # extra_facet
+        # group_by: project
+        normalize: None
+        # # default_split: Ref1
+        # # nan_color: null
+        plot_kwargs:
+          vmin: 0
+          vmax: 0.5
+        # cbar_kwargs:
+        #   label: Relative RMSE
+        #   extend: both

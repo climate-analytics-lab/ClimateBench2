@@ -23,7 +23,7 @@ VARIABLE_FREQUENCY_GROUP = {
     "pr": "Amon",
     "clt": "Amon",
     "tos": "Omon",
-    "aod": "AERMon",
+    "od550aer": "AERmon",
 }
 HIST_START_DATE = "2005-01-01"
 HIST_END_DATE = "2014-12-31"
@@ -96,7 +96,7 @@ def check_local_files(
         experiment (str): historical or sspXXX
         ensemble (str): rXiXpXfX
         frequency (str): Amon, Omon, fx
-        variable (str): pr, tas, clt, tos, aod
+        variable (str): pr, tas, clt, tos, od550aer
 
     Returns:
         list[str]: list of local file paths
@@ -121,7 +121,7 @@ def check_esgf_files(
         experiment (str): historical or sspXXX
         ensemble (str): rXiXpXfX
         frequency (str): Amon, Omon, fx
-        variable (str): pr, tas, clt, tos, aod
+        variable (str): pr, tas, clt, tos, od550aer
         data_node (str, optional): ESGF node to look for data on. Defaults to "esgf-data1.llnl.gov".
 
     Returns:
@@ -187,7 +187,7 @@ def check_gcs_files(
         experiment (str): historical or sspXXX
         ensemble (str): rXiXpXfX
         frequency (str): Amon, Omon, fx
-        variable (str): pr, tas, clt, tos, aod
+        variable (str): pr, tas, clt, tos, od550aer
 
     Returns:
         str: Google cloud storage path
@@ -272,7 +272,7 @@ def read_data(
         experiment (str): historical or sspXXX
         ensemble (str): rXiXpXfX
         frequency (str): Amon, Omon, fx
-        variable (str): pr, tas, clt, tos, aod
+        variable (str): pr, tas, clt, tos, od550aer
 
     Raises:
         ValueError: Error if no data found in any location for combination of parameters.
@@ -321,7 +321,7 @@ def read_obs_data(variable):
             f"{os.environ['HOME']}/climate_data/cmorized_obs/Tier2/GPCP-SG/OBS_GPCP-SG_atmos_2.3_Amon_pr_197901-202504.nc"
         )
     else:
-        obs_data_path = glob.glob(f"data_collection/obs_data_store/{variable}*")[0]
+        obs_data_path = glob.glob(f"obs_data_download/observational_data/{variable}*")[0]
         ds = xr.open_zarr(obs_data_path, chunks={})
 
     # unit conversions
@@ -481,7 +481,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--variable",
         help="Input value for the main function",
-        choices=["tas", "pr", "clt", "tos", "aod"],
+        choices=["tas", "pr", "clt", "tos", "od550aer"],
     )
     args = parser.parse_args()
 

@@ -1,12 +1,12 @@
 # Climate Bench X ESMValTool
 
 ## Helpful resources
-- (Website)[https://esmvaltool.org/]
-- (Documentation)[https://docs.esmvaltool.org/en/latest/]
-- (Datasets with CMORizer scripts)[https://docs.esmvaltool.org/en/latest/input.html#supported-datasets-for-which-a-cmorizer-script-is-available]
-- (Preprocessor functions)[https://docs.esmvaltool.org/projects/ESMValCore/en/latest/api/esmvalcore.preprocessor.html]
-- (Available recipes)[https://github.com/ESMValGroup/ESMValTool/tree/main/esmvaltool/recipes]
-- (Available diagnostics)[https://github.com/ESMValGroup/ESMValTool/tree/main/esmvaltool/diag_scripts]
+- [Website](https://esmvaltool.org/)
+- [Documentation](https://docs.esmvaltool.org/en/latest/)
+- [Datasets with CMORizer scripts](https://docs.esmvaltool.org/en/latest/input.html#supported-datasets-for-which-a-cmorizer-script-is-available)
+- [Preprocessor functions](https://docs.esmvaltool.org/projects/ESMValCore/en/latest/api/esmvalcore.preprocessor.html)
+- [Available recipes](https://github.com/ESMValGroup/ESMValTool/tree/main/esmvaltool/recipes)
+- [Available diagnostics](https://github.com/ESMValGroup/ESMValTool/tree/main/esmvaltool/diag_scripts)
 
 ## How to run a recipe
 List preset recipes.

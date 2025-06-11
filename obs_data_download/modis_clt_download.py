@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-# scale factor reference: https://atmosphere-imager.gsfc.nasa.gov/sites/default/files/ModAtmo/MOD08_M3_fs_3045.txt
+# unit conversion reference: https://atmosphere-imager.gsfc.nasa.gov/sites/default/files/ModAtmo/MOD08_M3_fs_3045.txt
 
 
 def main():
@@ -42,7 +42,8 @@ def main():
         ds_fixed = standardize_dims(ds)
         ds_fixed = ds_fixed["Cloud_Fraction_Mean_Mean"].to_dataset(name="clt")
         ds_fixed.clt.encoding = {}
-        ds_fixed.clt.encoding["scale_factor"] = 0.01
+        # convert units
+        ds_fixed["clt"] = ds_fixed["clt"] / 100  # values should range 0 - 100 (units %)
         ds_fixed.chunk(chunks={"time": 1, "lat": -1, "lon": -1}).to_zarr(
             zarr_store_file_path, region="auto"
         )

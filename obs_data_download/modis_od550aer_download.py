@@ -9,6 +9,8 @@ from utils import build_zarr_store, standardize_dims
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# reference for unit conversion: https://atmosphere-imager.gsfc.nasa.gov/sites/default/files/ModAtmo/MOD08_M3_fs_3044.txt
+
 
 def main():
     logger.info("begining download script for MODIS aerosol optical depth data")
@@ -45,6 +47,9 @@ def main():
             name="od550aer"
         )
         ds_fixed.od550aer.encoding = {}
+        ds_fixed["od550aer"] = (
+            ds_fixed["od550aer"] / 1000
+        )  # values can range -0.01 to 5 (unitless). see https://darktarget.gsfc.nasa.gov/products/modis/land-10 for range details
         ds_fixed.chunk(chunks={"time": 1, "lat": -1, "lon": -1}).to_zarr(
             zarr_store_file_path, region="auto"
         )

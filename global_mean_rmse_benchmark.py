@@ -312,22 +312,26 @@ def read_data(
     return ds
 
 
-# Find observational data
-# can read in from local obs or cmorized obs or search esgf for obs4mips data?
-# do something simple for now, can go back later
-def read_obs_data(variable):
-    if variable == "pr":
-        ds = xr.open_dataset(
-            f"{os.environ['HOME']}/climate_data/cmorized_obs/Tier2/GPCP-SG/OBS_GPCP-SG_atmos_2.3_Amon_pr_197901-202504.nc"
+# will want to update this to read from google cloud later on (when i add observational datasets to shared bucket)
+def read_obs_data(variable: str) -> xr.Dataset:
+    """Read in observational data from local downloads.
+
+    Args:
+        variable (str): Variable of observational data to read in. Files are saved using var name.
+
+    Raises:
+        ValueError: If data is not downloaded, points to folder with download scripts.
+
+    Returns:
+        xr.Dataset: Obs ds, should have lat, lon, and time dims
+    """
+    obs_data_path = glob.glob(f"obs_data_download/observational_data/{variable}*")[0]
+    if not os.path.isdir(obs_data_path):
+        raise ValueError(
+            f"Can't find observational data for {variable}. Run download script in folder `obs_data_download`."
         )
     else:
-        obs_data_path = glob.glob(f"obs_data_download/observational_data/{variable}*")[0]
         ds = xr.open_zarr(obs_data_path, chunks={})
-
-    # unit conversions
-    if variable == "clt":
-        # make sure both observations and model data are 0-100
-        ds["clt"] = ds["clt"] / 100
 
     return ds
 

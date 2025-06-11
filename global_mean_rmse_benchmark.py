@@ -23,7 +23,7 @@ VARIABLE_FREQUENCY_GROUP = {
     "pr": "Amon",
     "clt": "Amon",
     "tos": "Omon",
-    "aod": "AERMon",
+    "od550aer": "AERmon",
 }
 HIST_START_DATE = "2005-01-01"
 HIST_END_DATE = "2014-12-31"
@@ -96,7 +96,7 @@ def check_local_files(
         experiment (str): historical or sspXXX
         ensemble (str): rXiXpXfX
         frequency (str): Amon, Omon, fx
-        variable (str): pr, tas, clt, tos, aod
+        variable (str): pr, tas, clt, tos, od550aer
 
     Returns:
         list[str]: list of local file paths
@@ -121,7 +121,7 @@ def check_esgf_files(
         experiment (str): historical or sspXXX
         ensemble (str): rXiXpXfX
         frequency (str): Amon, Omon, fx
-        variable (str): pr, tas, clt, tos, aod
+        variable (str): pr, tas, clt, tos, od550aer
         data_node (str, optional): ESGF node to look for data on. Defaults to "esgf-data1.llnl.gov".
 
     Returns:
@@ -187,7 +187,7 @@ def check_gcs_files(
         experiment (str): historical or sspXXX
         ensemble (str): rXiXpXfX
         frequency (str): Amon, Omon, fx
-        variable (str): pr, tas, clt, tos, aod
+        variable (str): pr, tas, clt, tos, od550aer
 
     Returns:
         str: Google cloud storage path
@@ -272,7 +272,7 @@ def read_data(
         experiment (str): historical or sspXXX
         ensemble (str): rXiXpXfX
         frequency (str): Amon, Omon, fx
-        variable (str): pr, tas, clt, tos, aod
+        variable (str): pr, tas, clt, tos, od550aer
 
     Raises:
         ValueError: Error if no data found in any location for combination of parameters.
@@ -312,22 +312,26 @@ def read_data(
     return ds
 
 
-# Find observational data
-# can read in from local obs or cmorized obs or search esgf for obs4mips data?
-# do something simple for now, can go back later
-def read_obs_data(variable):
-    if variable == "pr":
-        ds = xr.open_dataset(
-            f"{os.environ['HOME']}/climate_data/cmorized_obs/Tier2/GPCP-SG/OBS_GPCP-SG_atmos_2.3_Amon_pr_197901-202504.nc"
+# will want to update this to read from google cloud later on (when i add observational datasets to shared bucket)
+def read_obs_data(variable: str) -> xr.Dataset:
+    """Read in observational data from local downloads.
+
+    Args:
+        variable (str): Variable of observational data to read in. Files are saved using var name.
+
+    Raises:
+        ValueError: If data is not downloaded, points to folder with download scripts.
+
+    Returns:
+        xr.Dataset: Obs ds, should have lat, lon, and time dims
+    """
+    obs_data_path = glob.glob(f"obs_data_download/observational_data/{variable}*")[0]
+    if not os.path.isdir(obs_data_path):
+        raise ValueError(
+            f"Can't find observational data for {variable}. Run download script in folder `obs_data_download`."
         )
     else:
-        obs_data_path = glob.glob(f"data_collection/obs_data_store/{variable}*")[0]
         ds = xr.open_zarr(obs_data_path, chunks={})
-
-    # unit conversions
-    if variable == "clt":
-        # make sure both observations and model data are 0-100
-        ds["clt"] = ds["clt"] / 100
 
     return ds
 
@@ -481,7 +485,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--variable",
         help="Input value for the main function",
-        choices=["tas", "pr", "clt", "tos", "aod"],
+        choices=["tas", "pr", "clt", "tos", "od550aer"],
     )
     args = parser.parse_args()
 

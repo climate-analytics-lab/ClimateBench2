@@ -20,6 +20,12 @@ def main():
     ds_fixed.attrs = ds_attrs
     ds_fixed["pr"].attrs = ds_var_attrs
 
+    # convert units from mm/day to kg/(s*m2)
+    ds_fixed["pr"] = ds_fixed["pr"] / 86400
+    ds_fixed.pr.attrs["units"] = "kg m-2 s-1"
+    ds_fixed.pr.attrs["long_name"] = "Precipitation"
+    ds_fixed.pr.attrs["standard_name"] = "precipitation_flux"
+
     ds_fixed.chunk({"time": 1, "lat": -1, "lon": -1}).to_zarr(
         "observational_data/pr_noaa.zarr"
     )

@@ -336,8 +336,59 @@ def read_obs_data(variable: str) -> xr.Dataset:
     return ds
 
 
-def main(org, model, variable):
-    logger.info(f"Processing model: {model}, variable: {variable}, org: {org}")
+def global_mean_rmse(
+    model_da: xr.DataArray,
+    obs_da: xr.DataArray,
+    weights_da: xr.DataArray,
+    time_slice: slice(str, str),
+    metric: str = None,
+) -> float:
+    """RMSE of the global mean time series. Can apply a scalar bias adjustment or anomaly calculation before RMSE calculation.
+
+    Args:
+        model_da (xr.DataArray): Model data
+        obs_da (xr.DataArray): Observational data
+        weights_da (xr.DataArray): Weights for global mean calculation (should be grid area)
+        time_slice (slice): time period to calculate RMSE over. Need full time series for metric adjustments.
+        metric (str, optional): Can be bias_adjustment or anomaly. Defaults to None and regular RMSE is calculated.
+
+    Returns:
+        float: RMSE
+    """
+
+    model_global_mean = model_da.weighted(weights_da.fillna(0)).mean(
+        dim=["lat", "lon"], keep_attrs=True
+    )
+    obs_global_mean = obs_da.weighted(weights_da.fillna(0)).mean(
+        dim=["lat", "lon"], keep_attrs=True
+    )
+
+    if metric == "bias_adjusted":
+        adjustment = model_global_mean.mean() - obs_global_mean.mean()
+        model_global_mean = model_global_mean - adjustment
+
+    if metric == "anomaly":
+        model_global_mean = model_global_mean.groupby(
+            "time.month"
+        ) - model_global_mean.groupby("time.month").mean("time")
+        obs_global_mean = obs_global_mean.groupby(
+            "time.month"
+        ) - obs_global_mean.groupby("time.month").mean("time")
+
+    rmse = xs.rmse(
+        a=model_global_mean.sel(time=time_slice).chunk({"time": -1}),
+        b=obs_global_mean.sel(time=time_slice).chunk({"time": -1}),
+        skipna=True,
+        keep_attrs=True,
+    )
+
+    return rmse.values.tolist()
+
+
+def main(org, model, variable, metric):
+    logger.info(
+        f"Processing model: {model}, variable: {variable}, org: {org}, metric: {metric}"
+    )
     frequency = VARIABLE_FREQUENCY_GROUP[variable]
 
     logger.info("Reading data")
@@ -382,6 +433,8 @@ def main(org, model, variable):
     ).mean(dim="ensemble")
     historical_ds = standardize_dims(historical_ds)
 
+    model_ds = xr.concat([historical_ds, ssp245_ds], dim="time")
+
     #### cell area data ####
     fx_ds = read_data(
         mip="CMIP",
@@ -393,9 +446,6 @@ def main(org, model, variable):
         variable="areacella",
     )
     fx_ds = standardize_dims(fx_ds)
-    weights_ds = (fx_ds["areacella"] / fx_ds["areacella"].sum()).to_dataset(
-        name="weight"
-    )
 
     #### obervation data ####
     obs_ds = read_obs_data(variable)
@@ -403,48 +453,34 @@ def main(org, model, variable):
 
     logger.info("Regridding observations")
     # regrid obs data to the model grid
-    regridder = xe.Regridder(obs_ds, historical_ds[["lat", "lon"]], "conservative")
+    regridder = xe.Regridder(obs_ds, model_ds[["lat", "lon"]], "bilinear")
     obs_rg_ds = regridder(obs_ds[variable], keep_attrs=True).to_dataset(name=variable)
 
     logger.info("Calculations")
-    # calculate global mean
-    hist_global_mean = (historical_ds[variable] * weights_ds["weight"]).sum(
-        dim=["lat", "lon"]
+    # calculate global mean rmse
+    rmse_hist = global_mean_rmse(
+        model_da=model_ds[variable],
+        obs_da=obs_rg_ds[variable],
+        weights_da=fx_ds["areacella"],
+        time_slice=slice(HIST_START_DATE, HIST_END_DATE),
+        metric=metric,
     )
-    ssp245_global_mean = (ssp245_ds[variable] * weights_ds["weight"]).sum(
-        dim=["lat", "lon"]
-    )
-    obs_global_mean = (obs_rg_ds[variable] * weights_ds["weight"]).sum(
-        dim=["lat", "lon"]
+    rmse_ssp245 = global_mean_rmse(
+        model_da=model_ds[variable],
+        obs_da=obs_rg_ds[variable],
+        weights_da=fx_ds["areacella"],
+        time_slice=slice(SSP_START_DATE, SSP_END_DATE),
+        metric=metric,
     )
 
-    # calculate metric and save results.
-    # could save as csv that is added to every time?
-    # org, model, variable, ensemble members, historical value, ssp245 value
-    rmse_hist = xs.rmse(
-        a=hist_global_mean.chunk({"time": -1}),
-        b=obs_global_mean.sel(time=slice(HIST_START_DATE, HIST_END_DATE)).chunk(
-            {"time": -1}
-        ),
-        skipna=True,
-        keep_attrs=True,
-    )
-    rmse_ssp245 = xs.rmse(
-        a=ssp245_global_mean.chunk({"time": -1}),
-        b=obs_global_mean.sel(time=slice(SSP_START_DATE, SSP_END_DATE)).chunk(
-            {"time": -1}
-        ),
-        skipna=True,
-        keep_attrs=True,
-    )
     results_line = [
         org,
         model,
         variable,
         "_".join(ENSEMBLE_MEMBERS),
-        "rmse",
-        rmse_hist.values.tolist(),
-        rmse_ssp245.values.tolist(),
+        "_".join(["rmse", metric]) if metric else "rmse",
+        rmse_hist,
+        rmse_ssp245,
     ]
 
     logger.info("Saving results")
@@ -487,6 +523,11 @@ if __name__ == "__main__":
         help="Input value for the main function",
         choices=["tas", "pr", "clt", "tos", "od550aer"],
     )
+    parser.add_argument(
+        "--metric",
+        required=False,
+        help="Global RMSE metric. Can leave blank for unadjusted global mean rmse, or can set to 'bias_adjusted' or 'anomaly'",
+    )
     args = parser.parse_args()
 
-    main(args.org, args.model, args.variable)
+    main(args.org, args.model, args.variable, args.metric)

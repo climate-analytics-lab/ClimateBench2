@@ -1,4 +1,5 @@
 import logging
+import os
 
 import ee
 import geemap
@@ -20,7 +21,7 @@ def main():
 
     modis_images = ee.ImageCollection("MODIS/061/MOD08_M3")
 
-    zarr_store_file_path = "observational_data/clt_modis.zarr"
+    zarr_store_file_path = "observational_data/clt_nasa_modis.zarr"
     # do small sample to set up zarr store
     dataset = modis_images.filterDate("2005-01-01", "2005-1-30")
     ds = geemap.ee_to_xarray(dataset.select("Cloud_Fraction_Mean_Mean"))
@@ -50,6 +51,12 @@ def main():
         logger.info(f"wrote {date} to zarr store")
 
     logger.info(f"data saved to {zarr_store_file_path}")
+    # upload to google cloud
+    gcs_data_path = (
+        "gs://climatebench/observations/preprocessed/clt/clt_nasa_modis.zarr"
+    )
+    os.system(f"gsutil -m cp -r {zarr_store_file_path} {gcs_data_path}")
+    logger.info(f"uploaded data to google cloud: {gcs_data_path}")
 
 
 if __name__ == "__main__":

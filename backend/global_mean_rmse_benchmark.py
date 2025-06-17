@@ -17,7 +17,7 @@ from constants import (
     SSP_EXPERIMENT,
     SSP_START_DATE,
 )
-from data_finder import DataFinder
+from utils import DataFinder
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

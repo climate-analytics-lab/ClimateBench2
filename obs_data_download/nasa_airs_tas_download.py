@@ -58,6 +58,10 @@ def main():
     os.remove("V7_L3_User_Guide.pdf")
     # save data on google cloud --> need to set up google cloud storage bucket
     logger.info(f"data saved to {zarr_store_file_path}")
+    # upload to google cloud
+    gcs_data_path = "gs://climatebench/observations/preprocessed/tas/tas_nasa_airs.zarr"
+    os.system(f"gsutil -m cp -r {zarr_store_file_path} {gcs_data_path}")
+    logger.info(f"uploaded data to google cloud: {gcs_data_path}")
 
 
 if __name__ == "__main__":

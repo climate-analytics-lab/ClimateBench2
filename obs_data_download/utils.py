@@ -67,5 +67,5 @@ def build_zarr_store(var_name: str, dims_dict: dict, attributes: dict, store_pat
     )
     ds.attrs = attributes
     ds.to_zarr(
-        store_path, compute=False, mode="w"
+        store_path, compute=False, mode="w", consolidated=True
     )  # save template, will write each model to its region slice

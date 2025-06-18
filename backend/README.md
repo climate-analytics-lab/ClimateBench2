@@ -9,7 +9,7 @@ conda activate backend_env
 # run bash script. If running for all mondels and one variable, it should take ~20 min. 
 ./run_benchmark.sh
 
-# You can also just run the python script if you only want to run for one combination
+# You can also just run the python script if you only want to run for one combination, which should take ~30s
 python model_benchmark.py --org CAS --model FGOALS-g3 --variable pr --metrics rmse rmse_bias_adjusted rmse_anomaly 
 ```
 

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeatherBench: Weather Forecasting using ML - Google Research</title>
+    <style>
+
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <h1>WeatherBench 2</h1>
+            <p>A benchmark for the next generation of data-driven global weather models</p>
+        </div>
+    </header>
+
+    <nav class="nav-bar">
+        <div class="container">
+            <ul class="nav-links">
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#deterministic-scores">Deterministic Scores</a></li>
+                <li><a href="#probabilistic-scores">Probabilistic Scores</a></li>
+                <li><a href="#data-guide">Data Guide</a></li>
+                <li><a href="#faq">FAQ</a></li>
+                <li><a href="#documentation">Documentation</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="container">
+            <section class="section" id="overview">
+                <h2>Overview</h2>
+                <p>Weather forecasting using machine learning (ML) has seen <a href="#">rapid progress</a> in recent years. WeatherBench is an open framework for evaluating ML and physics-based weather forecasting models in a like-for-like fashion.</p>
+                
+                <p>This website contains up-to-date scores of many state-of-the-art global weather models with a focus on medium-range (1-15 day) prediction. In addition, the WeatherBench framework consists of our recently updated <a href="#">WeatherBench-X evaluation code</a> and publicly available, cloud-optimized ground-truth and baseline <a href="#">datasets</a>, including a comprehensive copy of the <a href="#">ERA5</a> dataset used for training most ML models. For more information on how to use the WeatherBench evaluation framework and how to add new models to the benchmark, please check out the <a href="#">documentation</a>.</p>
+                
+                <p>The research community can file a <a href="#">GitHub issue</a> to share ideas and suggestions directly with the WeatherBench 2 team.</p>
+            </section>
+
+            <section class="section" id="headline-scorecards">
+                <h2>Headline scorecards</h2>
+                <p>There is no single metric for measuring weather forecast performance. For example, one end user might be worried about wind gusts, while another might care more about average temperatures. For this reason, WeatherBench 2 contains a range of metrics, which you can find in the navigation at the top of this page. To provide a concise summary, we defined several key - "headline" - metrics that closely mirror the routine evaluation done by weather agencies and the <a href="#">World Meteorological Organization</a>. It is important to remember that these metrics measure some important but not all aspects of what makes a good forecast.</p>
+                
+                <p>The scorecards below show the skill (measured by the global root mean squared error) of different physical and ML-based methods relative to <a href="#">ECMWF's IFS HRES</a>, one of the <a href="#">world's best operational weather models</a>, on a number of key variables. For a detailed explanation of the different skill metrics and variables, check out the <a href="#">FAQ</a>.</p>
+
+                <div class="scorecard">
+                    <div class="scorecard-title">Scorecard for upper-level variables for the year 2020. Operational models are evaluated against IFS analysis. All other models evaluated against ERA5. Order of ML models reflects publication date.</div>
+                    <div class="scorecard-grid">
+                        <div class="scorecard-header">Model</div>
+                        <div class="scorecard-header">1 day</div>
+                        <div class="scorecard-header">3 days</div>
+                        <div class="scorecard-header">5 days</div>
+                        <div class="scorecard-header">7 days</div>
+                        <div class="scorecard-header">10 days</div>
+                        
+                        <div class="scorecard-cell scorecard-model">IFS HRES</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        
+                        <div class="scorecard-cell scorecard-model">GraphCast (operational)</div>
+                        <div class="scorecard-cell skill-positive">+2.3</div>
+                        <div class="scorecard-cell skill-positive">+5.1</div>
+                        <div class="scorecard-cell skill-positive">+7.8</div>
+                        <div class="scorecard-cell skill-positive">+9.2</div>
+                        <div class="scorecard-cell skill-positive">+11.4</div>
+                        
+                        <div class="scorecard-cell scorecard-model">Pangu-Weather</div>
+                        <div class="scorecard-cell skill-positive">+1.8</div>
+                        <div class="scorecard-cell skill-positive">+4.2</div>
+                        <div class="scorecard-cell skill-positive">+6.9</div>
+                        <div class="scorecard-cell skill-positive">+8.1</div>
+                        <div class="scorecard-cell skill-positive">+9.7</div>
+                        
+                        <div class="scorecard-cell scorecard-model">FourCastNet</div>
+                        <div class="scorecard-cell skill-positive">+1.2</div>
+                        <div class="scorecard-cell skill-positive">+3.1</div>
+                        <div class="scorecard-cell skill-positive">+4.8</div>
+                        <div class="scorecard-cell skill-positive">+5.9</div>
+                        <div class="scorecard-cell skill-positive">+7.2</div>
+                        
+                        <div class="scorecard-cell scorecard-model">ECMWF HRES</div>
+                        <div class="scorecard-cell skill-negative">-1.5</div>
+                        <div class="scorecard-cell skill-negative">-2.8</div>
+                        <div class="scorecard-cell skill-negative">-3.9</div>
+                        <div class="scorecard-cell skill-negative">-4.7</div>
+                        <div class="scorecard-cell skill-negative">-5.8</div>
+                    </div>
+                    <p><small>For more detail, visit <a href="#">Deterministic Scores</a>.</small></p>
+                </div>
+
+                <div class="scorecard">
+                    <div class="scorecard-title">Scorecard for surface variables for the year 2020. Operational models are evaluated against IFS analysis. All other models evaluated against ERA5. Order of ML models reflects publication date. Precipitation is evaluated using the SEEPS score using ERA5 ground truth for all models.</div>
+                    <div class="scorecard-grid">
+                        <div class="scorecard-header">Model</div>
+                        <div class="scorecard-header">1 day</div>
+                        <div class="scorecard-header">3 days</div>
+                        <div class="scorecard-header">5 days</div>
+                        <div class="scorecard-header">7 days</div>
+                        <div class="scorecard-header">10 days</div>
+                        
+                        <div class="scorecard-cell scorecard-model">IFS HRES</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        
+                        <div class="scorecard-cell scorecard-model">GraphCast</div>
+                        <div class="scorecard-cell skill-positive">+1.9</div>
+                        <div class="scorecard-cell skill-positive">+3.8</div>
+                        <div class="scorecard-cell skill-positive">+5.2</div>
+                        <div class="scorecard-cell skill-positive">+6.1</div>
+                        <div class="scorecard-cell skill-positive">+7.3</div>
+                        
+                        <div class="scorecard-cell scorecard-model">Pangu-Weather</div>
+                        <div class="scorecard-cell skill-positive">+1.4</div>
+                        <div class="scorecard-cell skill-positive">+2.9</div>
+                        <div class="scorecard-cell skill-positive">+4.1</div>
+                        <div class="scorecard-cell skill-positive">+4.8</div>
+                        <div class="scorecard-cell skill-positive">+5.9</div>
+                        
+                        <div class="scorecard-cell scorecard-model">FourCastNet</div>
+                        <div class="scorecard-cell skill-positive">+0.8</div>
+                        <div class="scorecard-cell skill-positive">+1.9</div>
+                        <div class="scorecard-cell skill-positive">+2.7</div>
+                        <div class="scorecard-cell skill-positive">+3.2</div>
+                        <div class="scorecard-cell skill-positive">+4.1</div>
+                    </div>
+                    <p><small>For more detail, visit <a href="#">Deterministic Scores</a>. See <a href="#">FAQ</a> for details on how climatology is computed.</small></p>
+                </div>
+
+                <h3>Probabilistic scorecards</h3>
+                <p>The scorecard below shows the skill (measured by the continuous ranked probability score = CRPS) of physical and ML-based probabilistic models, relative to <a href="#">ECMWF's IFS ENS model</a>.</p>
+
+                <div class="scorecard">
+                    <div class="scorecard-title">Probabilistic scorecard for upper-level variables for the year 2020. Operational models (blue) are evaluated against IFS analysis. All other models evaluated against ERA5. Order of ML models reflects publication date.</div>
+                    <div class="scorecard-grid">
+                        <div class="scorecard-header">Model</div>
+                        <div class="scorecard-header">1 day</div>
+                        <div class="scorecard-header">3 days</div>
+                        <div class="scorecard-header">5 days</div>
+                        <div class="scorecard-header">7 days</div>
+                        <div class="scorecard-header">10 days</div>
+                        
+                        <div class="scorecard-cell scorecard-model">IFS ENS</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        <div class="scorecard-cell">0.0</div>
+                        
+                        <div class="scorecard-cell scorecard-model">GraphCast Ensemble</div>
+                        <div class="scorecard-cell skill-positive">+1.7</div>
+                        <div class="scorecard-cell skill-positive">+3.2</div>
+                        <div class="scorecard-cell skill-positive">+4.8</div>
+                        <div class="scorecard-cell skill-positive">+5.9</div>
+                        <div class="scorecard-cell skill-positive">+7.1</div>
+                        
+                        <div class="scorecard-cell scorecard-model">NeFS Ensemble</div>
+                        <div class="scorecard-cell skill-positive">+1.2</div>
+                        <div class="scorecard-cell skill-positive">+2.4</div>
+                        <div class="scorecard-cell skill-positive">+3.5</div>
+                        <div class="scorecard-cell skill-positive">+4.2</div>
+                        <div class="scorecard-cell skill-positive">+5.1</div>
+                    </div>
+                    <p><small>For more detail, visit <a href="#">Probabilistic Scores</a>.</small></p>
+                </div>
+            </section>
+
+            <section class="section" id="participating-models">
+                <h2>Participating models</h2>
+                <p>Missing an existing model or have a new model that you'd like to see added? Check out <a href="#">this guide</a> for how to participate or submit a <a href="#">GitHub issue</a>. Please also refer to the <a href="#">FAQ</a> for more detailed information.</p>
+
+                <table class="models-table">
+                    <thead>
+                        <tr>
+                            <th>Model / Dataset</th>
+                            <th>Source</th>
+                            <th>Method</th>
+                            <th>Type</th>
+                            <th>Initial conditions</th>
+                            <th>Horizontal resolution **</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>ERA5</strong></td>
+                            <td>ECMWF</td>
+                            <td><span class="model-type-physics">Physics-based</span></td>
+                            <td>Reanalysis</td>
+                            <td>-</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>IFS HRES</strong></td>
+                            <td>ECMWF</td>
+                            <td><span class="model-type-physics">Physics-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>Operational</td>
+                            <td>0.1°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>IFS ENS</strong></td>
+                            <td>ECMWF</td>
+                            <td><span class="model-type-physics">Physics-based</span></td>
+                            <td>Forecast (50 member ensemble)</td>
+                            <td>Operational</td>
+                            <td>0.2° *</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Pangu-Weather (operational)</strong></td>
+                            <td>Huawei</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>Operational IFS</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>GraphCast (operational)</strong></td>
+                            <td>Google DeepMind</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>Operational IFS</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>GraphCast Ensemble (operational)</strong></td>
+                            <td>Google DeepMind</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (Ensemble)</td>
+                            <td>Operational IFS</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>IFS T63</strong></td>
+                            <td>ECMWF</td>
+                            <td><span class="model-type-physics">Physics-based</span></td>
+                            <td>Hindcast (deterministic)</td>
+                            <td>ERA5</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>KeislerNet</strong></td>
+                            <td>Ryan Keisler</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>ERA5</td>
+                            <td>1°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Pangu-Weather</strong></td>
+                            <td>Huawei</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>ERA5</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>GraphCast</strong></td>
+                            <td>Google DeepMind</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>ERA5</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FuXi</strong></td>
+                            <td>Fudan University, Shanghai</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>ERA5</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>NeuralGCM</strong></td>
+                            <td>Google Research</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>ERA5</td>
+                            <td>1.4x0.7°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>NeuralGCM (hybrid)</strong></td>
+                            <td>Google Research</td>
+                            <td><span class="model-type-hybrid">Hybrid</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>ERA5</td>
+                            <td>0.7°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>NeFS</strong></td>
+                            <td>Google Research</td>
+                            <td><span class="model-type-hybrid">Hybrid</span></td>
+                            <td>Forecast (Ensemble)</td>
+                            <td>ERA5</td>
+                            <td>1.4°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>GenCast</strong></td>
+                            <td>Google DeepMind</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (Ensemble)</td>
+                            <td>ERA5</td>
+                            <td>0.25°</td>
+                        </tr>
+                        <tr>
+                            <td><strong>AIFS</strong></td>
+                            <td>ECMWF</td>
+                            <td><span class="model-type-ml">ML-based</span></td>
+                            <td>Forecast (deterministic)</td>
+                            <td>ERA5</td>
+                            <td>0.25°</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="highlight-box">
+                    <p><strong>*</strong> Since <a href="#">June 2023</a>, IFS ENS is also run at 0.1° resolution.</p>
+                    <p><strong>**</strong> Resolution is approximate for some models that don't use an equiangular grid.</p>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2024 Google Research. WeatherBench 2 - A benchmark for the next generation of data-driven global weather models.</p>
+            <p>For questions and support, please visit our <a href="#" style="color: #1a73e8;">documentation</a> or file a <a href="#" style="color: #1a73e8;">GitHub issue</a>.</p>
+        </div>
+    </footer>
+
+    <script>
+
+    </script>
+</body>
+</html>

@@ -3,7 +3,8 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from global_mean_rmse_benchmark import global_mean_rmse, standardize_dims
+from global_mean_rmse_benchmark import global_mean_rmse
+from utils import standardize_dims
 
 
 @pytest.fixture

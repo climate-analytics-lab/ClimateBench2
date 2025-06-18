@@ -15,7 +15,7 @@ from constants import (
     SSP_EXPERIMENT,
     SSP_START_DATE,
 )
-from utils import DataFinder, MetricCalculation
+from utils import DataFinder, MetricCalculation, SaveResults
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -57,38 +57,22 @@ def main(org, model, variable, metrics):
             time_slice=slice(SSP_START_DATE, SSP_END_DATE), metric=metric
         )
 
-        # This method of saving results works for single value metrics, but we will want to expand to time series and spatial metrics.
-        results_line = [
-            org,
-            model,
-            variable,
-            "_".join(ENSEMBLE_MEMBERS),
-            metric,
-            rmse_hist,
-            rmse_ssp245,
-        ]
+        result_df = pd.DataFrame(
+            {
+                "org": [org],
+                "model": [model],
+                "variable": [variable],
+                "ensemble members": ["_".join(ENSEMBLE_MEMBERS)],
+                "metric": [metric],
+                "historical": [rmse_hist],
+                SSP_EXPERIMENT: [rmse_ssp245],
+            }
+        )
 
-        logger.info("Saving results")
-        # write results to csv (add new line if csv already exists)
-        if os.path.isfile(RESULTS_FILE_PATH):
-            with open(RESULTS_FILE_PATH, "a") as f_object:
-                writer_object = writer(f_object)
-                writer_object.writerow(results_line)
-                f_object.close()
-        else:
-            pd.DataFrame(
-                {
-                    "org": [results_line[0]],
-                    "model": [results_line[1]],
-                    "variable": [results_line[2]],
-                    "ensemble members": [results_line[3]],
-                    "metric": [results_line[4]],
-                    "historical": [results_line[5]],
-                    SSP_EXPERIMENT: [results_line[6]],
-                }
-            ).to_csv(RESULTS_FILE_PATH, index=False)
-
-        logger.info(f"Results saved: {RESULTS_FILE_PATH}")
+        save_results = SaveResults(
+            variable=variable, experiment="RMSE"
+        )  # will want to set some experiment groups later
+        save_results.save_to_csv(result_df, "global_mean_rmse_results.csv")
 
 
 if __name__ == "__main__":

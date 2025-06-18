@@ -1,12 +1,15 @@
 import glob
+import io
 import logging
 import os
+from csv import writer
 
 import dask.array as da
 import numpy as np
 import pandas as pd
 import xarray as xr
 import xskillscore as xs
+from google.cloud import storage
 from pyesgf.search import SearchConnection
 
 from constants import (
@@ -334,3 +337,51 @@ class MetricCalculation:
             skipna=True,
             keep_attrs=True,
         ).values.tolist()
+
+
+class SaveResults:
+
+    def __init__(self, variable, experiment):
+        self.variable = variable
+        self.experiment = experiment
+
+        self.storage_client = storage.Client(project="JCM and Benchmarking")
+        self.bucket_name = "climatebench"
+        self.bucket = self.storage_client.bucket(self.bucket_name)
+        self.gcs_prefix = f"gs://{self.bucket_name}/"
+        self.gcs_path = f"results/{self.experiment}/{self.variable}/"
+
+    def save_to_csv(self, result_df, file_name):
+        data_path = self.gcs_path + file_name
+        full_gcs_path = self.gcs_prefix + data_path
+        blob = storage.Blob(bucket=self.bucket, name=data_path)
+
+        logger.info(f"Saving results to {data_path}")
+        # write results to csv (add new line if csv already exists)
+        if blob.exists(self.storage_client):
+            # download existing content
+            existing_data = blob.download_as_text()
+            output = io.StringIO(existing_data)
+
+            # Append the new row
+            output.seek(0, io.SEEK_END)
+            writer_object = writer(output)
+            writer_object.writerow(result_df.values.flatten().tolist())
+
+            # Upload the updated content
+            output.seek(0)
+            blob.upload_from_string(output.getvalue(), content_type="text/csv")
+        else:
+            result_df.to_csv(full_gcs_path, index=False)
+
+        logger.info(f"Results saved: {full_gcs_path}")
+        # this is a lot of reads/writes to the bucket, might be worth it to save data locally and then just upload final file at the end
+
+    def save_time_series(self):
+        # for time series data, its easier to stack because coordinates should be common
+        return None
+
+    def save_map(self):
+        # map data is harder to stack because the models have different grids
+        # file name should be org_model_....
+        return None

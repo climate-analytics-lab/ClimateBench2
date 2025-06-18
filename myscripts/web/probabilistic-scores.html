@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Probabilistic Scores - WeatherBench</title>
+    <link rel="stylesheet" href="src/css/probabilistic-scores.css">
+</head>
+<body>
+    <nav class="nav-bar">
+        <div class="container">
+            <ul class="nav-links">
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#deterministic-scores">Deterministic Scores</a></li>
+                <li><a href="probabilistic-scores.html" class="active">Probabilistic Scores</a></li>
+                <li><a href="#data-guide">Data Guide</a></li>
+                <li><a href="#faq">FAQ</a></li>
+                <li><a href="#documentation">Documentation</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="container">
+            <h1 class="page-title">Probabilistic Scores</h1>
+            
+            <p>This page shows probabilistic forecast evaluation metrics for ensemble weather prediction models. Probabilistic forecasts provide uncertainty estimates alongside point predictions, making them crucial for decision-making in weather-sensitive applications.</p>
+
+            <div class="widget-menu">
+                <div class="widget-row">
+                    <div class="widget-group">
+                        <label>Variable</label>
+                        <select class="widget-select" id="variable-select">
+                            <option value="tos">Sea Surface Temperature (tos)</option>
+                            <option value="clt">Cloud Cover (clt)</option>
+                            <option value="prc">Precipitation (prc)</option>
+                            <option value="tas">Air Temperature (tas)</option>
+                            <option value="areacello">Ocean Grid Cell Area (areacello)</option>
+                            <option value="od550aer">Aerosol Optical Depth (od550aer)</option>
+                            <option value="areacella">Atmospheric Grid Cell Area (areacella)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="widget-group">
+                        <label>Metric</label>
+                        <select class="widget-select" id="metric-select">
+                            <option value="mae">Mean Absolute Error (MAE)</option>
+                            <option value="rmse">Root Mean Squared Error (RMSE)</option>
+                        </select>
+                    </div>
+            
+    
+                    <div class="widget-group">
+                        <label>Region</label>
+                        <select class="widget-select" id="region-select">
+                            <option value="global">Global</option>
+                            <option value="tropics">Tropics (20°S–20°N)</option>
+                            <option value="extratropics">Extratropics (&lt;20°S or &gt;20°N)</option>
+                            <option value="northern_hemisphere">Northern Hemisphere</option>
+                            <option value="southern_hemisphere">Southern Hemisphere</option>
+                            <option value="arctic">Arctic (&gt;66.5°N)</option>
+                            <option value="polar">Polar regions</option>
+                            <option value="europe">Europe</option>
+                            <option value="north_america">North America</option>
+                            <option value="asia">Asia</option>
+                            <option value="africa">Africa</option>
+                            <option value="australia">Australia</option>
+                            <option value="south_america">South America</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="widget-row">
+                    <div class="widget-group">
+                        <label>Year</label>
+                        <select class="widget-select" id="year-select">
+                            <option value="2020">2020</option>
+                            <option value="2021">2021</option>
+                            <option value="2022">2022</option>
+                            <option value="2023">2023</option>
+                        </select>
+                    </div>
+    
+                    
+                </div>
+                
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">CRPS for Temperature at 850 hPa - Global (2020)</div>
+                <div class="chart-placeholder">
+                    <p>📊 Interactive chart will be displayed here</p>
+                    <p style="margin-top: 10px; font-size: 0.9em;">Chart updates based on selected parameters above</p>
+                </div>
+                
+                <div class="model-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #1f77b4;"></div>
+                        <span>IFS ENS</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #ff7f0e;"></div>
+                        <span>GraphCast Ensemble</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #2ca02c;"></div>
+                        <span>GenCast</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #d62728;"></div>
+                        <span>NeFS</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #9467bd;"></div>
+                        <span>ECMWF SEAS5</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">0.847</div>
+                    <div class="stat-label">Best CRPS Score</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">5</div>
+                    <div class="stat-label">Models Compared</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">15</div>
+                    <div class="stat-label">Forecast Days</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">365</div>
+                    <div class="stat-label">Evaluation Days</div>
+                </div>
+            </div>
+
+            <div style="background-color: #e8f0fe; padding: 20px; border-radius: 8px; margin: 30px 0;">
+                <h3 style="color: #1a73e8; margin-bottom: 15px;">About Probabilistic Metrics</h3>
+                <p><strong>CRPS (Continuous Ranked Probability Score):</strong> Measures the difference between the forecast probability distribution and the observed value. Lower scores indicate better performance.</p>
+                <p style="margin-top: 10px;"><strong>RMSE (Root Mean Squared Error):</strong> Measures the average magnitude of forecast errors. Lower RMSE indicates more accurate predictions.</p>
+                <p style="margin-top: 10px;"><strong>MAE (Mean Absolute Error):</strong> Represents the average absolute difference between predicted and observed values. Lower MAE means better accuracy.</p>
+
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2024 Google Research. WeatherBench 2 - A benchmark for the next generation of data-driven global weather models.</p>
+            <p>For questions and support, please visit our <a href="#" style="color: #1a73e8;">documentation</a> or file a <a href="#" style="color: #1a73e8;">GitHub issue</a>.</p>
+        </div>
+    </footer>
+    <script src="src/js/probabilistic-scores.js"></script>
+</body>
+</html>

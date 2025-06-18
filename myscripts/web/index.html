@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WeatherBench: Weather Forecasting using ML - Google Research</title>
+    <title>>ClimateBench 2.0: Weather Forecasting using ML - Google Research</title>
     <link rel="stylesheet" href="src/css/style.css">
 </head>
 <body>
@@ -17,9 +17,9 @@
     <nav class="nav-bar">
         <div class="container">
             <ul class="nav-links">
-                <li><a href="#overview">Overview</a></li>
+                <li><a href="index.html" class="active">Overview</a></li>
                 <li><a href="#deterministic-scores">Deterministic Scores</a></li>
-                <li><a href="probabilistic-scores.html">Probabilistic Scores</a></li>
+                <li><a href="probabilistic-scores.html#probabilistic-scores">Probabilistic Scores</a></li>
                 <li><a href="#data-guide">Data Guide</a></li>
                 <li><a href="#faq">FAQ</a></li>
                 <li><a href="#documentation">Documentation</a></li>
@@ -170,78 +170,67 @@
                     <p><small>For more detail, visit <a href="#">Probabilistic Scores</a>.</small></p>
                 </div>
             </section>
+        <section class="section" id="participating-models">
+        <h2>Participating models</h2>
+        <p>Missing an existing model or have a new model that you'd like to see added? Check out <a href="#">this guide</a> for how to participate or submit a <a href="#">GitHub issue</a>. Please also refer to the <a href="#">FAQ</a> for more detailed information.</p>
 
-            <section class="section" id="participating-models">
-                <h2>Participating models</h2>
-                <p>Missing an existing model or have a new model that you'd like to see added? Check out <a href="#">this guide</a> for how to participate or submit a <a href="#">GitHub issue</a>. Please also refer to the <a href="#">FAQ</a> for more detailed information.</p>
+        <table class="models-table">
+            <thead>
+            <tr>
+                <th>Model / Dataset</th>
+                <th>Source</th>
+                <th>Method</th>
+                <th>Type</th>
+                <th>Initial conditions</th>
+                <th>Horizontal resolution **</th>
+            </tr>
+            </thead>
+            <tbody id="models-table-body">
+            <!-- Rows will be inserted here -->
+            </tbody>
+        </table>
+        </section>
+<!-- 
+        <script>
+        // Replace this URL with your FastAPI endpoint
+        const modelsUrl = "http://127.0.0.1:8000/models";
 
-                <table class="models-table">
-                    <thead>
-                        <tr>
-                            <th>Model / Dataset</th>
-                            <th>Source</th>
-                            <th>Method</th>
-                            <th>Type</th>
-                            <th>Initial conditions</th>
-                            <th>Horizontal resolution **</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><strong>ERA5</strong></td>
-                            <td>ECMWF</td>
-                            <td><span class="model-type-physics">Physics-based</span></td>
-                            <td>Reanalysis</td>
-                            <td>-</td>
-                            <td>0.25°</td>
-                        </tr>
-                        <tr>
-                            <td><strong>IFS HRES</strong></td>
-                            <td>ECMWF</td>
-                            <td><span class="model-type-physics">Physics-based</span></td>
-                            <td>Forecast (deterministic)</td>
-                            <td>Operational</td>
-                            <td>0.1°</td>
-                        </tr>
-                        <tr>
-                            <td><strong>IFS ENS</strong></td>
-                            <td>ECMWF</td>
-                            <td><span class="model-type-physics">Physics-based</span></td>
-                            <td>Forecast (50 member ensemble)</td>
-                            <td>Operational</td>
-                            <td>0.2° *</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Pangu-Weather (operational)</strong></td>
-                            <td>Huawei</td>
-                            <td><span class="model-type-ml">ML-based</span></td>
-                            <td>Forecast (deterministic)</td>
-                            <td>Operational IFS</td>
-                            <td>0.25°</td>
-                        </tr>
-                        <tr>
-                            <td><strong>GraphCast (operational)</strong></td>
-                            <td>Google DeepMind</td>
-                            <td><span class="model-type-ml">ML-based</span></td>
-                            <td>Forecast (deterministic)</td>
-                            <td>Operational IFS</td>
-                            <td>0.25°</td>
-                        </tr>
+        fetch(modelsUrl)
+            .then(response => response.json())
+            .then(models => {
+            const tbody = document.getElementById("models-table-body");
 
-                    </tbody>
-                </table>
+            models.forEach(modelName => {
+                const tr = document.createElement("tr");
 
-                <div class="highlight-box">
-                    <p><strong>*</strong> Since <a href="#">June 2023</a>, IFS ENS is also run at 0.1° resolution.</p>
-                    <p><strong>**</strong> Resolution is approximate for some models that don't use an equiangular grid.</p>
-                </div>
-            </section>
+                // Create the first cell with model name in <strong>
+                const tdModel = document.createElement("td");
+                tdModel.innerHTML = `<strong>${modelName}</strong>`;
+                tr.appendChild(tdModel);
+
+                // For other columns, put placeholders (empty or dash)
+                for (let i = 1; i < 6; i++) {
+                const td = document.createElement("td");
+                td.textContent = "-"; // or empty string ""
+                tr.appendChild(td);
+                }
+
+                tbody.appendChild(tr);
+            });
+            })
+            .catch(err => {
+            console.error("Failed to load models:", err);
+            });
+        </script> -->
         </div>
     </main>
 
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2024 Google Research. WeatherBench 2 - A benchmark for the next generation of data-driven global weather models.</p>
+            <p>&copy; <span id="current-year"></span> Climate Analytics Lab. ClimateBench 2.0 - A benchmark for the next generation of data-driven global weather models.</p>
+            <script>
+                document.getElementById('current-year').textContent = new Date().getFullYear();
+            </script>
             <p>For questions and support, please visit our <a href="#" style="color: #1a73e8;">documentation</a> or file a <a href="#" style="color: #1a73e8;">GitHub issue</a>.</p>
         </div>
     </footer>

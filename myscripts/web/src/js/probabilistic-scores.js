@@ -13,6 +13,21 @@ const widgets = {
 const chartTitle = document.querySelector('.chart-title');
 const chartPlaceholder = document.querySelector('.chart-placeholder');
 
+const trace = {
+  x: [1, 2, 3, 4],
+  y: [10, 15, 13, 17],
+  type: 'scatter',
+  mode: 'lines+markers',
+  name: 'Example Line'
+};
+
+const layout = {
+  title: 'My Separate Plotly Chart'
+};
+
+Plotly.newPlot('plotly-chart', [trace], layout);
+
+
 // Update chart title based on selections
 function updateChart() {
     const variable = widgets.variable.value.charAt(0).toUpperCase() + widgets.variable.value.slice(1);
@@ -83,3 +98,4 @@ setInterval(() => {
     const statValues = document.querySelectorAll('.stat-value');
     statValues[0].textContent = (Math.random() * 0.3 + 0.7).toFixed(3);
 }, 5000);
+

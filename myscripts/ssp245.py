@@ -1,5 +1,6 @@
 import intake
 import pandas as pd
+import os
 import re
 
 def main():
@@ -77,6 +78,11 @@ def main():
     # Save filtered metadata to CSV
     filtered.to_csv("web/ssp245.csv", index=False)
     print("Saved filtered data to web/ssp245.csv")
+
+    json_file = os.path.join('web', 'ssp245.json')
+    filtered.to_json(json_file, orient='records', indent=4)
+
+    print(f"JSON file saved to: {json_file}")
 
 if __name__ == "__main__":
     main()

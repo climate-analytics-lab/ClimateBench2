@@ -3,14 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Probabilistic Scores - WeatherBench</title>
+    <title>Probabilistic Scores - ClimateBench2.0</title>
     <link rel="stylesheet" href="src/css/probabilistic-scores.css">
+    <script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+
+    <link rel="icon" href="data:,">
 </head>
 <body>
     <nav class="nav-bar">
         <div class="container">
             <ul class="nav-links">
-                <li><a href="#overview">Overview</a></li>
+                <li><a href="index.html#overview">Overview</a></li>
                 <li><a href="#deterministic-scores">Deterministic Scores</a></li>
                 <li><a href="probabilistic-scores.html" class="active">Probabilistic Scores</a></li>
                 <li><a href="#data-guide">Data Guide</a></li>
@@ -84,7 +87,9 @@
                     
                 </div>
                 
-            </div>
+                <div id="plotly-chart" style="width: 100%; height: 400px;"></div>
+
+
 
             <div class="chart-container">
                 <div class="chart-title">CRPS for Temperature at 850 hPa - Global (2020)</div>

@@ -10,7 +10,7 @@ HIST_START_DATE = "2005-01-01"
 HIST_END_DATE = "2014-12-31"
 SSP_START_DATE = "2015-01-01"
 SSP_END_DATE = "2024-12-31"
-RESULTS_FILE_PATH = "model_benchmarking_results.csv"
+RESULTS_FILE_PATH = "model_benchmark_results.csv"
 SSP_EXPERIMENT = "ssp245"
 OBSERVATION_DATA_PATHS = {
     "tas": "gs://climatebench/observations/preprocessed/tas/tas_nasa_airs.zarr",

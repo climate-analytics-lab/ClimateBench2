@@ -10,13 +10,14 @@ conda activate backend_env
 ./run_benchmark.sh
 
 # You can also just run the python script if you only want to run for one combination
-python global_mean_rmse_benchmark.py --org CAS --model FGOALS-g3 --variable pr --metric bias_adjusted
+python model_benchmark.py --org CAS --model FGOALS-g3 --variable pr --metrics rmse rmse_bias_adjusted rmse_anomaly 
 ```
 
 ### Notes
 - env.yml is for running backend codes, but not obs download codes. For some obs download scripts you will need to install/set up the google earth engine api.
 - run_benchmark.sh -- this bash script contains all institute/model pairs, but not all pairs have all the data we need. The benchmarking script will fail if the itteration does not have all three ensemble members for the historical and projected simulations, but the bash script will continue to the next combination. You can modify the script to run for a subset of institution/models, variables, and statistical metric. For now, the "tos" variable is not working.
 - DataFinder -- this class is in utils.py. Given the org, model, and variable, it will get the observational and model data that you need. Can be used for exploratory data analysis as well.
+- MetricCalculator -- this is a class in utils.py. It takes in the model, observations, and optionally spatial weights data. For now, it will calculate 3 global mean RMSE metrics. The metric options will expand in the future. 
 
 
 ### obs_data_download

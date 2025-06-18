@@ -14,6 +14,6 @@ for i in "${!orgs[@]}"; do
 
   for variable in "${variables[@]}"; do
     echo "Running for ORG=$org, MODEL=$model, VARIABLE=$variable"
-    python global_mean_rmse_benchmark.py --org "$org" --model "$model" --variable "$variable" ##### <--- can modify this to add metrics too
+    python model_benchmark.py --org "$org" --model "$model" --variable "$variable" --metrics rmse rmse_bias_adjusted rmse_anomaly ##### <--- can modify this to be a subset of metrics
   done
 done

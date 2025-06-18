@@ -75,8 +75,8 @@ def main():
     })
 
     # Save filtered metadata to CSV
-    filtered.to_csv("ssp245.csv", index=False)
-    print("Saved filtered data to ssp245.csv")
+    filtered.to_csv("web/ssp245.csv", index=False)
+    print("Saved filtered data to web/ssp245.csv")
 
 if __name__ == "__main__":
     main()

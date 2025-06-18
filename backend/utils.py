@@ -6,6 +6,7 @@ import dask.array as da
 import numpy as np
 import pandas as pd
 import xarray as xr
+import xskillscore as xs
 from pyesgf.search import SearchConnection
 
 from constants import (
@@ -268,3 +269,68 @@ class DataFinder:
 
     def load_obs_ds(self):
         return standardize_dims(xr.open_zarr(self.obs_data_path))
+
+
+class MetricCalculation:
+
+    def __init__(self, observations, model, weights=None):
+        self.obs = observations
+        self.model = model
+        # you can pass in the weights if the areacella or areacello data exists,
+        # if not just us the cos of lat, which is proportional to cell area for a regular grid
+        if weights is None:
+            weights = np.cos(np.deg2rad(self.model.lat))
+            weights.name = "weights"
+            self.weights = weights
+        else:
+            self.weights = weights
+        self.model_global_mean = None
+        self.obs_global_mean = None
+        self.model_global_mean_bias_adjusted = None
+        self.model_global_mean_anomaly = None
+        self.obs_global_mean_anomaly = None
+
+    def global_mean(self):
+        self.model_global_mean = self.model.weighted(self.weights.fillna(0)).mean(
+            dim=["lat", "lon"], keep_attrs=True
+        )
+        self.obs_global_mean = self.obs.weighted(self.weights.fillna(0)).mean(
+            dim=["lat", "lon"], keep_attrs=True
+        )
+
+    def global_mean_rmse(self, metric, time_slice):
+        if self.model_global_mean is None:
+            # only need to run this if it has not already been run
+            self.global_mean()
+
+        model_rmse_data = self.model_global_mean
+        obs_rmse_data = self.obs_global_mean
+
+        if metric == "rmse_bias_adjusted":
+            if self.model_global_mean_bias_adjusted is None:
+                adjustment = self.model_global_mean.mean() - self.obs_global_mean.mean()
+                self.model_global_mean_bias_adjusted = (
+                    self.model_global_mean - adjustment
+                )
+            model_rmse_data = self.model_global_mean_bias_adjusted
+
+        if metric == "rmse_anomaly":
+            if (
+                self.model_global_mean_anomaly is None
+                and self.obs_global_mean_anomaly is None
+            ):
+                self.model_global_mean_anomaly = self.model_global_mean.groupby(
+                    "time.month"
+                ) - self.model_global_mean.groupby("time.month").mean("time")
+                self.obs_global_mean_anomaly = self.obs_global_mean.groupby(
+                    "time.month"
+                ) - self.obs_global_mean.groupby("time.month").mean("time")
+            model_rmse_data = self.model_global_mean_anomaly
+            obs_rmse_data = self.obs_global_mean_anomaly
+
+        return xs.rmse(
+            a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
+            b=obs_rmse_data.sel(time=time_slice).chunk({"time": -1}),
+            skipna=True,
+            keep_attrs=True,
+        ).values.tolist()

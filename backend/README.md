@@ -1,5 +1,5 @@
 # Backend codes for ClimateBench2
-Backend codes are for calculating benchmarking statistics. Results will be saved on the climatebench google cloud bucket, that will be displayed in the frontend web app.
+Backend codes are for calculating benchmarking statistics. Results will be saved on the [climatebench google cloud bucket](https://console.cloud.google.com/storage/browser/climatebench;tab=objects?forceOnBucketsSortingFiltering=true&hl=en&inv=1&invt=Ab0dEw&project=fluid-script-453604-u5&prefix=&forceOnObjectsSortingFiltering=false), that will be displayed in the frontend web app.
 
 ```bash
 # set up the environment
@@ -15,12 +15,12 @@ python global_mean_rmse_benchmark.py --org CAS --model FGOALS-g3 --variable pr -
 
 ### Notes
 - env.yml is for running backend codes, but not obs download codes. For some obs download scripts you will need to install/set up the google earth engine api.
-- run_benchmark.sh -- this bash script contains all institute/model pairs, but not all pairs have all the data we need. The script will fail if the itteration does not have all three ensemble members for the historical and projected simulations. You can modify the script to run for a subset of institution/models, variables, and statistical metric. For now, the "tos" variable is not working.
+- run_benchmark.sh -- this bash script contains all institute/model pairs, but not all pairs have all the data we need. The benchmarking script will fail if the itteration does not have all three ensemble members for the historical and projected simulations, but the bash script will continue to the next combination. You can modify the script to run for a subset of institution/models, variables, and statistical metric. For now, the "tos" variable is not working.
 - DataFinder -- this class is in utils.py. Given the org, model, and variable, it will get the observational and model data that you need. Can be used for exploratory data analysis as well.
 
 
 ### obs_data_download
-Download scripts for observational data for our five variables of interest. Data is saved on google cloud in the "climatebench" bucket, so scripts do not need to be run again.
+Download scripts for observational data for our five variables of interest. Data is saved on google cloud in the [climatebench bucket](https://console.cloud.google.com/storage/browser/climatebench;tab=objects?forceOnBucketsSortingFiltering=true&hl=en&inv=1&invt=Ab0dEw&project=fluid-script-453604-u5&prefix=&forceOnObjectsSortingFiltering=false), so scripts do not need to be run again.
 - nasa_airs_tas_download.py -- downloads surface temperature data from NASA. Uses wget command with list of files in the "subset_AIRS3STM....txt".
 - noaa_gpcp_pr_download.py -- downloads precipitation data from [NOAA](https://psl.noaa.gov/data/gridded/data.gpcp.html).
 - noaa_oisst_tos_download.py -- downloads sea surface temperature data from [NOAA](https://psl.noaa.gov/data/gridded/data.noaa.oisst.v2.highres.html). 

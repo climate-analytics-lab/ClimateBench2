@@ -4,6 +4,7 @@ import os
 from csv import writer
 
 import pandas as pd
+import xarray as xr
 import xesmf as xe
 
 from constants import (
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def main(org, model, variable, metrics):
+def main(org, model, variable, metrics, save_to_cloud):
     logger.info(
         f"Processing model: {model}, variable: {variable}, org: {org}, metrics: {metrics}"
     )
@@ -50,13 +51,16 @@ def main(org, model, variable, metrics):
 
     for metric in metrics:
         logger.info(f"Calculating {metric}")
-        rmse_hist = metric_calculator.global_mean_rmse(
-            time_slice=slice(HIST_START_DATE, HIST_END_DATE), metric=metric
+        rmse_hist = metric_calculator.calculate_zonal_mean_rmse(
+            time_slice=slice(HIST_START_DATE, HIST_END_DATE),
+            metric=metric,
+            lat_slice=slice(-90, 90),  # should add arg for lat slice
         )
-        rmse_ssp245 = metric_calculator.global_mean_rmse(
-            time_slice=slice(SSP_START_DATE, SSP_END_DATE), metric=metric
+        rmse_ssp245 = metric_calculator.calculate_zonal_mean_rmse(
+            time_slice=slice(SSP_START_DATE, SSP_END_DATE),
+            metric=metric,
+            lat_slice=slice(-90, 90),
         )
-
         result_df = pd.DataFrame(
             {
                 "org": [org],
@@ -68,11 +72,42 @@ def main(org, model, variable, metrics):
                 SSP_EXPERIMENT: [rmse_ssp245],
             }
         )
+        rmse_hist_map = metric_calculator.calculate_rmse(
+            metric=metric,
+            time_slice=slice(HIST_START_DATE, HIST_END_DATE),
+            dims=["time"],
+        )
+        rmse_ssp245_map = metric_calculator.calculate_rmse(
+            metric=metric, time_slice=slice(SSP_START_DATE, SSP_END_DATE), dims=["time"]
+        )
+        rmse_map = xr.concat(
+            [
+                rmse_hist_map.expand_dims(
+                    {"time_slice": [f"{HIST_START_DATE}_{HIST_END_DATE}"]}
+                ),
+                rmse_ssp245_map.expand_dims(
+                    {"time_slice": [f"{SSP_START_DATE}_{SSP_END_DATE}"]}
+                ),
+            ],
+            dim="time_slice",
+        ).to_dataset(name=metric)
+        rmse_time_series = metric_calculator.calculate_rmse(
+            metric=metric,
+            time_slice=slice(HIST_START_DATE, SSP_END_DATE),
+            dims=["lat", "lon"],
+        ).to_dataset(name=metric)
 
         save_results = SaveResults(
             variable=variable, experiment="RMSE"
         )  # will want to set some experiment groups later
-        save_results.save_to_csv(result_df, "global_mean_rmse_results.csv")
+        if save_to_cloud:
+            save_results.save_to_csv_gcs(result_df, "global_mean_rmse_results.csv")
+        else:
+            save_results.save_to_csv_local(result_df, "global_mean_rmse_results.csv")
+            save_results.save_zarr_local(rmse_map, f"{org}_{model}_temporal_rmse.zarr")
+            save_results.save_zarr_local(
+                rmse_time_series, f"{org}_{model}_spatial_rmse.zarr"
+            )
 
 
 if __name__ == "__main__":
@@ -99,6 +134,12 @@ if __name__ == "__main__":
         choices=["rmse", "rmse_bias_adjusted", "rmse_anomaly"],
         help="Global RMSE metric to calculate.",
     )
+    parser.add_argument(
+        "--save_to_cloud",
+        action="store_true",
+        default=False,
+        help="Save data on google cloud if passed, if not passsed saved locally",
+    )
     args = parser.parse_args()
 
-    main(args.org, args.model, args.variable, args.metrics)
+    main(args.org, args.model, args.variable, args.metrics, args.save_to_cloud)

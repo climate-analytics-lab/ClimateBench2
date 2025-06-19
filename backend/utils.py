@@ -287,49 +287,58 @@ class MetricCalculation:
             self.weights = weights
         else:
             self.weights = weights
-        self.model_global_mean = None
-        self.obs_global_mean = None
-        self.model_global_mean_bias_adjusted = None
-        self.model_global_mean_anomaly = None
-        self.obs_global_mean_anomaly = None
+        self.model_bias_adjusted = None
+        self.model_anomaly = None
+        self.obs_anomaly = None
 
-    def global_mean(self):
-        self.model_global_mean = self.model.weighted(self.weights.fillna(0)).mean(
-            dim=["lat", "lon"], keep_attrs=True
+        self.model_zonal_mean = None
+        self.obs_zonal_mean = None
+
+    def zonal_mean(self, lat_slice):
+        self.model_zonal_mean = (
+            self.model.sel(lat=lat_slice)
+            .weighted(self.weights.sel(lat=lat_slice).fillna(0))
+            .mean(dim=["lat", "lon"], keep_attrs=True)
         )
-        self.obs_global_mean = self.obs.weighted(self.weights.fillna(0)).mean(
-            dim=["lat", "lon"], keep_attrs=True
+        self.obs_zonal_mean = (
+            self.obs.sel(lat=lat_slice)
+            .weighted(self.weights.sel(lat=lat_slice).fillna(0))
+            .mean(dim=["lat", "lon"], keep_attrs=True)
         )
 
-    def global_mean_rmse(self, metric, time_slice):
-        if self.model_global_mean is None:
-            # only need to run this if it has not already been run
-            self.global_mean()
+    # little helper functions
+    def anomaly(ds):
+        return ds.groupby("time.month") - ds.groupby("time.month").mean("time")
 
-        model_rmse_data = self.model_global_mean
-        obs_rmse_data = self.obs_global_mean
+    def bias_adjustment(model, obs):
+        adjustment = model.mean(dim="time") - obs.mean(dim="time")
+        return model - adjustment
 
-        if metric == "rmse_bias_adjusted":
-            if self.model_global_mean_bias_adjusted is None:
-                adjustment = self.model_global_mean.mean() - self.obs_global_mean.mean()
-                self.model_global_mean_bias_adjusted = (
-                    self.model_global_mean - adjustment
-                )
-            model_rmse_data = self.model_global_mean_bias_adjusted
+    def calculate_zonal_mean_rmse(
+        self, metric, time_slice, lat_slice, force_zonal_mean_calc=False
+    ):
+        logger.info(
+            f"calculating zonal mean rmse for time: {time_slice}, lat: {lat_slice}"
+        )
+        if self.model_zonal_mean is None:
+            self.zonal_mean(lat_slice)
+        elif force_zonal_mean_calc:
+            # set this if calling function for multiple DIFFERENT zonal mean calculations
+            self.zonal_mean(lat_slice)
+        model_rmse_data = self.model_zonal_mean
+        obs_rmse_data = self.obs_zonal_mean
 
-        if metric == "rmse_anomaly":
-            if (
-                self.model_global_mean_anomaly is None
-                and self.obs_global_mean_anomaly is None
-            ):
-                self.model_global_mean_anomaly = self.model_global_mean.groupby(
-                    "time.month"
-                ) - self.model_global_mean.groupby("time.month").mean("time")
-                self.obs_global_mean_anomaly = self.obs_global_mean.groupby(
-                    "time.month"
-                ) - self.obs_global_mean.groupby("time.month").mean("time")
-            model_rmse_data = self.model_global_mean_anomaly
-            obs_rmse_data = self.obs_global_mean_anomaly
+        if metric == "bias_adjusted":
+            model_zonal_mean_bias_adjusted = self.bias_adjustment(
+                self.model_zonal_mean, self.obs_zonal_mean
+            )
+            model_rmse_data = model_zonal_mean_bias_adjusted
+
+        if metric == "anomaly":
+            model_zonal_mean_anomaly = self.anomaly(self.model_zonal_mean)
+            obs_zonal_mean_anomaly = self.anomaly(self.obs_zonal_mean)
+            model_rmse_data = model_zonal_mean_anomaly
+            obs_rmse_data = obs_zonal_mean_anomaly
 
         return xs.rmse(
             a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
@@ -337,6 +346,31 @@ class MetricCalculation:
             skipna=True,
             keep_attrs=True,
         ).values.tolist()
+
+    def calculate_rmse(self, metric, time_slice, dims):
+        logger.info(
+            f"calculating rmse for time: {time_slice}, metric: {metric}, across dims: {dims}"
+        )
+        model_rmse_data = self.model
+        obs_rmse_data = self.obs
+        if metric == "bias_adjusted":
+            if self.model_bias_adjusted is None:
+                self.model_bias_adjusted = self.bias_adjustment(self.model, self.obs)
+            model_rmse_data = self.model_bias_adjusted
+
+        if metric == "anomaly":
+            if self.model_anomaly is None and self.obs_anomaly is None:
+                self.model_anomaly = self.anomaly(self.model)
+                self.obs_anomaly = self.anomaly(self.obs)
+            model_rmse_data = self.model_anomaly
+            obs_rmse_data = self.obs_anomaly
+        return xs.rmse(
+            a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
+            b=obs_rmse_data.sel(time=time_slice).chunk({"time": -1}),
+            skipna=True,
+            keep_attrs=True,
+            dim=dims,
+        )
 
 
 class SaveResults:
@@ -351,7 +385,7 @@ class SaveResults:
         self.gcs_prefix = f"gs://{self.bucket_name}/"
         self.gcs_path = f"results/{self.experiment}/{self.variable}/"
 
-    def save_to_csv(self, result_df, file_name):
+    def save_to_csv_gcs(self, result_df, file_name):
         data_path = self.gcs_path + file_name
         full_gcs_path = self.gcs_prefix + data_path
         blob = storage.Blob(bucket=self.bucket, name=data_path)
@@ -377,11 +411,38 @@ class SaveResults:
         logger.info(f"Results saved: {full_gcs_path}")
         # this is a lot of reads/writes to the bucket, might be worth it to save data locally and then just upload final file at the end
 
-    def save_time_series(self):
-        # for time series data, its easier to stack because coordinates should be common
+    def save_to_csv_local(self, result_df, file_name):
+        # for local development and testing, to reduce google cloud costs
+        data_path = self.gcs_path + file_name
+        if os.path.isfile(data_path):
+            with open(data_path, "a") as f_object:
+                writer_object = writer(f_object)
+                writer_object.writerow(result_df.values.flatten().tolist())
+                f_object.close()
+        else:
+            if not os.path.exists(self.gcs_path):
+                os.makedirs(self.gcs_path)
+            result_df.to_csv(data_path, index=False)
+
+        logger.info(f"Results saved locally: {data_path}")
+
+    def save_zarr_gcs(self, ds, file_name):
+        # todo
         return None
 
-    def save_map(self):
-        # map data is harder to stack because the models have different grids
+    def save_zarr_local(self, ds, file_name, overwrite=False):
         # file name should be org_model_....
+        data_path = self.gcs_path + file_name
+        # if os.path.exists(data_path) and not overwrite:
+        #     logger.warning(f'data already exists at path: {data_path}, and overwrite not set.')
+        #     return None
+        # else:
+        # set to one chunk across dims
+        chunks = {}
+        for dim in ds.dims:
+            chunks[dim] = -1
+        ds = ds.chunk(chunks)
+        # save
+        ds.to_zarr(data_path, mode="a")
+        logger.info(f"data saved: {data_path}")
         return None

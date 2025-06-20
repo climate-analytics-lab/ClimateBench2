@@ -4,6 +4,7 @@ import os
 from csv import writer
 
 import pandas as pd
+import xarray as xr
 import xesmf as xe
 
 from constants import (
@@ -15,13 +16,13 @@ from constants import (
     SSP_EXPERIMENT,
     SSP_START_DATE,
 )
-from utils import DataFinder, MetricCalculation
+from utils import DataFinder, MetricCalculation, SaveResults
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def main(org, model, variable, metrics):
+def main(org, model, variable, metrics, save_to_cloud, overwrite):
     logger.info(
         f"Processing model: {model}, variable: {variable}, org: {org}, metrics: {metrics}"
     )
@@ -41,54 +42,82 @@ def main(org, model, variable, metrics):
     regridder = xe.Regridder(obs_ds, model_ds[["lat", "lon"]], "bilinear")
     obs_rg_ds = regridder(obs_ds[variable], keep_attrs=True).to_dataset(name=variable)
 
-    # calculate global mean rmse
+    # set up metric calculation class
     metric_calculator = MetricCalculation(
         observations=obs_rg_ds[variable],
         model=model_ds[variable],
         weights=fx_ds["areacella"],
     )
+    # set up data save class
+    save_results = SaveResults(variable=variable, experiment="RMSE")
+    # if overwrite paramter is set, delete files in the save path
+    if overwrite:
+        logger.info(f"Deleting stale data in: {save_results.data_path}")
+        save_results.overwrite(save_to_cloud=save_to_cloud)
 
     for metric in metrics:
         logger.info(f"Calculating {metric}")
-        rmse_hist = metric_calculator.global_mean_rmse(
-            time_slice=slice(HIST_START_DATE, HIST_END_DATE), metric=metric
+        rmse_hist = metric_calculator.calculate_zonal_mean_rmse(
+            time_slice=slice(HIST_START_DATE, HIST_END_DATE),
+            metric=metric,
+            lat_slice=slice(-90, 90),  # should add arg for lat slice
         )
-        rmse_ssp245 = metric_calculator.global_mean_rmse(
-            time_slice=slice(SSP_START_DATE, SSP_END_DATE), metric=metric
+        rmse_ssp245 = metric_calculator.calculate_zonal_mean_rmse(
+            time_slice=slice(SSP_START_DATE, SSP_END_DATE),
+            metric=metric,
+            lat_slice=slice(-90, 90),
         )
+        result_df = pd.DataFrame(
+            {
+                "org": [org],
+                "model": [model],
+                "variable": [variable],
+                "ensemble members": ["_".join(ENSEMBLE_MEMBERS)],
+                "metric": [metric],
+                "historical": [rmse_hist],
+                SSP_EXPERIMENT: [rmse_ssp245],
+            }
+        )
+        rmse_hist_map = metric_calculator.calculate_rmse(
+            metric=metric,
+            time_slice=slice(HIST_START_DATE, HIST_END_DATE),
+            dims=["time"],
+        )
+        rmse_ssp245_map = metric_calculator.calculate_rmse(
+            metric=metric, time_slice=slice(SSP_START_DATE, SSP_END_DATE), dims=["time"]
+        )
+        rmse_map = xr.concat(
+            [
+                rmse_hist_map.expand_dims(
+                    {"time_slice": [f"{HIST_START_DATE}_{HIST_END_DATE}"]}
+                ),
+                rmse_ssp245_map.expand_dims(
+                    {"time_slice": [f"{SSP_START_DATE}_{SSP_END_DATE}"]}
+                ),
+            ],
+            dim="time_slice",
+        ).to_dataset(name=metric)
+        rmse_time_series = metric_calculator.calculate_rmse(
+            metric=metric,
+            time_slice=slice(HIST_START_DATE, SSP_END_DATE),
+            dims=["lat", "lon"],
+        ).to_dataset(name=metric)
 
-        # This method of saving results works for single value metrics, but we will want to expand to time series and spatial metrics.
-        results_line = [
-            org,
-            model,
-            variable,
-            "_".join(ENSEMBLE_MEMBERS),
-            metric,
-            rmse_hist,
-            rmse_ssp245,
-        ]
-
-        logger.info("Saving results")
-        # write results to csv (add new line if csv already exists)
-        if os.path.isfile(RESULTS_FILE_PATH):
-            with open(RESULTS_FILE_PATH, "a") as f_object:
-                writer_object = writer(f_object)
-                writer_object.writerow(results_line)
-                f_object.close()
+        # save data
+        if save_to_cloud:
+            save_results.save_to_csv_gcs(result_df, "global_mean_rmse_results.csv")
         else:
-            pd.DataFrame(
-                {
-                    "org": [results_line[0]],
-                    "model": [results_line[1]],
-                    "variable": [results_line[2]],
-                    "ensemble members": [results_line[3]],
-                    "metric": [results_line[4]],
-                    "historical": [results_line[5]],
-                    SSP_EXPERIMENT: [results_line[6]],
-                }
-            ).to_csv(RESULTS_FILE_PATH, index=False)
-
-        logger.info(f"Results saved: {RESULTS_FILE_PATH}")
+            save_results.save_to_csv_local(result_df, "global_mean_rmse_results.csv")
+        save_results.save_zarr(
+            ds=rmse_map,
+            file_name=f"{org}_{model}_temporal_rmse.zarr",
+            save_to_cloud=save_to_cloud,
+        )
+        save_results.save_zarr(
+            ds=rmse_time_series,
+            file_name=f"{org}_{model}_spatial_rmse.zarr",
+            save_to_cloud=save_to_cloud,
+        )
 
 
 if __name__ == "__main__":
@@ -115,6 +144,25 @@ if __name__ == "__main__":
         choices=["rmse", "rmse_bias_adjusted", "rmse_anomaly"],
         help="Global RMSE metric to calculate.",
     )
+    parser.add_argument(
+        "--save_to_cloud",
+        action="store_true",
+        default=False,
+        help="Save data on google cloud if passed, if not passsed saved locally",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        default=False,
+        help="Deletes any previously saved data at the save path.",
+    )
     args = parser.parse_args()
 
-    main(args.org, args.model, args.variable, args.metrics)
+    main(
+        args.org,
+        args.model,
+        args.variable,
+        args.metrics,
+        args.save_to_cloud,
+        args.overwrite,
+    )

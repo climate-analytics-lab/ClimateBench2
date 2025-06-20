@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def main(org, model, variable, metrics, save_to_cloud):
+def main(org, model, variable, metrics, save_to_cloud, overwrite):
     logger.info(
         f"Processing model: {model}, variable: {variable}, org: {org}, metrics: {metrics}"
     )
@@ -42,12 +42,18 @@ def main(org, model, variable, metrics, save_to_cloud):
     regridder = xe.Regridder(obs_ds, model_ds[["lat", "lon"]], "bilinear")
     obs_rg_ds = regridder(obs_ds[variable], keep_attrs=True).to_dataset(name=variable)
 
-    # calculate global mean rmse
+    # set up metric calculation class
     metric_calculator = MetricCalculation(
         observations=obs_rg_ds[variable],
         model=model_ds[variable],
         weights=fx_ds["areacella"],
     )
+    # set up data save class
+    save_results = SaveResults(variable=variable, experiment="RMSE")
+    # if overwrite paramter is set, delete files in the save path
+    if overwrite:
+        logger.info(f"Deleting stale data in: {save_results.data_path}")
+        save_results.overwrite(save_to_cloud=save_to_cloud)
 
     for metric in metrics:
         logger.info(f"Calculating {metric}")
@@ -97,17 +103,21 @@ def main(org, model, variable, metrics, save_to_cloud):
             dims=["lat", "lon"],
         ).to_dataset(name=metric)
 
-        save_results = SaveResults(
-            variable=variable, experiment="RMSE"
-        )  # will want to set some experiment groups later
+        # save data
         if save_to_cloud:
             save_results.save_to_csv_gcs(result_df, "global_mean_rmse_results.csv")
         else:
             save_results.save_to_csv_local(result_df, "global_mean_rmse_results.csv")
-            save_results.save_zarr_local(rmse_map, f"{org}_{model}_temporal_rmse.zarr")
-            save_results.save_zarr_local(
-                rmse_time_series, f"{org}_{model}_spatial_rmse.zarr"
-            )
+        save_results.save_zarr(
+            ds=rmse_map,
+            file_name=f"{org}_{model}_temporal_rmse.zarr",
+            save_to_cloud=save_to_cloud,
+        )
+        save_results.save_zarr(
+            ds=rmse_time_series,
+            file_name=f"{org}_{model}_spatial_rmse.zarr",
+            save_to_cloud=save_to_cloud,
+        )
 
 
 if __name__ == "__main__":
@@ -140,6 +150,19 @@ if __name__ == "__main__":
         default=False,
         help="Save data on google cloud if passed, if not passsed saved locally",
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        default=False,
+        help="Deletes any previously saved data at the save path.",
+    )
     args = parser.parse_args()
 
-    main(args.org, args.model, args.variable, args.metrics, args.save_to_cloud)
+    main(
+        args.org,
+        args.model,
+        args.variable,
+        args.metrics,
+        args.save_to_cloud,
+        args.overwrite,
+    )

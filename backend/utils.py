@@ -2,6 +2,7 @@ import glob
 import io
 import logging
 import os
+import shutil
 from csv import writer
 
 import dask.array as da
@@ -383,14 +384,14 @@ class SaveResults:
         self.bucket_name = "climatebench"
         self.bucket = self.storage_client.bucket(self.bucket_name)
         self.gcs_prefix = f"gs://{self.bucket_name}/"
-        self.gcs_path = f"results/{self.experiment}/{self.variable}/"
+        self.data_path = f"results/{self.experiment}/{self.variable}/"
 
     def save_to_csv_gcs(self, result_df, file_name):
-        data_path = self.gcs_path + file_name
-        full_gcs_path = self.gcs_prefix + data_path
-        blob = storage.Blob(bucket=self.bucket, name=data_path)
+        file_path = self.data_path + file_name
+        full_gcs_path = self.gcs_prefix + file_path
+        blob = storage.Blob(bucket=self.bucket, name=file_path)
 
-        logger.info(f"Saving results to {data_path}")
+        logger.info(f"Saving results to {file_path}")
         # write results to csv (add new line if csv already exists)
         if blob.exists(self.storage_client):
             # download existing content
@@ -413,36 +414,46 @@ class SaveResults:
 
     def save_to_csv_local(self, result_df, file_name):
         # for local development and testing, to reduce google cloud costs
-        data_path = self.gcs_path + file_name
-        if os.path.isfile(data_path):
-            with open(data_path, "a") as f_object:
+        file_path = self.data_path + file_name
+        if os.path.isfile(file_path):
+            with open(file_path, "a") as f_object:
                 writer_object = writer(f_object)
                 writer_object.writerow(result_df.values.flatten().tolist())
                 f_object.close()
         else:
-            if not os.path.exists(self.gcs_path):
-                os.makedirs(self.gcs_path)
-            result_df.to_csv(data_path, index=False)
+            if not os.path.exists(self.data_path):
+                os.makedirs(self.data_path)
+            result_df.to_csv(file_path, index=False)
 
-        logger.info(f"Results saved locally: {data_path}")
+        logger.info(f"Results saved locally: {file_path}")
 
-    def save_zarr_gcs(self, ds, file_name):
-        # todo
-        return None
-
-    def save_zarr_local(self, ds, file_name, overwrite=False):
+    def save_zarr(self, ds, file_name, save_to_cloud):
         # file name should be org_model_....
-        data_path = self.gcs_path + file_name
-        # if os.path.exists(data_path) and not overwrite:
-        #     logger.warning(f'data already exists at path: {data_path}, and overwrite not set.')
-        #     return None
-        # else:
-        # set to one chunk across dims
+        file_path = self.data_path + file_name
+        if save_to_cloud:
+            file_path = self.gcs_prefix + file_path
         chunks = {}
         for dim in ds.dims:
             chunks[dim] = -1
         ds = ds.chunk(chunks)
         # save
-        ds.to_zarr(data_path, mode="a")
-        logger.info(f"data saved: {data_path}")
+        ds.to_zarr(file_path, mode="a")
+        logger.info(f"data saved: {file_path}")
         return None
+
+    def overwrite(self, save_to_cloud=False):
+        if save_to_cloud:
+            # remove google cloud files
+            blobs = self.bucket.list_blobs(prefix=self.data_path)
+            for blob in blobs:
+                blob.delete()
+                print(f"Blob {blob.name} deleted.")
+        else:
+            # remove local files
+            local_files = glob.glob(self.data_path + "*")
+            for file in local_files:
+                logger.info(f"deleting file: {file}")
+                if file[-4:] == "zarr":
+                    shutil.rmtree(file)
+                else:
+                    os.remove(file)

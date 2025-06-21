@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Leaflet Basemap + TiTiler Raster Overlay</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+  <div id="map" style="width: 100%; height: 600px;"></div>
+  <script>
+    // Initialize the map with OpenStreetMap as the basemap
+    var map = L.map('map').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    /// Define the local raster path and TiTiler endpoint
+    // Replace with your own full GeoTIFF path - use the appropriate format for your OS.
+    var rasterPath = 'file:///path_to_your_raster.tif';
+    var titilerUrl = 'http://127.0.0.1:8000/tiles/WebMercatorQuad/{z}/{x}/{y}.png?url=' + encodeURIComponent(rasterPath);
+
+    // Add the TiTiler raster overlay with some transparency
+    L.tileLayer(titilerUrl, {
+      tileSize: 256,
+      opacity: 0.7,
+      maxZoom: 22
+    }).addTo(map);
+
+    // Fetch the raster's bounding box from TiTiler and adjust the map view accordingly
+    var boundsUrl = 'http://127.0.0.1:8000/bounds?url=' + encodeURIComponent(rasterPath);
+    console.log(boundsUrl)
+    fetch(boundsUrl)
+      .then(response => response.json())
+      .then(data => {
+        console.log("Bounds data:", data);
+        if (data && data.bounds) {
+          // data.bounds is [minX, minY, maxX, maxY]
+          var b = data.bounds;
+          // Convert to Leaflet bounds: [[southWest_lat, southWest_lng], [northEast_lat, northEast_lng]]
+          var leafletBounds = [[b[1], b[0]], [b[3], b[2]]];
+          map.fitBounds(leafletBounds);
+        } else {
+          console.error("No bounds returned from TiTiler.");
+        }
+      })
+      .catch(error => console.error("Error fetching bounds:", error));
+
+  </script>
+</body>
+</html>

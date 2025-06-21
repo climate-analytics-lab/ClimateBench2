@@ -1,29 +1,27 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
 from titiler.core.factory import TilerFactory
-from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
 
-app = FastAPI(title="Titiler + Leaflet demo")
+from starlette.middleware.cors import CORSMiddleware
 
-# Enable CORS for all origins for simplicity
+app = FastAPI()
+
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allows all origins (for development - be more specific in production)
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
 )
 
-# Create a Titiler factory for COG
+# Create a TilerFactory for Cloud-Optimized GeoTIFFs
 cog = TilerFactory()
 
-# Include Titiler router under /cog prefix
-app.include_router(cog.router, prefix="/cog", tags=["Cloud Optimized GeoTIFF"])
+# Register all the COG endpoints automatically
+app.include_router(cog.router, tags=["Cloud Optimized GeoTIFF"])
 
-add_exception_handlers(app, DEFAULT_STATUS_CODES)
 
-# Health check endpoint
-@app.get("/healthz")
-def health_check():
-    return {"status": "ok"}
+# Optional: Add a welcome message for the root endpoint
+@app.get("/")
+def read_index():
+    return {"message": "Welcome to TiTiler"}

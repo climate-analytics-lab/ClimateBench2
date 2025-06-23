@@ -12,10 +12,69 @@ SSP_START_DATE = "2015-01-01"
 SSP_END_DATE = "2024-12-31"
 RESULTS_FILE_PATH = "model_benchmark_results.csv"
 SSP_EXPERIMENT = "ssp245"
+GOOGLE_CLOUD_PROJECT = "fluid-script-453604-u5"
+OBSERVATION_DATA_SPECS = {
+    "tas": {
+        "nasa_airs": {
+            "cloud_path": "gs://climatebench/observations/preprocessed/tas/tas_nasa_airs.zarr",
+            "local_path": "observational_data/tas_nasa_airs.zarr",
+            "wget_file_list": "observational_data/subset_AIRS3STM_7.0_20250521_202757_.txt",
+            "source_var_name": "SurfAirTemp_A",
+            "long_name": "Near-Surface Air Temperature",
+            "standard_name": "air_temperature",
+            "units": "K",
+        },
+    },
+    "pr": {
+        "noaa_gpcp": {
+            "cloud_path": "gs://climatebench/observations/preprocessed/pr/pr_noaa_gpcp.zarr",
+            "local_path": "observational_data/pr_noaa_gpcp.zarr",
+            "download_url": "http://psl.noaa.gov/thredds/dodsC/Datasets/gpcp/precip.mon.mean.nc",
+            "source_var_name": "precip",
+            "long_name": "Average Monthly Rate of Precipitation",
+            "standard_name": "precipitation_flux",
+            "units": "kg m-2 s-1",
+        },
+    },
+    "tos": {
+        "noaa_oisst": {
+            "cloud_path": "gs://climatebench/observations/preprocessed/tos/tos_noaa_oisst.zarr",
+            "local_path": "observational_data/tos_noaa_oisst.zarr",
+            "download_url": "http://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres/sst.mon.mean.nc",
+            "source_var_name": "sst",
+            "long_name": "Sea Surface Temperature",
+            "standard_name": "sea_surface_temperature",
+            "units": "degC",
+        },
+    },
+    "clt": {
+        "nasa_modis": {
+            "cloud_path": "gs://climatebench/observations/preprocessed/clt/clt_nasa_modis.zarr",
+            "local_path": "observational_data/clt_nasa_modis.zarr",
+            "gee_image_collection": "MODIS/061/MOD08_M3",
+            "source_var_name": "Cloud_Fraction_Mean_Mean",
+            "long_name": "Total Cloud Cover Percentage",
+            "standard_name": "cloud_area_fraction",
+            "units": "percent",
+        },
+    },
+    "od550aer": {
+        "nasa_modis": {
+            "cloud_path": "gs://climatebench/observations/preprocessed/od550aer/od550aer_nasa_modis.zarr",
+            "local_path": "observational_data/od550aer_nasa_modis.zarr",
+            "gee_image_collection": "MODIS/061/MOD08_M3",
+            "source_var_name": "Aerosol_Optical_Depth_Land_Ocean_Mean_Mean",
+            "long_name": "Ambient Aerosol Optical Thickness at 550nm",
+            "standard_name": "atmosphere_optical_thickness_due_to_ambient_aerosol_particles",
+            "units": None,
+        },
+    },
+}
+# using nested dict incase we have multiple obs datasets for one var. This dict should use the main obs dataset.
 OBSERVATION_DATA_PATHS = {
-    "tas": "gs://climatebench/observations/preprocessed/tas/tas_nasa_airs.zarr",
-    "tos": "gs://climatebench/observations/preprocessed/tos/tos_noaa_oisst.zarr",
-    "pr": "gs://climatebench/observations/preprocessed/pr/pr_noaa_gpcp.zarr",
-    "clt": "gs://climatebench/observations/preprocessed/clt/clt_nasa_modis.zarr",
-    "od550aer": "gs://climatebench/observations/preprocessed/od550aer/od550aer_nasa_modis.zarr",
+    "tas": OBSERVATION_DATA_SPECS["tas"]["nasa_airs"]["cloud_path"],
+    "tos": OBSERVATION_DATA_SPECS["tos"]["noaa_oisst"]["cloud_path"],
+    "pr": OBSERVATION_DATA_SPECS["pr"]["noaa_gpcp"]["cloud_path"],
+    "clt": OBSERVATION_DATA_SPECS["clt"]["nasa_modis"]["cloud_path"],
+    "od550aer": OBSERVATION_DATA_SPECS["od550aer"]["nasa_modis"]["cloud_path"],
 }

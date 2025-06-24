@@ -1,9 +1,11 @@
+/* Reset and box sizing */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
+/* Base body style */
 body {
     font-family: 'Roboto', Arial, sans-serif;
     line-height: 1.6;
@@ -11,30 +13,31 @@ body {
     background-color: #fff;
 }
 
+/* Header */
 .header {
     background-color: #4285f4;
     color: white;
     padding: 20px 0;
     text-align: center;
 }
-
 .header h1 {
     font-size: 2.5em;
     margin-bottom: 10px;
     font-weight: 400;
 }
-
 .header p {
     font-size: 1.2em;
     font-weight: 300;
 }
 
+/* Container */
 .container {
     max-width: 1200px;
     margin: 0 auto;
     padding: 0 20px;
 }
 
+/* Navigation Bar */
 .nav-bar {
     background-color: #f8f9fa;
     border-bottom: 1px solid #e9ecef;
@@ -43,14 +46,12 @@ body {
     top: 0;
     z-index: 100;
 }
-
 .nav-links {
     display: flex;
     gap: 30px;
     list-style: none;
     justify-content: center;
 }
-
 .nav-links a {
     text-decoration: none;
     color: #333;
@@ -58,19 +59,18 @@ body {
     border-radius: 4px;
     transition: background-color 0.2s;
 }
-
-.nav-links a:hover {
+.nav-links a:hover,
+.nav-links a.active {
     background-color: #e9ecef;
 }
 
+/* Main content */
 .main-content {
     padding: 40px 0;
 }
-
 .section {
     margin-bottom: 50px;
 }
-
 .section h2 {
     color: #1a73e8;
     font-size: 1.8em;
@@ -78,84 +78,19 @@ body {
     border-bottom: 2px solid #e8f0fe;
     padding-bottom: 10px;
 }
-
-.section h3 {
-    color: #333;
-    font-size: 1.4em;
-    margin-bottom: 15px;
-    margin-top: 30px;
-}
-
 .section p {
     margin-bottom: 15px;
     text-align: justify;
 }
-
 .section a {
     color: #1a73e8;
     text-decoration: none;
 }
-
 .section a:hover {
     text-decoration: underline;
 }
 
-.scorecard {
-    background-color: #f8f9fa;
-    border-radius: 8px;
-    padding: 20px;
-    margin: 30px 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-
-.scorecard-title {
-    font-weight: 600;
-    margin-bottom: 15px;
-    color: #333;
-}
-
-.scorecard-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
-    margin-bottom: 15px;
-}
-
-.scorecard-header {
-    background-color: #1a73e8;
-    color: white;
-    padding: 10px;
-    text-align: center;
-    font-weight: 600;
-    border-radius: 4px;
-}
-
-.scorecard-cell {
-    background-color: white;
-    padding: 8px;
-    text-align: center;
-    border-radius: 4px;
-    border: 1px solid #dee2e6;
-    font-size: 0.9em;
-}
-
-.scorecard-model {
-    background-color: #e3f2fd;
-    font-weight: 600;
-    text-align: left;
-    padding-left: 15px;
-}
-
-.skill-positive {
-    background-color: #e8f5e8;
-    color: #2e7d32;
-}
-
-.skill-negative {
-    background-color: #ffebee;
-    color: #c62828;
-}
-
+/* Table styles */
 .models-table {
     width: 100%;
     border-collapse: collapse;
@@ -163,7 +98,6 @@ body {
     background-color: white;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
-
 .models-table th {
     background-color: #1a73e8;
     color: white;
@@ -171,51 +105,57 @@ body {
     text-align: left;
     font-weight: 600;
 }
-
 .models-table td {
     padding: 12px 15px;
     border-bottom: 1px solid #e9ecef;
 }
-
 .models-table tr:hover {
     background-color: #f8f9fa;
 }
-
-.model-type-physics {
-    background-color: #e3f2fd;
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 0.8em;
-    font-weight: 600;
-    color: #1565c0;
+/* Container to hold label + select inline */
+.metric-container {
+  display: flex;
+  align-items: center;
+  gap: 50px; /* space between label and select */
+  margin-bottom: 20px; /* optional spacing below */
 }
 
-.model-type-ml {
-    background-color: #f3e5f5;
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 0.8em;
-    font-weight: 600;
-    color: #7b1fa2;
+/* Label styling */
+.metric-label {
+  font-weight: 700;   /* bold */
+  font-size: 16px;
+  color: #333;
+  flex-shrink: 0;     /* prevent label from shrinking */
+  min-width: 60px;    /* keep label width consistent */
 }
 
-.model-type-hybrid {
-    background-color: #fff3e0;
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 0.8em;
-    font-weight: 600;
-    color: #ef6c00;
+/* Your existing select styling */
+#metric-select {
+  padding: 12px 16px;
+  border: 2px solid #e1e5e9;
+  border-radius: 8px;
+  background-color: white;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 12px center;
+  background-repeat: no-repeat;
+  background-size: 16px;
+  padding-right: 40px;
 }
 
-.highlight-box {
-    background-color: #e8f0fe;
-    border-left: 4px solid #1a73e8;
-    padding: 20px;
-    margin: 20px 0;
-    border-radius: 4px;
+#metric-select:hover,
+#metric-select:focus {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+  outline: none;
 }
 
+
+/* Footer */
 .footer {
     background-color: #f8f9fa;
     padding: 40px 0;
@@ -225,21 +165,23 @@ body {
     color: #6c757d;
 }
 
+/* Responsive adjustments */
 @media (max-width: 768px) {
     .header h1 {
         font-size: 2em;
     }
-    
     .nav-links {
         flex-direction: column;
         gap: 10px;
     }
-    
-    .scorecard-grid {
-        grid-template-columns: 1fr;
-    }
-    
     .models-table {
         font-size: 0.9em;
+    }
+}
+
+@media (max-width: 480px) {
+    #metric-select {
+        width: 100%;
+        min-width: 0;
     }
 }

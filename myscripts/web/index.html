@@ -38,190 +38,28 @@
                 <p>The research community can file a <a href="#">GitHub issue</a> to share ideas and suggestions directly with the WeatherBench 2 team.</p>
             </section>
 
-            <section class="section" id="headline-scorecards">
-                <h2>Headline scorecards</h2>
-                <p>There is no single metric for measuring weather forecast performance. For example, one end user might be worried about wind gusts, while another might care more about average temperatures. For this reason, WeatherBench 2 contains a range of metrics, which you can find in the navigation at the top of this page. To provide a concise summary, we defined several key - "headline" - metrics that closely mirror the routine evaluation done by weather agencies and the <a href="#">World Meteorological Organization</a>. It is important to remember that these metrics measure some important but not all aspects of what makes a good forecast.</p>
-                
-                <p>The scorecards below show the skill (measured by the global root mean squared error) of different physical and ML-based methods relative to <a href="#">ECMWF's IFS HRES</a>, one of the <a href="#">world's best operational weather models</a>, on a number of key variables. For a detailed explanation of the different skill metrics and variables, check out the <a href="#">FAQ</a>.</p>
-
-                <div class="scorecard">
-                    <div class="scorecard-title">Scorecard for upper-level variables for the year 2020. Operational models are evaluated against IFS analysis. All other models evaluated against ERA5. Order of ML models reflects publication date.</div>
-                    <div class="scorecard-grid">
-                        <div class="scorecard-header">Model</div>
-                        <div class="scorecard-header">1 day</div>
-                        <div class="scorecard-header">3 days</div>
-                        <div class="scorecard-header">5 days</div>
-                        <div class="scorecard-header">7 days</div>
-                        <div class="scorecard-header">10 days</div>
-                        
-                        <div class="scorecard-cell scorecard-model">IFS HRES</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        
-                        <div class="scorecard-cell scorecard-model">GraphCast (operational)</div>
-                        <div class="scorecard-cell skill-positive">+2.3</div>
-                        <div class="scorecard-cell skill-positive">+5.1</div>
-                        <div class="scorecard-cell skill-positive">+7.8</div>
-                        <div class="scorecard-cell skill-positive">+9.2</div>
-                        <div class="scorecard-cell skill-positive">+11.4</div>
-                        
-                        <div class="scorecard-cell scorecard-model">Pangu-Weather</div>
-                        <div class="scorecard-cell skill-positive">+1.8</div>
-                        <div class="scorecard-cell skill-positive">+4.2</div>
-                        <div class="scorecard-cell skill-positive">+6.9</div>
-                        <div class="scorecard-cell skill-positive">+8.1</div>
-                        <div class="scorecard-cell skill-positive">+9.7</div>
-                        
-                        <div class="scorecard-cell scorecard-model">FourCastNet</div>
-                        <div class="scorecard-cell skill-positive">+1.2</div>
-                        <div class="scorecard-cell skill-positive">+3.1</div>
-                        <div class="scorecard-cell skill-positive">+4.8</div>
-                        <div class="scorecard-cell skill-positive">+5.9</div>
-                        <div class="scorecard-cell skill-positive">+7.2</div>
-                        
-                        <div class="scorecard-cell scorecard-model">ECMWF HRES</div>
-                        <div class="scorecard-cell skill-negative">-1.5</div>
-                        <div class="scorecard-cell skill-negative">-2.8</div>
-                        <div class="scorecard-cell skill-negative">-3.9</div>
-                        <div class="scorecard-cell skill-negative">-4.7</div>
-                        <div class="scorecard-cell skill-negative">-5.8</div>
-                    </div>
-                    <p><small>For more detail, visit <a href="#">Deterministic Scores</a>.</small></p>
-                </div>
-
-                <div class="scorecard">
-                    <div class="scorecard-title">Scorecard for surface variables for the year 2020. Operational models are evaluated against IFS analysis. All other models evaluated against ERA5. Order of ML models reflects publication date. Precipitation is evaluated using the SEEPS score using ERA5 ground truth for all models.</div>
-                    <div class="scorecard-grid">
-                        <div class="scorecard-header">Model</div>
-                        <div class="scorecard-header">1 day</div>
-                        <div class="scorecard-header">3 days</div>
-                        <div class="scorecard-header">5 days</div>
-                        <div class="scorecard-header">7 days</div>
-                        <div class="scorecard-header">10 days</div>
-                        
-                        <div class="scorecard-cell scorecard-model">IFS HRES</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        
-                        <div class="scorecard-cell scorecard-model">GraphCast</div>
-                        <div class="scorecard-cell skill-positive">+1.9</div>
-                        <div class="scorecard-cell skill-positive">+3.8</div>
-                        <div class="scorecard-cell skill-positive">+5.2</div>
-                        <div class="scorecard-cell skill-positive">+6.1</div>
-                        <div class="scorecard-cell skill-positive">+7.3</div>
-                        
-                        <div class="scorecard-cell scorecard-model">Pangu-Weather</div>
-                        <div class="scorecard-cell skill-positive">+1.4</div>
-                        <div class="scorecard-cell skill-positive">+2.9</div>
-                        <div class="scorecard-cell skill-positive">+4.1</div>
-                        <div class="scorecard-cell skill-positive">+4.8</div>
-                        <div class="scorecard-cell skill-positive">+5.9</div>
-                        
-                        <div class="scorecard-cell scorecard-model">FourCastNet</div>
-                        <div class="scorecard-cell skill-positive">+0.8</div>
-                        <div class="scorecard-cell skill-positive">+1.9</div>
-                        <div class="scorecard-cell skill-positive">+2.7</div>
-                        <div class="scorecard-cell skill-positive">+3.2</div>
-                        <div class="scorecard-cell skill-positive">+4.1</div>
-                    </div>
-                    <p><small>For more detail, visit <a href="#">Deterministic Scores</a>. See <a href="#">FAQ</a> for details on how climatology is computed.</small></p>
-                </div>
-
-                <h3>Probabilistic scorecards</h3>
-                <p>The scorecard below shows the skill (measured by the continuous ranked probability score = CRPS) of physical and ML-based probabilistic models, relative to <a href="#">ECMWF's IFS ENS model</a>.</p>
-
-                <div class="scorecard">
-                    <div class="scorecard-title">Probabilistic scorecard for upper-level variables for the year 2020. Operational models (blue) are evaluated against IFS analysis. All other models evaluated against ERA5. Order of ML models reflects publication date.</div>
-                    <div class="scorecard-grid">
-                        <div class="scorecard-header">Model</div>
-                        <div class="scorecard-header">1 day</div>
-                        <div class="scorecard-header">3 days</div>
-                        <div class="scorecard-header">5 days</div>
-                        <div class="scorecard-header">7 days</div>
-                        <div class="scorecard-header">10 days</div>
-                        
-                        <div class="scorecard-cell scorecard-model">IFS ENS</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        <div class="scorecard-cell">0.0</div>
-                        
-                        <div class="scorecard-cell scorecard-model">GraphCast Ensemble</div>
-                        <div class="scorecard-cell skill-positive">+1.7</div>
-                        <div class="scorecard-cell skill-positive">+3.2</div>
-                        <div class="scorecard-cell skill-positive">+4.8</div>
-                        <div class="scorecard-cell skill-positive">+5.9</div>
-                        <div class="scorecard-cell skill-positive">+7.1</div>
-                        
-                        <div class="scorecard-cell scorecard-model">NeFS Ensemble</div>
-                        <div class="scorecard-cell skill-positive">+1.2</div>
-                        <div class="scorecard-cell skill-positive">+2.4</div>
-                        <div class="scorecard-cell skill-positive">+3.5</div>
-                        <div class="scorecard-cell skill-positive">+4.2</div>
-                        <div class="scorecard-cell skill-positive">+5.1</div>
-                    </div>
-                    <p><small>For more detail, visit <a href="#">Probabilistic Scores</a>.</small></p>
-                </div>
-            </section>
         <section class="section" id="participating-models">
-        <h2>Participating models</h2>
-        <p>Missing an existing model or have a new model that you'd like to see added? Check out <a href="#">this guide</a> for how to participate or submit a <a href="#">GitHub issue</a>. Please also refer to the <a href="#">FAQ</a> for more detailed information.</p>
+        <h2>Probabilistic scorecards</h2>
 
-        <table class="models-table">
+        <label for="metric-select" class="metric-label">Metric</label>
+        <select id="metric-select">
+            <option value="rmse" selected>RMSE</option>
+            <option value="rmse_bias_adjusted">RMSE Bias Adjusted</option>
+            <option value="rmse_anomaly">RMSE Anomaly</option>
+        </select>
+
+        <table class="models-table" id="rmse-table">
             <thead>
             <tr>
-                <th>Model / Dataset</th>
-                <th>Source</th>
-                <th>Method</th>
-                <th>Type</th>
-                <th>Initial conditions</th>
-                <th>Horizontal resolution **</th>
+                <th>Rank</th>
+                <th>Model</th>
+                <th>Historical RMSE</th>
+                <th>SSP245 RMSE</th>
             </tr>
             </thead>
-            <tbody id="models-table-body">
-            <!-- Rows will be inserted here -->
-            </tbody>
+            <tbody id="rmse-table-body"></tbody>
         </table>
         </section>
-<!-- 
-        <script>
-        // Replace this URL with your FastAPI endpoint
-        const modelsUrl = "http://127.0.0.1:8000/models";
-
-        fetch(modelsUrl)
-            .then(response => response.json())
-            .then(models => {
-            const tbody = document.getElementById("models-table-body");
-
-            models.forEach(modelName => {
-                const tr = document.createElement("tr");
-
-                // Create the first cell with model name in <strong>
-                const tdModel = document.createElement("td");
-                tdModel.innerHTML = `<strong>${modelName}</strong>`;
-                tr.appendChild(tdModel);
-
-                // For other columns, put placeholders (empty or dash)
-                for (let i = 1; i < 6; i++) {
-                const td = document.createElement("td");
-                td.textContent = "-"; // or empty string ""
-                tr.appendChild(td);
-                }
-
-                tbody.appendChild(tr);
-            });
-            })
-            .catch(err => {
-            console.error("Failed to load models:", err);
-            });
-        </script> -->
         </div>
     </main>
 

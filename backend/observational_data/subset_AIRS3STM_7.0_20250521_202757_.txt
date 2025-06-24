@@ -1,6 +1,3 @@
-https://docserver.gesdisc.eosdis.nasa.gov/public/project/AIRS/Overview_of_the_AIRS_Mission.pdf
-https://docserver.gesdisc.eosdis.nasa.gov/public/project/AIRS/V7_L3_User_Guide.pdf
-https://acdisc.gesdisc.eosdis.nasa.gov/opendap/Aqua_AIRS_Level3/AIRS3STM.7.0/2004/AIRS.2004.12.01.L3.RetStd_IR031.v7.0.3.0.G20218150945.hdf.nc4?SurfAirTemp_A,SurfAirTemp_A_ct,SurfAirTemp_A_sdev,Latitude,Longitude
 https://acdisc.gesdisc.eosdis.nasa.gov/opendap/Aqua_AIRS_Level3/AIRS3STM.7.0/2005/AIRS.2005.01.01.L3.RetStd_IR031.v7.0.3.0.G20217151253.hdf.nc4?SurfAirTemp_A,SurfAirTemp_A_ct,SurfAirTemp_A_sdev,Latitude,Longitude
 https://acdisc.gesdisc.eosdis.nasa.gov/opendap/Aqua_AIRS_Level3/AIRS3STM.7.0/2005/AIRS.2005.02.01.L3.RetStd_IR028.v7.0.3.0.G20217151152.hdf.nc4?SurfAirTemp_A,SurfAirTemp_A_ct,SurfAirTemp_A_sdev,Latitude,Longitude
 https://acdisc.gesdisc.eosdis.nasa.gov/opendap/Aqua_AIRS_Level3/AIRS3STM.7.0/2005/AIRS.2005.03.01.L3.RetStd_IR031.v7.0.3.0.G20217151332.hdf.nc4?SurfAirTemp_A,SurfAirTemp_A_ct,SurfAirTemp_A_sdev,Latitude,Longitude

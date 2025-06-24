@@ -41,6 +41,10 @@ def standardize_dims(ds: xr.Dataset) -> xr.Dataset:
         rename_dims["latitude"] = "lat"
     if "longitude" in ds.dims:
         rename_dims["longitude"] = "lon"
+    if "Latitude" in ds.dims:
+        rename_dims["Latitude"] = "lat"
+    if "Longitude" in ds.dims:
+        rename_dims["Longitude"] = "lon"
     if "datetime" in ds.dims:
         rename_dims["datetime"] = "time"
     if rename_dims:

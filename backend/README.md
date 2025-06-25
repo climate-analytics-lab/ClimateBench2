@@ -106,3 +106,10 @@ This file contains many of the utility functions used in the benchmarking pipeli
     - `save_to_csv_gcs()` and `save_to_csv_local()` (TODO: make this one function) This will save tabular data in a csv. If the csv already exists, it will append to it.
     - `save_zarr()` This function will save locally or to the cloud based on the `save_to_cloud` argument. The encoding of the dataset will be dropped before saving. The data will be saved as one chunk, as the results from each experiment are very small (wrt storage). 
     - `overwrite()` This will delete all files in the path for the path constructed by the class. Works for local and cloud paths. 
+
+
+## Notes on environment setup
+All code in this folder should run using the backend_env in `env.yml`. This environment includes `gcsfs`, which will allow google cloud acces. You may also need to set up the google cloud cli and authenticate to access data in the climatebench bucket.
+- [Google cloud cli set up instructions](https://cloud.google.com/sdk/docs/install)
+- `gcloud auth login` to authenticate
+- See this [stack overflow post](https://stackoverflow.com/questions/31037279/gcloud-command-not-found-while-installing-google-cloud-sdk) if you get an error about no `gcloud` command.

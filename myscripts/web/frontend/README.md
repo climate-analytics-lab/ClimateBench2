@@ -30,7 +30,7 @@ A modern React-based frontend for the ClimateBench 2.0 weather forecasting bench
 
 1. Clone the repository and navigate to the React app directory:
 ```bash
-cd climatebench-react
+cd frontend
 ```
 
 2. Install dependencies:

@@ -73,6 +73,24 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
             lons = np.arange(lon_res / 2, 360, lon_res)
             ds = ds.assign_coords({"lat": lats, "lon": lons})
 
+    else:
+        # check that lat is increaseing
+        sample_idx = 1
+        test_lats = ds["lat"].isel(i=sample_idx)
+        if test_lats[0] > test_lats[-1]:
+            ds = ds.assign_coords(j=ds["j"][::-1])
+            ds = ds.sortby("j")
+        test_lons = ds["lon"].isel(j=sample_idx)
+
+        # and that lon is 0 - 360
+        ds["lon"] = ds["lon"] % 360
+        if test_lons["lon"][0] != 0:
+            # for sorting purposes
+            ds = ds.assign_coords(i=test_lons["lon"].values)
+            ds = ds.sortby("i")
+            # reset to int array
+            ds = ds.assign_coords(i=np.arange(len(test_lons["lon"].values)))
+
     return ds
 
 
@@ -275,6 +293,11 @@ class DataFinder:
             experiment="historical",
             ensemble=ENSEMBLE_MEMBERS[0],
         )
+        # fill value issue with areacello data
+        if "_FillValue" in fx_ds[cell_var_name].encoding:
+            fill_val = fx_ds[cell_var_name].encoding["_FillValue"]
+            fx_ds = fx_ds.where(fx_ds[cell_var_name] <= fill_val)
+
         self.variable = old_var_name
         self.frequency = old_freq_name
         return standardize_dims(fx_ds)

@@ -18,13 +18,55 @@ A modern React-based frontend for the ClimateBench 2.0 weather forecasting bench
 - **Axios**: HTTP client for API communication
 - **CSS3**: Modern styling with responsive design
 
+## 🚀 Quick Start (Recommended)
+
+### Using the Parent Directory Scripts
+
+The easiest way to run the entire application (frontend + backend) is from the parent directory:
+
+```bash
+# Navigate to the web directory
+cd myscripts/web
+
+# Make scripts executable (first time only)
+chmod +x start.sh stop.sh
+
+# Start all services (frontend + both backends)
+./start.sh
+
+# Stop all services
+./stop.sh
+```
+
+This will automatically start:
+- ✅ React frontend on port 3000
+- ✅ Main backend on port 8000
+- ✅ Probabilistic scores backend on port 8001
+
+### Frontend Only Development
+
+If you want to run just the frontend for development:
+
+```bash
+# Navigate to the frontend directory
+cd frontend
+
+# Install dependencies (first time only)
+npm install
+
+# Start the development server
+npm start
+```
+
+The application will open at `http://localhost:3000`
+
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js (version 16 or higher)
 - npm or yarn
-- Backend API server running (see backend setup)
+- Backend API server running (see backend setup or use `./start.sh` from parent directory)
 
 ### Installation
 
@@ -48,6 +90,19 @@ The application will open at `http://localhost:3000`
 ### Backend Setup
 
 Make sure the FastAPI backend is running on `http://127.0.0.1:8000` before using the React app.
+
+**Option 1: Use the parent directory script (Recommended)**
+```bash
+cd myscripts/web
+./start.sh
+```
+
+**Option 2: Manual backend setup**
+```bash
+cd backend
+conda activate example_env
+uvicorn index:app --reload --host 127.0.0.1 --port 8000
+```
 
 ## Project Structure
 
@@ -79,6 +134,29 @@ The React app communicates with the following backend endpoints:
 
 - `GET /rmse-zonal-mean?metric={metric}`: Fetch RMSE data for different metrics
 - `GET /variable?variable={variable}`: Fetch variable data for charts
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"Failed to load data" error**:
+   - Ensure backend servers are running (use `./start.sh` from parent directory)
+   - Check browser console for CORS errors
+   - Verify API URLs in `src/services/api.js`
+
+2. **Port 3000 already in use**:
+   ```bash
+   # Stop all services
+   cd .. && ./stop.sh
+   
+   # Start again
+   ./start.sh
+   ```
+
+3. **Frontend not connecting to backend**:
+   - Check if backend servers are running on ports 8000 and 8001
+   - Verify API endpoints are accessible
+   - Check browser network tab for failed requests
 
 ## Contributing
 

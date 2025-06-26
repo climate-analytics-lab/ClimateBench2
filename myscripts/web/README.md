@@ -8,11 +8,71 @@ A modern web application for ClimateBench 2.0 weather forecasting benchmark with
 web/
 ├── frontend/          # React application
 ├── backend/           # FastAPI backend
+│   ├── index.py              # Main backend server (port 8000)
+│   ├── probabilistic-scores.py  # Probabilistic scores backend (port 8001)
+│   ├── requirements.txt      # Python dependencies
+│   └── README.md            # Backend-specific documentation
 ├── start.sh          # Startup script (starts all services)
 ├── stop.sh           # Stop script (stops all services)
 ├── package.json      # NPM scripts for easy management
 └── README.md         # This file
 ```
+
+## Backend Architecture
+
+The backend consists of two separate FastAPI applications:
+
+### 🖥️ Main Backend (`index.py` - Port 8000)
+**Purpose**: Serves RMSE (Root Mean Square Error) data for the Overview page
+
+**Key Features**:
+- **Data Caching**: Preloads all RMSE data at startup for fast response times
+- **Google Cloud Storage Integration**: Fetches data from GCS bucket "climatebench"
+- **Multiple Metrics**: Supports RMSE, RMSE bias-adjusted, and RMSE anomaly
+- **Thread-Safe Operations**: Uses locks for concurrent data access
+
+**API Endpoints**:
+- `GET /rmse-zonal-mean?metric={metric}` - Fetch RMSE data for different metrics
+- `GET /health` - Health check endpoint
+- `GET /cache-status` - Cache information and status
+
+**Data Sources**:
+- CSV files from GCS: `results/RMSE/pr/zonal_mean_rmse_-90_90_results.csv`
+- Zarr datasets for variable data
+
+### 📊 Probabilistic Scores Backend (`probabilistic-scores.py` - Port 8001)
+**Purpose**: Serves probabilistic forecast data for interactive charts
+
+**Key Features**:
+- **Parallel Data Loading**: Uses ThreadPoolExecutor for efficient dataset loading
+- **Comprehensive Caching**: Caches both observed and predicted datasets
+- **Variable Support**: Handles multiple climate variables (precipitation, temperature, etc.)
+- **Real-time Data Access**: Fast access to preloaded datasets
+
+**API Endpoints**:
+- `GET /variable?variable={variable}` - Fetch variable data for charts
+- `GET /health` - Health check endpoint
+- `GET /cache-status` - Cache information and status
+
+**Data Sources**:
+- Observed data: `gs://climatebench/observations/preprocessed/`
+- Predicted data: `gs://climatebench/results/RMSE/`
+
+### 🔧 Backend Dependencies
+```
+fastapi              # Web framework
+uvicorn             # ASGI server
+pandas              # Data manipulation
+xarray              # Multi-dimensional arrays
+google-cloud-storage # Google Cloud Storage access
+```
+
+### 🚀 Backend Features
+- **Automatic Data Preloading**: Both backends preload data at startup
+- **CORS Support**: Configured for cross-origin requests from frontend
+- **Error Handling**: Comprehensive error handling and logging
+- **Health Monitoring**: Health check endpoints for service monitoring
+- **Thread Safety**: Safe concurrent access to shared data structures
 
 ## Prerequisites
 
@@ -24,9 +84,9 @@ Before running the application, make sure you have the following installed:
 - **pip** (Python package manager)
 - **Conda** (for environment management)
 
-## Quick Start (Recommended)
+## 🚀 Quick Start (Recommended)
 
-### 🚀 One-Command Startup
+### One-Command Startup
 
 The easiest way to run your application is with a single command:
 
@@ -34,15 +94,19 @@ The easiest way to run your application is with a single command:
 # Navigate to the web directory
 cd myscripts/web
 
+# Make scripts executable (first time only)
+chmod +x start.sh stop.sh
+
 # Start all services with one command
 ./start.sh
 ```
 
 This will automatically:
-- Start the main backend on port 8000
-- Start the probabilistic scores backend on port 8001  
-- Start the React frontend on port 3000
-- Check if all services are running properly
+- ✅ Start the main backend on port 8000
+- ✅ Start the probabilistic scores backend on port 8001  
+- ✅ Start the React frontend on port 3000
+- ✅ Check if all services are running properly
+- ✅ Display access URLs
 
 ### 🛑 Stop All Services
 
@@ -52,7 +116,14 @@ To stop all services:
 ./stop.sh
 ```
 
-### 📦 Alternative: Using NPM Scripts
+### 📱 Access the Application
+
+After running `./start.sh`, access your application at:
+- **Frontend**: http://localhost:3000
+- **Main API**: http://127.0.0.1:8000
+- **Probabilistic API**: http://127.0.0.1:8001
+
+## 📦 Alternative: Using NPM Scripts
 
 You can also use npm scripts:
 
@@ -67,7 +138,7 @@ npm start
 npm run stop
 ```
 
-## Manual Setup (Alternative)
+## Manual Setup (Advanced Users)
 
 If you prefer to run services manually or need more control:
 
@@ -110,35 +181,6 @@ npm start
 
 The frontend will be available at `http://localhost:3000`
 
-## Running the Application
-
-### Step-by-Step Instructions
-
-1. **Start the Backend** (Terminal 1):
-   ```bash
-   cd /path/to/ClimateBench2/myscripts/web/backend
-   conda activate example_env
-   uvicorn index:app --reload --host 127.0.0.1 --port 8000
-   ```
-
-2. **Start the Probabilistic Backend** (Terminal 2):
-   ```bash
-   cd /path/to/ClimateBench2/myscripts/web/backend
-   conda activate example_env
-   uvicorn probabilistic-scores:app --reload --host 127.0.0.1 --port 8001
-   ```
-
-3. **Start the Frontend** (Terminal 3):
-   ```bash
-   cd /path/to/ClimateBench2/myscripts/web/frontend
-   npm install
-   npm start
-   ```
-
-4. **Access the Application**:
-   - Open your browser and go to `http://localhost:3000`
-   - The application should now be running with both frontend and backend connected
-
 ## Application Features
 
 ### Overview Page
@@ -163,24 +205,35 @@ The frontend will be available at `http://localhost:3000`
 
 ### Common Issues
 
-1. **Backend not starting**:
+1. **Script permission errors**:
+   ```bash
+   chmod +x start.sh stop.sh
+   ```
+
+2. **Backend not starting**:
    - Check if Python and required packages are installed
    - Verify the requirements.txt file is present
    - Check for port conflicts (8000, 8001)
    - Make sure conda environment is activated
 
-2. **Frontend not connecting to backend**:
+3. **Frontend not connecting to backend**:
    - Ensure both backend servers are running
    - Check browser console for CORS errors
    - Verify API URLs in `frontend/src/services/api.js`
 
-3. **"Failed to load data" error**:
+4. **"Failed to load data" error**:
    - Check if backend servers are running on correct ports
    - Verify API endpoints are accessible
    - Check browser network tab for failed requests
 
-4. **Script permission errors**:
-   - Run: `chmod +x start.sh stop.sh`
+5. **Port already in use**:
+   ```bash
+   # Stop all services first
+   ./stop.sh
+   
+   # Then start again
+   ./start.sh
+   ```
 
 ### Port Configuration
 

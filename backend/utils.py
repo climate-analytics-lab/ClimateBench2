@@ -259,7 +259,10 @@ class DataFinder:
                 experiment=experiment,
                 ensemble=ensemble,
             )
-            ds = ds.sel(time=time_slice)
+            ds = ds.sel(time=time_slice).drop_vars(
+                ["lat_bnds", "lon_bnds", "time_bnds", "height", "wavelength"],
+                errors="ignore",
+            )
             ds.expand_dims({"ensemble": [ensemble]})
             ensemble_ds_list.append(ds)
         return xr.concat(
@@ -288,19 +291,25 @@ class DataFinder:
         old_freq_name = self.frequency
         self.variable = cell_var_name
         self.frequency = "Ofx" if cell_var_name == "areacello" else "fx"
-        fx_ds = self.read_data(
-            mip="CMIP",
-            experiment="historical",
-            ensemble=ENSEMBLE_MEMBERS[0],
-        )
-        # fill value issue with areacello data
-        if "_FillValue" in fx_ds[cell_var_name].encoding:
-            fill_val = fx_ds[cell_var_name].encoding["_FillValue"]
-            fx_ds = fx_ds.where(fx_ds[cell_var_name] <= fill_val)
+        try:
+            fx_ds = self.read_data(
+                mip="CMIP",
+                experiment="historical",
+                ensemble=ENSEMBLE_MEMBERS[0],
+            )
+            # fill value issue with areacello data
+            if "_FillValue" in fx_ds[cell_var_name].encoding:
+                fill_val = fx_ds[cell_var_name].encoding["_FillValue"]
+                fx_ds = fx_ds.where(fx_ds[cell_var_name] <= fill_val)
 
-        self.variable = old_var_name
-        self.frequency = old_freq_name
-        return standardize_dims(fx_ds)
+            self.variable = old_var_name
+            self.frequency = old_freq_name
+            return standardize_dims(fx_ds)[cell_var_name]
+        except:
+            logger.warning(
+                "No areacella/o data found. Using cos(lat) for cell weights."
+            )
+            return None
 
     def load_obs_ds(self):
         return standardize_dims(xr.open_zarr(self.obs_data_path))
@@ -324,10 +333,17 @@ class MetricCalculation:
         # you can pass in the weights if the areacella or areacello data exists,
         # if not just us the cos of lat, which is proportional to cell area for a regular grid
         if weights is None:
+            # need to turn this into a full xarray ds to match areacella/areacello
             weights = np.cos(np.deg2rad(self.model.lat))
+            weights = weights.expand_dims({"lon": self.model.lon})
             weights.name = "weights"
             self.weights = weights
         else:
+            # check that dims match model
+            if ~weights.lat.equals(self.model.lat):
+                weights["lat"] = self.model["lat"]
+            if ~weights.lon.equals(self.model.lon):
+                weights["lon"] = self.model["lon"]
             self.weights = weights
 
         self.spatial_dims = [x for x in self.model.dims if x != "time"]

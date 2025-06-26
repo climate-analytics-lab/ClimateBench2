@@ -1,7 +1,5 @@
 import argparse
 import logging
-import os
-from csv import writer
 
 import pandas as pd
 import xarray as xr
@@ -38,14 +36,16 @@ def main(org, model, variable, adjustments, lat_min, lat_max, save_to_cloud, ove
 
     logger.info("Regridding observations")
     # regrid obs data to the model grid
-    regridder = xe.Regridder(obs_ds, model_ds[["lat", "lon"]], "bilinear", periodic=True)
+    regridder = xe.Regridder(
+        obs_ds, model_ds[["lat", "lon"]], "bilinear", periodic=True
+    )
     obs_rg_ds = regridder(obs_ds[variable], keep_attrs=True).to_dataset(name=variable)
 
     # set up metric calculation class
     metric_calculator = MetricCalculation(
         observations=obs_rg_ds[variable],
         model=model_ds[variable],
-        weights=fx_ds[cell_var_name],
+        weights=fx_ds,
     )
     # set up data save class
     save_results = SaveResults(variable=variable, experiment="RMSE")

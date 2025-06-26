@@ -14,7 +14,7 @@ const mainApiClient = axios.create({
 
 const probabilisticApiClient = axios.create({
   baseURL: PROBABILISTIC_API_BASE_URL,
-  timeout: 10000,
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
   },

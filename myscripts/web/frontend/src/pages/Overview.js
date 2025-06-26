@@ -27,7 +27,37 @@ const Overview = () => {
   }, [selectedMetric]);
 
   const handleMetricChange = (event) => {
-    setSelectedMetric(event.target.value);
+    event.preventDefault();
+    const newValue = event.target.value;
+    
+    // Only update if the value actually changed
+    if (newValue !== selectedMetric) {
+      setSelectedMetric(newValue);
+    }
+  };
+
+  const formatMetricName = (metric) => {
+    const metricNames = {
+      'rmse': 'RMSE',
+      'rmse_bias_adjusted': 'RMSE Bias Adjusted',
+      'rmse_anomaly': 'RMSE Anomaly'
+    };
+    return metricNames[metric] || metric;
+  };
+
+  const getShortMetricName = (metric) => {
+    const shortNames = {
+      'rmse': 'RMSE',
+      'rmse_bias_adjusted': 'Bias Adj.',
+      'rmse_anomaly': 'Anomaly'
+    };
+    return shortNames[metric] || metric;
+  };
+
+  const formatScientificNotation = (value) => {
+    const num = Number(value);
+    if (isNaN(num)) return 'N/A';
+    return num.toExponential(3);
   };
 
   return (
@@ -52,43 +82,79 @@ const Overview = () => {
       </section>
 
       <section className="section" id="participating-models">
-        <h2>Probabilistic scorecards</h2>
+        <h2>Probabilistic Scorecards</h2>
 
-        <label htmlFor="metric-select" className="metric-label">Metric</label>
-        <select 
-          id="metric-select" 
-          value={selectedMetric} 
-          onChange={handleMetricChange}
-        >
-          <option value="rmse">RMSE</option>
-          <option value="rmse_bias_adjusted">RMSE Bias Adjusted</option>
-          <option value="rmse_anomaly">RMSE Anomaly</option>
-        </select>
+        <div className="metric-controls">
+          <label htmlFor="metric-select" className="metric-label">
+            Metric:
+          </label>
+          <select 
+            id="metric-select" 
+            value={selectedMetric} 
+            onChange={handleMetricChange}
+            aria-label="Select metric for comparison"
+          >
+            <option value="rmse">Standard</option>
+            <option value="rmse_bias_adjusted">Bias Adjusted</option>
+            <option value="rmse_anomaly">Anomaly</option>
+          </select>
+        </div>
 
-        {loading && <div className="loading">Loading...</div>}
-        {error && <div className="error">{error}</div>}
+        {loading && (
+          <div className="loading" role="status" aria-live="polite">
+            <span>Loading {formatMetricName(selectedMetric)} data...</span>
+          </div>
+        )}
         
-        {!loading && !error && (
-          <table className="models-table" id="rmse-table">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Model</th>
-                <th>Historical RMSE</th>
-                <th>SSP245 RMSE</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rmseData.map((model, index) => (
-                <tr key={model.model}>
-                  <td>{index + 1}</td>
-                  <td><strong>{model.model}</strong></td>
-                  <td>{Number(model.historical).toExponential(3)}</td>
-                  <td>{Number(model.ssp245).toExponential(3)}</td>
+        {error && (
+          <div className="error" role="alert">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+        
+        {!loading && !error && rmseData.length > 0 && (
+          <div className="table-container">
+            <table 
+              className="models-table" 
+              id="rmse-table"
+              role="table"
+              aria-label={`${formatMetricName(selectedMetric)} comparison table for climate models`}
+            >
+              <caption className="sr-only">
+                {formatMetricName(selectedMetric)} comparison for climate models, ranked by performance
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Rank</th>
+                  <th scope="col">Model</th>
+                  <th scope="col">Historical {getShortMetricName(selectedMetric)}</th>
+                  <th scope="col">SSP245 {getShortMetricName(selectedMetric)}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rmseData.map((model, index) => (
+                  <tr key={model.model} data-rank={index + 1}>
+                    <td aria-label={`Rank ${index + 1}`}>{index + 1}</td>
+                    <td>
+                      <strong>{model.model}</strong>
+                    </td>
+                    <td aria-label={`Historical ${formatMetricName(selectedMetric)}: ${formatScientificNotation(model.historical)}`}>
+                      {formatScientificNotation(model.historical)}
+                    </td>
+                    <td aria-label={`SSP245 ${formatMetricName(selectedMetric)}: ${formatScientificNotation(model.ssp245)}`}>
+                      {formatScientificNotation(model.ssp245)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!loading && !error && rmseData.length === 0 && (
+          <div className="no-data" role="status">
+            <p>No data available for the selected metric.</p>
+          </div>
         )}
       </section>
     </div>

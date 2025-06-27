@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+pandas
+xarray
+google-cloud-storage 

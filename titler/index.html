@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Climate Data Visualization - Leaflet Map + SST Analysis</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>Climate Data Visualization Dashboard</h1>
+    
+    <!-- Leaflet Map Section -->
+    <div class="section">
+      <h2>Geospatial Data Overlay</h2>
+      <div id="map"></div>
+    </div>
+
+    <!-- SST Analysis Section -->
+    <div class="section">
+      <h2>CMIP6 Climate Data Analysis</h2>
+      <p>Interactive visualization of CMIP6 precipitation data from IPSL-CM6A-LR model (SSP245 scenario)</p>
+      
+      <div class="sst-controls">
+        <label for="timeSlider">Time Step:</label>
+        <input type="range" id="timeSlider" min="0" max="100" value="0" step="1">
+        <span id="timeValue">0</span>
+        <button onclick="updateSSTPlots()">Update Plots</button>
+      </div>
+      
+      <div id="sst-plots">
+        <div class="plot-container" id="ds1-plot"></div>
+        <div class="plot-container" id="ds2-plot"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

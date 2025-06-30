@@ -10,9 +10,24 @@ HIST_START_DATE = "2005-01-01"
 HIST_END_DATE = "2014-12-31"
 SSP_START_DATE = "2015-01-01"
 SSP_END_DATE = "2024-12-31"
-RESULTS_FILE_PATH = "model_benchmark_results.csv"
 SSP_EXPERIMENT = "ssp245"
 GOOGLE_CLOUD_PROJECT = "fluid-script-453604-u5"
+CMIP6_MODEL_INSTITUTIONS = {
+    "FGOALS-g3": "CAS",
+    "CanESM5": "CCCma",
+    "ACCESS-CM2": "CSIRO-ARCCSS",
+    "EC-Earth3-Veg": "EC-Earth-Consortium",
+    "EC-Earth3-Veg-LR": "EC-Earth-Consortium",
+    "FIO-ESM-2-0": "FIO-QLNM",
+    "IPSL-CM6A-LR": "IPSL",
+    "MIROC6": "MIROC",
+    "MPI-ESM1-2-LR": "MPI-M",
+    "MRI-ESM2-0": "MRI",
+    "CESM2-WACCM": "NCAR",
+    "NorESM2-LM": "NCC",
+    "GFDL-ESM4": "NOAA-GFDL",
+}
+
 OBSERVATION_DATA_SPECS = {
     "tas": {
         "nasa_airs": {

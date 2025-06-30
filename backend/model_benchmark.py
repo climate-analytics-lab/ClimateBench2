@@ -19,15 +19,17 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def main(org, model, variable, adjustments, lat_min, lat_max, save_to_cloud, overwrite):
+def main(model, variable, adjustments, lat_min, lat_max, save_to_cloud, overwrite):
     logger.info(
-        f"Processing model: {model}, variable: {variable}, org: {org}, adjustments: {adjustments}"
+        f"Processing model: {model}, variable: {variable}, adjustments: {adjustments}"
     )
 
-    data_finder = DataFinder(org=org, model=model, variable=variable)
+    data_finder = DataFinder(model=model, variable=variable)
 
     logger.info("Reading model data")
-    model_ds = data_finder.load_model_ds()
+    model_ds = data_finder.load_model_ds().sel(
+        time=slice(HIST_START_DATE, SSP_END_DATE)
+    )
     logger.info("Reading model cell area data")
     cell_var_name = "areacella" if variable != "tos" else "areacello"
     fx_ds = data_finder.load_cell_area_ds(cell_var_name)
@@ -54,10 +56,10 @@ def main(org, model, variable, adjustments, lat_min, lat_max, save_to_cloud, ove
         logger.info(f"Deleting stale data in: {save_results.data_path}")
         save_results.overwrite(save_to_cloud=save_to_cloud)
 
-    # for adjustment in adjustments:
     for adjustment in adjustments:
         logger.info(f"Calculating RMSE with adjustment: {adjustment}")
         data_label = "rmse" if adjustment == "none" else "rmse_" + adjustment
+        logger.info("running zonal mean rmse")
         rmse_hist = metric_calculator.calculate_rmse(
             metric="zonal_mean",
             adjustment=adjustment,
@@ -74,7 +76,6 @@ def main(org, model, variable, adjustments, lat_min, lat_max, save_to_cloud, ove
         ).values.tolist()
         result_df = pd.DataFrame(
             {
-                "org": [org],
                 "model": [model],
                 "variable": [variable],
                 "ensemble members": ["_".join(ENSEMBLE_MEMBERS)],
@@ -83,6 +84,7 @@ def main(org, model, variable, adjustments, lat_min, lat_max, save_to_cloud, ove
                 SSP_EXPERIMENT: [rmse_ssp245],
             }
         )
+        logger.info("running temporal rmse")
         rmse_hist_map = metric_calculator.calculate_rmse(
             metric="temporal",
             adjustment=adjustment,
@@ -108,6 +110,7 @@ def main(org, model, variable, adjustments, lat_min, lat_max, save_to_cloud, ove
             ],
             dim="time_slice",
         ).to_dataset(name=data_label)
+        logger.info("running spatial rmse")
         rmse_time_series = metric_calculator.calculate_rmse(
             metric="spatial",
             adjustment=adjustment,
@@ -117,22 +120,18 @@ def main(org, model, variable, adjustments, lat_min, lat_max, save_to_cloud, ove
         ).to_dataset(name=data_label)
 
         # save data
-        if save_to_cloud:
-            save_results.save_to_csv_gcs(
-                result_df, f"zonal_mean_rmse_{lat_min}_{lat_max}_results.csv"
-            )
-        else:
-            save_results.save_to_csv_local(
-                result_df, f"zonal_mean_rmse_{lat_min}_{lat_max}_results.csv"
-            )
+        logger.info("saving data")
+        save_results.save_csv(
+            result_df, f"zonal_mean_rmse_{lat_min}_{lat_max}_results.csv", save_to_cloud
+        )
         save_results.save_zarr(
             ds=rmse_map,
-            file_name=f"{org}_{model}_temporal_rmse_results.zarr",
+            file_name=f"{model}_temporal_rmse_results.zarr",
             save_to_cloud=save_to_cloud,
         )
         save_results.save_zarr(
             ds=rmse_time_series,
-            file_name=f"{org}_{model}_spatial_{lat_min}_{lat_max}_rmse_results.zarr",
+            file_name=f"{model}_spatial_{lat_min}_{lat_max}_rmse_results.zarr",
             save_to_cloud=save_to_cloud,
         )
 
@@ -140,10 +139,6 @@ def main(org, model, variable, adjustments, lat_min, lat_max, save_to_cloud, ove
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Data processing for model benchmarking"
-    )
-    parser.add_argument(
-        "--org",
-        help="Input value for the main function",
     )
     parser.add_argument(
         "--model",
@@ -186,7 +181,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(
-        org=args.org,
         model=args.model,
         variable=args.variable,
         adjustments=args.adjustments,

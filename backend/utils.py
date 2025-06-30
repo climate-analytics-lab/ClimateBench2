@@ -38,6 +38,7 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
         xr.Dataset: Normalized dataset
     """
     # Rename dims if needed
+    # check dims, then check variables
     rename_dims = {}
     if ("latitude" in ds.dims) or ("latitude" in ds.variables):
         rename_dims["latitude"] = "lat"
@@ -47,6 +48,18 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
         rename_dims["Latitude"] = "lat"
     if ("Longitude" in ds.dims) or ("Longitude" in ds.variables):
         rename_dims["Longitude"] = "lon"
+    if "nlon" in ds.dims:
+        rename_dims["nlon"] = "i"
+    if "nlat" in ds.dims:
+        rename_dims["nlat"] = "j"
+    if "x" in ds.dims:
+        rename_dims["x"] = "lon" if len(ds["x"].shape) == 1 else "i"
+    if "y" in ds.dims:
+        rename_dims["y"] = "lat" if len(ds["y"].shape) == 1 else "j"
+    if "X" in ds.dims:
+        rename_dims["X"] = "lon" if len(ds["X"].shape) == 1 else "i"
+    if "Y" in ds.dims:
+        rename_dims["Y"] = "lat" if len(ds["Y"].shape) == 1 else "j"
     if "datetime" in ds.dims:
         rename_dims["datetime"] = "time"
     if rename_dims:
@@ -141,6 +154,7 @@ class DataFinder:
         self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
         self.frequency = VARIABLE_FREQUENCY_GROUP[self.variable]
         self.obs_data_path = OBSERVATION_DATA_PATHS[self.variable]
+        self.grid = "gn"
 
     def check_local_files(
         self,
@@ -183,6 +197,7 @@ class DataFinder:
             & (df["table_id"] == self.frequency)
             & (df["institution_id"] == self.org)
             & (df["source_id"] == self.model)
+            & (df["grid_label"] == self.grid)
         ]
         if len(df) > 1:
             # potentially two versions, so take the newer one
@@ -343,12 +358,19 @@ class DataFinder:
         historical_ens_mean = self.load_ensemble_mean(
             mip="CMIP",
             experiment="historical",
-        ).sel(time=slice(HIST_START_DATE,HIST_END_DATE)) # sometimes historical period goes beyond 2015
+        ).sel(
+            time=slice(HIST_START_DATE, HIST_END_DATE)
+        )  # sometimes historical period goes beyond 2015
         ssp_ens_mean = self.load_ensemble_mean(
             mip="ScenarioMIP",
             experiment="ssp245",
-        ).sel(time=slice(SSP_START_DATE,SSP_END_DATE))
-        model_ds = xr.concat([historical_ens_mean, ssp_ens_mean], dim="time")
+        ).sel(time=slice(SSP_START_DATE, SSP_END_DATE))
+        model_ds = xr.concat(
+            [historical_ens_mean, ssp_ens_mean],
+            dim="time",
+            coords="minimal",
+            compat="override",
+        )
         return standardize_dims(model_ds)
 
     def load_cell_area_ds(self, cell_var_name: str) -> xr.DataArray:

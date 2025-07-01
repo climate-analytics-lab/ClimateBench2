@@ -14,6 +14,7 @@ from google.cloud import storage
 from pyesgf.search import SearchConnection
 
 from constants import (
+    CMIP6_MODEL_INSTITUTIONS,
     ENSEMBLE_MEMBERS,
     HIST_END_DATE,
     HIST_START_DATE,
@@ -37,15 +38,32 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
         xr.Dataset: Normalized dataset
     """
     # Rename dims if needed
-    rename_dims = {}
+    # first rename lat/lon
+    rename_lat_lon = {}
     if ("latitude" in ds.dims) or ("latitude" in ds.variables):
-        rename_dims["latitude"] = "lat"
+        rename_lat_lon["latitude"] = "lat"
     if ("longitude" in ds.dims) or ("longitude" in ds.variables):
-        rename_dims["longitude"] = "lon"
+        rename_lat_lon["longitude"] = "lon"
     if ("Latitude" in ds.dims) or ("Latitude" in ds.variables):
-        rename_dims["Latitude"] = "lat"
+        rename_lat_lon["Latitude"] = "lat"
     if ("Longitude" in ds.dims) or ("Longitude" in ds.variables):
-        rename_dims["Longitude"] = "lon"
+        rename_lat_lon["Longitude"] = "lon"
+    if ("nav_lat" in ds.dims) or ("nav_lat" in ds.variables):
+        rename_lat_lon["nav_lat"] = "lat"
+    if ("nav_lon" in ds.dims) or ("nav_lon" in ds.variables):
+        rename_lat_lon["nav_lon"] = "lon"
+    if rename_lat_lon:
+        ds = ds.rename(rename_lat_lon)
+    # atp, lat and lon should be dimensions if regular grid, or coordinates if curvlinear grid
+    rename_dims = {}
+    if "nlon" in ds.dims:
+        rename_dims["nlon"] = "i"
+    if "nlat" in ds.dims:
+        rename_dims["nlat"] = "j"
+    if "x" in ds.dims:
+        rename_dims["x"] = "i" if "lon" in ds.variables else "lon"
+    if "y" in ds.dims:
+        rename_dims["y"] = "j" if "lat" in ds.variables else "lat"
     if "datetime" in ds.dims:
         rename_dims["datetime"] = "time"
     if rename_dims:
@@ -54,6 +72,7 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
     # fix time
     if "time" in ds.dims:
         ds["time"] = pd.to_datetime(ds["time"].dt.strftime("%Y-%m-01"))
+        ds = ds.sortby("time")  # make sure its in the right order before slicing
 
     # only if rectilinear grid (tos is curvelinear grid)
     if (len(ds["lat"].dims) == 1) and (len(ds["lon"].dims) == 1):
@@ -120,14 +139,66 @@ def build_zarr_store(var_name: str, dims_dict: dict, attributes: dict, store_pat
     )  # save template, will write each model to its region slice
 
 
-class DataFinder:
+def search_gcs(filters: dict, drop_older_versions: bool) -> pd.DataFrame:
+    """Look for files in the public cmip6 google cloud bucket. Uses csv of data info to find path instead of a glob. Since files are saved as zarr, glob would return too many.
+    Broken out from DataFinder class to make the gcs search more customizable for model variable data vs model cell area data.
 
-    def __init__(self, org, model, variable):
-        self.org = org
+    Args:
+        filters (dict): Dict with columns as keys and filter values as items
+        drop_older_versions (bool): drop duplicate entries, keeping the newer version
+
+    Returns:
+        pd.DataFrame: datasets matching filters on google cloud
+    """
+    df = pd.read_csv("https://cmip6.storage.googleapis.com/pangeo-cmip6.csv")
+    for column, value in filters.items():
+        df = df[df[column] == value]
+
+    if drop_older_versions:
+        df["version_date"] = pd.to_datetime(df["version"], format="%Y%m%d")
+        df = (
+            df.sort_values("version_date", ascending=False)
+            .drop_duplicates(
+                [
+                    "activity_id",
+                    "institution_id",
+                    "source_id",
+                    "experiment_id",
+                    "member_id",
+                    "table_id",
+                    "variable_id",
+                    "grid_label",
+                ]
+            )
+            .drop(columns=["version_date"])
+        )
+    elif len(df) == 0:
+        logger.warning("No results found on GCS.")
+        return None
+
+    return df
+
+
+class DataFinder:
+    """The DataFinder class locates observational and model based on the variable and model passed.
+    The model data returned is the ensemble mean of the historical and ssp experiments, concatenated together.
+    The ensemble members and ssp experiment can be set in the constants file.
+    The class can also find the model cell area data based on variable passed.
+    """
+
+    def __init__(self, model: str, variable: str):
+        """Initialize DataFinder class.
+
+        Args:
+            model (str): Climate model of interest
+            variable (str): Short name of climate variable
+        """
         self.model = model
         self.variable = variable
+        self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
         self.frequency = VARIABLE_FREQUENCY_GROUP[self.variable]
         self.obs_data_path = OBSERVATION_DATA_PATHS[self.variable]
+        self.grid = None
 
     def check_local_files(
         self,
@@ -135,46 +206,62 @@ class DataFinder:
         experiment: str,
         ensemble: str,
     ) -> list[str]:
+        """Find local file paths of climate model data. This is only relevant if using ESMValTool.
+
+        Args:
+            mip (str): ScenarioMIP or CMIP
+            experiment (str): historical or ssp245
+            ensemble (str): ensemble id rXiXpXfX
+
+        Returns:
+            list[str]: list of local file paths
+        """
         local_data_path = f"{os.environ['HOME']}/climate_data/CMIP6/{mip}/{self.org}/{self.model}/{experiment}/{ensemble}/{self.frequency}/{self.variable}/*/*/*"
         local_files = glob.glob(local_data_path)
         self.local_files = local_files
         return local_files
 
-    def check_gcs_files(self, mip, experiment, ensemble):
-        df = pd.read_csv("https://cmip6.storage.googleapis.com/pangeo-cmip6.csv")
-        df = df[
-            (df["member_id"] == ensemble)
-            & (df["activity_id"] == mip)
-            & (df["experiment_id"] == experiment)
-            & (df["variable_id"] == self.variable)
-            & (df["table_id"] == self.frequency)
-            & (df["institution_id"] == self.org)
-            & (df["source_id"] == self.model)
-        ]
-        if len(df) > 1:
-            # potentially two versions, so take the newer one
-            df["version_date"] = pd.to_datetime(df["version"], format="%Y%m%d")
-            df = (
-                df.sort_values("version_date", ascending=False)
-                .drop_duplicates(
-                    [
-                        "activity_id",
-                        "institution_id",
-                        "source_id",
-                        "experiment_id",
-                        "member_id",
-                        "table_id",
-                        "variable_id",
-                        "grid_label",
-                    ]
-                )
-                .drop(columns=["version_date"])
-            )
-        elif len(df) == 0:
-            logger.warning("No results found on GCS.")
-            return None
+    def check_gcs_files(self, mip: str, experiment: str, ensemble: str) -> str:
+        """Look for files in the public cmip6 google cloud bucket. Customize search keys for variable data vs cell area data.
+        Sets the type of grid being used (gn for native grid, this is best), and returns the cloud storage path string ex: gs://path/to/data
 
-        return df["zstore"].values[0]
+        Args:
+            mip (str): ScenarioMIP or CMIP
+            experiment (str): historical or ssp245
+            ensemble (str): ensemble id rXiXpXfX
+
+        Returns:
+            str: cloud storage file path
+        """
+        search_keys = {
+            "source_id": self.model,
+            "table_id": self.frequency,
+            "variable_id": self.variable,
+            "member_id": ensemble,
+            "activity_id": mip,
+            "experiment_id": experiment,
+        }
+        if self.grid:
+            search_keys["grid_label"] = self.grid
+
+        gcs_files = search_gcs(filters=search_keys, drop_older_versions=True)
+
+        if (len(gcs_files) == 0) and ("area" in self.variable):
+            search_keys.pop("member_id")
+            search_keys.pop("activity_id")
+            search_keys.pop("experiment_id")
+
+            gcs_files = search_gcs(filters=search_keys, drop_older_versions=True)
+
+        if self.grid is None:
+            if "gn" in gcs_files["grid_label"].unique():
+                self.grid = "gn"
+            else:
+                self.grid = gcs_files["grid_label"].values[0]
+
+        gcs_files = gcs_files[gcs_files["grid_label"] == self.grid]
+
+        return gcs_files["zstore"].values[0]
 
     def check_esgf_files(
         self,
@@ -182,6 +269,16 @@ class DataFinder:
         ensemble: str,
         data_node="esgf-data1.llnl.gov",
     ) -> list[str]:
+        """Check the ESGF llnl node for data. This is a slower process than the google cloud search and will return multiple netcdf paths. Should be used as last resort if data can not be found on the cloud.
+
+        Args:
+            experiment (str): historical or ssp245
+            ensemble (str): ensemble id rXiXpXfX
+            data_node (str, optional): Node to search for data on. Sometimes a node is down, in which case you should try another one. Defaults to "esgf-data1.llnl.gov".
+
+        Returns:
+            list[str]: netcdf paths for accessing data
+        """
         conn = SearchConnection("https://esgf-data.dkrz.de/esg-search", distrib=True)
         ctx = conn.new_context(
             project="CMIP6",
@@ -226,6 +323,19 @@ class DataFinder:
             return df["file_url"].tolist()
 
     def read_data(self, mip: str, experiment: str, ensemble: str) -> xr.Dataset:
+        """First check local files, then check google cloud storage, then check ESGF. For reading CMIP6 data.
+
+        Args:
+            mip (str): ScenarioMIP or CMIP
+            experiment (str): historical or ssp245
+            ensemble (str): ensemble id rXiXpXfX
+
+        Raises:
+            ValueError: Can't find data
+
+        Returns:
+            xr.Dataset: Climate model data for single experiment/ensemble
+        """
         local_file_path = self.check_local_files(mip, experiment, ensemble)
         if not local_file_path:
             gcs_file_path = self.check_gcs_files(mip, experiment, ensemble)
@@ -251,7 +361,16 @@ class DataFinder:
 
         return ds
 
-    def load_ensemble_mean(self, mip, experiment, time_slice):
+    def load_ensemble_mean(self, mip: str, experiment: str) -> xr.Dataset:
+        """Finds data for all ensemble members and returns the mean. Ensemble members based on constant.
+
+        Args:
+            mip (str): ScenarioMIP or CMIP
+            experiment (str): historical or ssp245
+
+        Returns:
+            xr.Dataset: Ensemble mean of climate model data
+        """
         ensemble_ds_list = []
         for ensemble in ENSEMBLE_MEMBERS:
             ds = self.read_data(
@@ -259,56 +378,89 @@ class DataFinder:
                 experiment=experiment,
                 ensemble=ensemble,
             )
-            ds = ds.sel(time=time_slice)
+            ds = ds.drop_vars(
+                ["lat_bnds", "lon_bnds", "time_bnds", "height", "wavelength"],
+                errors="ignore",
+            )
             ds.expand_dims({"ensemble": [ensemble]})
             ensemble_ds_list.append(ds)
         return xr.concat(
             ensemble_ds_list, dim="ensemble", combine_attrs="override"
         ).mean(dim="ensemble")
 
-    def load_model_ds(self):
+    def load_model_ds(self) -> xr.Dataset:
+        """Loads ensemble mean of historical and projected (ssp245) climate model data. Combines into one dataset and passes through standardizer function. Returned data should have "lat" "lon" and "time" dimensions that are sorted in ascending order. Lon values are from 0-360 and time is monthly on the first of the month.
+
+        Returns:
+            xr.Dataset: Analysis ready climate model data. Ensemble mean combination of historical and projected datasets.
+        """
         historical_ens_mean = self.load_ensemble_mean(
             mip="CMIP",
             experiment="historical",
-            time_slice=slice(HIST_START_DATE, HIST_END_DATE),
-        )
+        ).sel(
+            time=slice(HIST_START_DATE, HIST_END_DATE)
+        )  # sometimes historical period goes beyond 2015
         ssp_ens_mean = self.load_ensemble_mean(
             mip="ScenarioMIP",
             experiment="ssp245",
-            time_slice=slice(SSP_START_DATE, SSP_END_DATE),
+        ).sel(time=slice(SSP_START_DATE, SSP_END_DATE))
+        model_ds = xr.concat(
+            [historical_ens_mean, ssp_ens_mean],
+            dim="time",
+            coords="minimal",
+            compat="override",
         )
-
-        model_ds = xr.concat([historical_ens_mean, ssp_ens_mean], dim="time")
-        # should standardize data?
         return standardize_dims(model_ds)
 
-    def load_cell_area_ds(self, cell_var_name):
+    def load_cell_area_ds(self, cell_var_name: str) -> xr.DataArray:
+        """Reads model cell area data. fx if atmospheric variable, Ofx if ocean variable. If data not found, prints warning and returns none. Can use cos(lat) as proxy for cell area. Passed through standardizer function to make sure dims are named correctly.
+
+        Args:
+            cell_var_name (str): areacella or areacello
+
+        Returns:
+            xr.DataArray: Dataarray of cell area data if available, else returns None
+        """
         # patch for now
         old_var_name = self.variable
         old_freq_name = self.frequency
         self.variable = cell_var_name
         self.frequency = "Ofx" if cell_var_name == "areacello" else "fx"
-        fx_ds = self.read_data(
-            mip="CMIP",
-            experiment="historical",
-            ensemble=ENSEMBLE_MEMBERS[0],
-        )
-        # fill value issue with areacello data
-        if "_FillValue" in fx_ds[cell_var_name].encoding:
-            fill_val = fx_ds[cell_var_name].encoding["_FillValue"]
-            fx_ds = fx_ds.where(fx_ds[cell_var_name] <= fill_val)
+        try:
+            fx_ds = self.read_data(
+                mip="CMIP",
+                experiment="historical",
+                ensemble=ENSEMBLE_MEMBERS[0],
+            )
+            # fill value issue with areacello data
+            if "_FillValue" in fx_ds[cell_var_name].encoding:
+                fill_val = fx_ds[cell_var_name].encoding["_FillValue"]
+                fx_ds = fx_ds.where(fx_ds[cell_var_name] <= fill_val)
 
-        self.variable = old_var_name
-        self.frequency = old_freq_name
-        return standardize_dims(fx_ds)
+            self.variable = old_var_name
+            self.frequency = old_freq_name
+            return standardize_dims(fx_ds)[cell_var_name]
+        except:
+            self.variable = old_var_name
+            self.frequency = old_freq_name
+            logger.warning(
+                "No areacella/o data found. Using cos(lat) for cell weights."
+            )
+            return None
 
-    def load_obs_ds(self):
+    def load_obs_ds(self) -> xr.Dataset:
+        """Reads observational data from climatebench google cloud bucket. passes data through standardizer function.
+
+        Returns:
+            xr.Dataset: Observational dataset
+        """
         return standardize_dims(xr.open_zarr(self.obs_data_path))
 
 
 # little helper functions
 def anomaly(ds):
-    return ds.groupby("time.month") - ds.groupby("time.month").mean("time")
+    ds_anom = ds.groupby("time.month") - ds.groupby("time.month").mean("time")
+    return ds_anom.drop("month")
 
 
 def bias_adjustment(model, obs):
@@ -317,74 +469,119 @@ def bias_adjustment(model, obs):
 
 
 class MetricCalculation:
+    """The MetricCalculation class is for benchmarking climate model data against observations. It takes in model, observations, and weights datasets.
+    The weights dataset should be the cell area, so if one is not provided a proxy will be created by taking the cosine of latitude.
+    For now, there is an RMSE calculation option, with none, bias adjustment, and anomaly adjustment options.
 
-    def __init__(self, observations, model, weights=None):
+    """
+
+    def __init__(
+        self, observations: xr.Dataset, model: xr.Dataset, weights: xr.DataArray = None
+    ):
+        """Initialize MetricCalculation class. If weights dataarray not passed, a proxy weights dataset will be created.
+
+        Args:
+            observations (xr.Dataset): Climate data observations
+            model (xr.Dataset): Climate model data (historical and projected data)
+            weights (xr.DataArray, optional): weights corresponding to grid cell area. Defaults to None.
+        """
         self.obs = observations
         self.model = model
         # you can pass in the weights if the areacella or areacello data exists,
         # if not just us the cos of lat, which is proportional to cell area for a regular grid
         if weights is None:
+            # need to turn this into a full xarray ds to match areacella/areacello
             weights = np.cos(np.deg2rad(self.model.lat))
+            weights = weights.expand_dims({"lon": self.model.lon})
             weights.name = "weights"
             self.weights = weights
         else:
+            # check that dims match model
+            if ~weights.lat.equals(self.model.lat):
+                weights["lat"] = self.model["lat"]
+            if ~weights.lon.equals(self.model.lon):
+                weights["lon"] = self.model["lon"]
             self.weights = weights
 
         self.spatial_dims = [x for x in self.model.dims if x != "time"]
 
-        self.model_zonal_mean = None
-        self.obs_zonal_mean = None
-        self.weights_slice = None
+    # only want to recalculate if new lat min or lat max set
+    def set_spatial_bounds(self, lat_min: int, lat_max: int) -> xr.Dataset:
+        """Sets weights outside latitude bounds to nan
 
-    def zonal_mean(self, lat_min, lat_max):
+        Args:
+            lat_min (int): minimum latitude
+            lat_max (int): maximum latitude
+
+        Returns:
+            xr.Dataset: Weights dataset with data outside bounds set to nan
+        """
         weights_slice = self.weights
-        if lat_min != -90:
-            # using .where instead of .sel to work with rectilinear and curvlinear grids
-            weights_slice = weights_slice.where(weights_slice.lat > lat_min)
-        if lat_max != 90:
-            weights_slice = weights_slice.where(weights_slice.lat < lat_max)
+        # using .where instead of .sel to work with rectilinear and curvlinear grids
+        weights_slice = weights_slice.where(weights_slice.lat > lat_min)
+        weights_slice = weights_slice.where(weights_slice.lat < lat_max)
 
-        self.weights_slice = weights_slice
+        return weights_slice
 
-        self.model_zonal_mean = self.model.weighted(weights_slice.fillna(0)).mean(
+    def zonal_mean(self, zonal_weights: xr.Dataset):
+        """Calculates zonal mean of model and observational datasets, weighted by the provided weights dataset
+
+        Args:
+            zonal_weights (xr.Dataset): grid cell area weights to be applied to zonal mean calc.
+
+        Returns:
+            xr.Dataset: zonal mean of model dataset
+            xr.Dataset: zonal mean of observations dataset
+        """
+        model_zonal_mean = self.model.weighted(zonal_weights.fillna(0)).mean(
             dim=self.spatial_dims, keep_attrs=True
         )
-        self.obs_zonal_mean = self.obs.weighted(weights_slice.fillna(0)).mean(
+        obs_zonal_mean = self.obs.weighted(zonal_weights.fillna(0)).mean(
             dim=self.spatial_dims, keep_attrs=True
         )
+        return model_zonal_mean, obs_zonal_mean
 
     def calculate_rmse(
         self,
-        metric,
-        adjustment,
-        time_slice,
-        lat_min,
-        lat_max,
-        force_zonal_mean_calc=False,
-    ):
+        metric: str,
+        adjustment: str,
+        time_slice: slice(str, str),
+        lat_min: int = None,
+        lat_max: int = None,
+    ) -> xr.DataArray:
+        """Calculates RMSE based on metric and adjustment provided. If lat bounds provided, zonal mean and spatial RMSE calculations will use adjusted weights.
 
+        Args:
+            metric (str): Type of RMSE to calculate (zonal mean, temporal, or spatial)
+            adjustment (str): adjustment to apply to data before RMSE calculation (bias adjustment or anomaly)
+            time_slice (slice): time period to calculate RMSE over
+            lat_min (int, optional): Minimum latitude for spatial weights. Defaults to None.
+            lat_max (int, optional): Maximum latitude for spatial weights. Defaults to None.
+
+        Raises:
+            ValueError: If metric provided is not supported
+
+        Returns:
+            xr.DataArray: Resulting RMSE calculation. Dimensions vary based on metric provided.
+        """
         logger.info(
             f"calculating {metric} for time: {time_slice}, adjustment: {adjustment}"
         )
 
-        if metric == "zonal_mean":
-            if self.model_zonal_mean is None:
-                self.zonal_mean(lat_min, lat_max)
-            elif force_zonal_mean_calc:
-                # set this if calling function for multiple DIFFERENT zonal mean calculations
-                self.zonal_mean(lat_min, lat_max)
+        if lat_min or lat_max:
+            zonal_weights = self.set_spatial_bounds(lat_min=lat_min, lat_max=lat_max)
+        else:
+            zonal_weights = self.weights
 
-            model_rmse_data = self.model_zonal_mean
-            obs_rmse_data = self.obs_zonal_mean
+        if metric == "zonal_mean":
+            model_rmse_data, obs_rmse_data = self.zonal_mean(zonal_weights)
             weights = None
             dims = ["time"]
 
         elif metric == "spatial":
-            if self.weights_slice is None:
-                self.zonal_mean(lat_min, lat_max)
             model_rmse_data = self.model
             obs_rmse_data = self.obs
-            weights = self.weights_slice
+            weights = zonal_weights
             dims = self.spatial_dims
 
         elif metric == "temporal":
@@ -400,9 +597,8 @@ class MetricCalculation:
             model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
 
         if adjustment == "anomaly":
-            model_rmse_data = anomaly(ds=model_rmse_data).drop("month")
-            obs_rmse_data = anomaly(ds=obs_rmse_data).drop("month")
-
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
         return xs.rmse(
             a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
             b=obs_rmse_data.sel(time=time_slice).chunk({"time": -1}),
@@ -414,8 +610,18 @@ class MetricCalculation:
 
 
 class SaveResults:
+    """The SaveResults class is for saving outputs from the benchmarking pipeline in an organized mannor.
+    The path is determined by the variable and "experiment" (for now, RMSE) but you can specify the specific file name.
+    Options for saving data as csv and zarr.
+    """
 
-    def __init__(self, variable, experiment):
+    def __init__(self, variable: str, experiment: str):
+        """Initialize SaveResults class, sets local and cloud paths
+
+        Args:
+            variable (str): Variable short name
+            experiment (str): Set of metric experiments.
+        """
         self.variable = variable
         self.experiment = experiment
 
@@ -425,48 +631,58 @@ class SaveResults:
         self.gcs_prefix = f"gs://{self.bucket_name}/"
         self.data_path = f"results/{self.experiment}/{self.variable}/"
 
-    def save_to_csv_gcs(self, result_df, file_name):
+    def save_csv(
+        self, result_df: pd.DataFrame, file_name: str, save_to_cloud: bool = False
+    ):
+        """Save tabular data locally or to google cloud
+
+        Args:
+            result_df (pd.DataFrame): Dataframe to save
+            file_name (str): name of file to save results in. Path determined by class
+            save_to_cloud (bool): Save to cloud if passed. Default is False.
+        """
         file_path = self.data_path + file_name
-        full_gcs_path = self.gcs_prefix + file_path
-        blob = storage.Blob(bucket=self.bucket, name=file_path)
+        if save_to_cloud:
+            full_gcs_path = self.gcs_prefix + file_path
+            blob = storage.Blob(bucket=self.bucket, name=file_path)
+            # if file already exists
+            if blob.exists(self.storage_client):
+                # download existing content
+                existing_data = blob.download_as_text()
+                output = io.StringIO(existing_data)
 
-        logger.info(f"Saving results to {file_path}")
-        # write results to csv (add new line if csv already exists)
-        if blob.exists(self.storage_client):
-            # download existing content
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-
-            # Append the new row
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-
-            # Upload the updated content
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(full_gcs_path, index=False)
-
-        logger.info(f"Results saved: {full_gcs_path}")
-        # this is a lot of reads/writes to the bucket, might be worth it to save data locally and then just upload final file at the end
-
-    def save_to_csv_local(self, result_df, file_name):
-        # for local development and testing, to reduce google cloud costs
-        file_path = self.data_path + file_name
-        if os.path.isfile(file_path):
-            with open(file_path, "a") as f_object:
-                writer_object = writer(f_object)
+                # Append the new row
+                output.seek(0, io.SEEK_END)
+                writer_object = writer(output)
                 writer_object.writerow(result_df.values.flatten().tolist())
-                f_object.close()
+
+                # Upload the updated content
+                output.seek(0)
+                blob.upload_from_string(output.getvalue(), content_type="text/csv")
+            else:
+                result_df.to_csv(full_gcs_path, index=False)
+            logger.info(f"Results saved to cloud: {full_gcs_path}")
         else:
-            if not os.path.exists(self.data_path):
-                os.makedirs(self.data_path)
-            result_df.to_csv(file_path, index=False)
+            if os.path.isfile(file_path):
+                with open(file_path, "a") as f_object:
+                    writer_object = writer(f_object)
+                    writer_object.writerow(result_df.values.flatten().tolist())
+                    f_object.close()
+            else:
+                if not os.path.exists(self.data_path):
+                    os.makedirs(self.data_path)
+                result_df.to_csv(file_path, index=False)
 
-        logger.info(f"Results saved locally: {file_path}")
+            logger.info(f"Results saved locally: {file_path}")
 
-    def save_zarr(self, ds, file_name, save_to_cloud):
+    def save_zarr(self, ds: xr.Dataset, file_name: str, save_to_cloud: bool = False):
+        """Save dimentional data locally or to google cloud
+
+        Args:
+            ds (xr.Dataset): Dataset to save
+            file_name (str): name of file to save results in. Path determined by class
+            save_to_cloud (bool): Save to cloud if passed. Default is False.
+        """
         for var in list(ds.data_vars) + list(ds.coords):
             ds[var].encoding = {}
         # file name should be org_model_....
@@ -480,9 +696,13 @@ class SaveResults:
         # save
         ds.to_zarr(file_path, mode="a")
         logger.info(f"data saved: {file_path}")
-        return None
 
-    def overwrite(self, save_to_cloud=False):
+    def overwrite(self, save_to_cloud: bool = False):
+        """Delete all data at the path created by the class
+
+        Args:
+            save_to_cloud (bool, optional): If passed, delete data saved on the cloud. Defaults to False.
+        """
         if save_to_cloud:
             # remove google cloud files
             blobs = self.bucket.list_blobs(prefix=self.data_path)

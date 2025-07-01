@@ -38,28 +38,32 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
         xr.Dataset: Normalized dataset
     """
     # Rename dims if needed
-    # check dims, then check variables
-    rename_dims = {}
+    # first rename lat/lon
+    rename_lat_lon = {}
     if ("latitude" in ds.dims) or ("latitude" in ds.variables):
-        rename_dims["latitude"] = "lat"
+        rename_lat_lon["latitude"] = "lat"
     if ("longitude" in ds.dims) or ("longitude" in ds.variables):
-        rename_dims["longitude"] = "lon"
+        rename_lat_lon["longitude"] = "lon"
     if ("Latitude" in ds.dims) or ("Latitude" in ds.variables):
-        rename_dims["Latitude"] = "lat"
+        rename_lat_lon["Latitude"] = "lat"
     if ("Longitude" in ds.dims) or ("Longitude" in ds.variables):
-        rename_dims["Longitude"] = "lon"
+        rename_lat_lon["Longitude"] = "lon"
+    if ("nav_lat" in ds.dims) or ("nav_lat" in ds.variables):
+        rename_lat_lon["nav_lat"] = "lat"
+    if ("nav_lon" in ds.dims) or ("nav_lon" in ds.variables):
+        rename_lat_lon["nav_lon"] = "lon"
+    if rename_lat_lon:
+        ds = ds.rename(rename_lat_lon)
+    # atp, lat and lon should be dimensions if regular grid, or coordinates if curvlinear grid
+    rename_dims = {}
     if "nlon" in ds.dims:
         rename_dims["nlon"] = "i"
     if "nlat" in ds.dims:
         rename_dims["nlat"] = "j"
     if "x" in ds.dims:
-        rename_dims["x"] = "lon" if len(ds["x"].shape) == 1 else "i"
+        rename_dims["x"] = "i" if "lon" in ds.variables else "lon"
     if "y" in ds.dims:
-        rename_dims["y"] = "lat" if len(ds["y"].shape) == 1 else "j"
-    if "X" in ds.dims:
-        rename_dims["X"] = "lon" if len(ds["X"].shape) == 1 else "i"
-    if "Y" in ds.dims:
-        rename_dims["Y"] = "lat" if len(ds["Y"].shape) == 1 else "j"
+        rename_dims["y"] = "j" if "lat" in ds.variables else "lat"
     if "datetime" in ds.dims:
         rename_dims["datetime"] = "time"
     if rename_dims:
@@ -135,6 +139,46 @@ def build_zarr_store(var_name: str, dims_dict: dict, attributes: dict, store_pat
     )  # save template, will write each model to its region slice
 
 
+def search_gcs(filters: dict, drop_older_versions: bool) -> pd.DataFrame:
+    """Look for files in the public cmip6 google cloud bucket. Uses csv of data info to find path instead of a glob. Since files are saved as zarr, glob would return too many.
+    Broken out from DataFinder class to make the gcs search more customizable for model variable data vs model cell area data.
+
+    Args:
+        filters (dict): Dict with columns as keys and filter values as items
+        drop_older_versions (bool): drop duplicate entries, keeping the newer version
+
+    Returns:
+        pd.DataFrame: datasets matching filters on google cloud
+    """
+    df = pd.read_csv("https://cmip6.storage.googleapis.com/pangeo-cmip6.csv")
+    for column, value in filters.items():
+        df = df[df[column] == value]
+
+    if drop_older_versions:
+        df["version_date"] = pd.to_datetime(df["version"], format="%Y%m%d")
+        df = (
+            df.sort_values("version_date", ascending=False)
+            .drop_duplicates(
+                [
+                    "activity_id",
+                    "institution_id",
+                    "source_id",
+                    "experiment_id",
+                    "member_id",
+                    "table_id",
+                    "variable_id",
+                    "grid_label",
+                ]
+            )
+            .drop(columns=["version_date"])
+        )
+    elif len(df) == 0:
+        logger.warning("No results found on GCS.")
+        return None
+
+    return df
+
+
 class DataFinder:
     """The DataFinder class locates observational and model based on the variable and model passed.
     The model data returned is the ensemble mean of the historical and ssp experiments, concatenated together.
@@ -154,7 +198,7 @@ class DataFinder:
         self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
         self.frequency = VARIABLE_FREQUENCY_GROUP[self.variable]
         self.obs_data_path = OBSERVATION_DATA_PATHS[self.variable]
-        self.grid = "gn"
+        self.grid = None
 
     def check_local_files(
         self,
@@ -178,7 +222,8 @@ class DataFinder:
         return local_files
 
     def check_gcs_files(self, mip: str, experiment: str, ensemble: str) -> str:
-        """Look for files in the public cmip6 google cloud bucket. Uses csv of data info to find path instead of a glob. Since files are saved as zarr, glob would return too many.
+        """Look for files in the public cmip6 google cloud bucket. Customize search keys for variable data vs cell area data.
+        Sets the type of grid being used (gn for native grid, this is best), and returns the cloud storage path string ex: gs://path/to/data
 
         Args:
             mip (str): ScenarioMIP or CMIP
@@ -188,41 +233,35 @@ class DataFinder:
         Returns:
             str: cloud storage file path
         """
-        df = pd.read_csv("https://cmip6.storage.googleapis.com/pangeo-cmip6.csv")
-        df = df[
-            (df["member_id"] == ensemble)
-            & (df["activity_id"] == mip)
-            & (df["experiment_id"] == experiment)
-            & (df["variable_id"] == self.variable)
-            & (df["table_id"] == self.frequency)
-            & (df["institution_id"] == self.org)
-            & (df["source_id"] == self.model)
-            & (df["grid_label"] == self.grid)
-        ]
-        if len(df) > 1:
-            # potentially two versions, so take the newer one
-            df["version_date"] = pd.to_datetime(df["version"], format="%Y%m%d")
-            df = (
-                df.sort_values("version_date", ascending=False)
-                .drop_duplicates(
-                    [
-                        "activity_id",
-                        "institution_id",
-                        "source_id",
-                        "experiment_id",
-                        "member_id",
-                        "table_id",
-                        "variable_id",
-                        "grid_label",
-                    ]
-                )
-                .drop(columns=["version_date"])
-            )
-        elif len(df) == 0:
-            logger.warning("No results found on GCS.")
-            return None
+        search_keys = {
+            "source_id": self.model,
+            "table_id": self.frequency,
+            "variable_id": self.variable,
+            "member_id": ensemble,
+            "activity_id": mip,
+            "experiment_id": experiment,
+        }
+        if self.grid:
+            search_keys["grid_label"] = self.grid
 
-        return df["zstore"].values[0]
+        gcs_files = search_gcs(filters=search_keys, drop_older_versions=True)
+
+        if (len(gcs_files) == 0) and ("area" in self.variable):
+            search_keys.pop("member_id")
+            search_keys.pop("activity_id")
+            search_keys.pop("experiment_id")
+
+            gcs_files = search_gcs(filters=search_keys, drop_older_versions=True)
+
+        if self.grid is None:
+            if "gn" in gcs_files["grid_label"].unique():
+                self.grid = "gn"
+            else:
+                self.grid = gcs_files["grid_label"].values[0]
+
+        gcs_files = gcs_files[gcs_files["grid_label"] == self.grid]
+
+        return gcs_files["zstore"].values[0]
 
     def check_esgf_files(
         self,

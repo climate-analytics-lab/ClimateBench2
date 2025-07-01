@@ -129,9 +129,24 @@ OBSERVATION_DATA_SPECS = {
 }
 # using nested dict incase we have multiple obs datasets for one var. This dict should use the main obs dataset.
 OBSERVATION_DATA_PATHS = {
-    "tas": OBSERVATION_DATA_SPECS["tas"]["nasa_airs"]["cloud_path"],
-    "tos": OBSERVATION_DATA_SPECS["tos"]["noaa_oisst"]["cloud_path"],
-    "pr": OBSERVATION_DATA_SPECS["pr"]["noaa_gpcp"]["cloud_path"],
-    "clt": OBSERVATION_DATA_SPECS["clt"]["nasa_modis"]["cloud_path"],
-    "od550aer": OBSERVATION_DATA_SPECS["od550aer"]["nasa_modis"]["cloud_path"],
+    "tas": {
+        "cloud": OBSERVATION_DATA_SPECS["tas"]["nasa_airs"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["tas"]["nasa_airs"]["local_path"],
+    },
+    "tos": {
+        "cloud": OBSERVATION_DATA_SPECS["tos"]["noaa_oisst"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["tos"]["noaa_oisst"]["local_path"],
+    },
+    "pr": {
+        "cloud": OBSERVATION_DATA_SPECS["pr"]["noaa_gpcp"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["pr"]["noaa_gpcp"]["local_path"],
+    },
+    "clt": {
+        "cloud": OBSERVATION_DATA_SPECS["clt"]["nasa_modis"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["clt"]["nasa_modis"]["local_path"],
+    },
+    "od550aer": {
+        "cloud": OBSERVATION_DATA_SPECS["od550aer"]["nasa_modis"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["od550aer"]["nasa_modis"]["local_path"],
+    },
 }

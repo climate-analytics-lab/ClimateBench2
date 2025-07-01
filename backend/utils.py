@@ -197,7 +197,8 @@ class DataFinder:
         self.variable = variable
         self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
         self.frequency = VARIABLE_FREQUENCY_GROUP[self.variable]
-        self.obs_data_path = OBSERVATION_DATA_PATHS[self.variable]
+        self.obs_data_path_local = OBSERVATION_DATA_PATHS[self.variable]["local"]
+        self.obs_data_path_cloud = OBSERVATION_DATA_PATHS[self.variable]["cloud"]
         self.grid = None
 
     def check_local_files(
@@ -454,7 +455,16 @@ class DataFinder:
         Returns:
             xr.Dataset: Observational dataset
         """
-        return standardize_dims(xr.open_zarr(self.obs_data_path))
+        if os.path.isdir(self.obs_data_path_local):
+            logger.info(
+                f"reading observations from local store: {self.obs_data_path_local}"
+            )
+            return standardize_dims(xr.open_zarr(self.obs_data_path_local))
+        else:
+            logger.info(
+                f"reading observations from cloud store: {self.obs_data_path_cloud}"
+            )
+            return standardize_dims(xr.open_zarr(self.obs_data_path_cloud))
 
 
 # little helper functions

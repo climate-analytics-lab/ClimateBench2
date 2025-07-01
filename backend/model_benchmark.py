@@ -33,7 +33,6 @@ def main(model, variable, adjustments, lat_min, lat_max, save_to_cloud, overwrit
     logger.info("Reading model cell area data")
     cell_var_name = "areacella" if variable != "tos" else "areacello"
     fx_ds = data_finder.load_cell_area_ds(cell_var_name)
-    logger.info(f"Reading observation data: {data_finder.obs_data_path}")
     obs_ds = data_finder.load_obs_ds()
 
     logger.info("Regridding observations")
@@ -48,6 +47,8 @@ def main(model, variable, adjustments, lat_min, lat_max, save_to_cloud, overwrit
         observations=obs_rg_ds[variable],
         model=model_ds[variable],
         weights=fx_ds,
+        lat_min=lat_min,
+        lat_max=lat_max,
     )
     # set up data save class
     save_results = SaveResults(variable=variable, experiment="RMSE")
@@ -64,15 +65,11 @@ def main(model, variable, adjustments, lat_min, lat_max, save_to_cloud, overwrit
             metric="zonal_mean",
             adjustment=adjustment,
             time_slice=slice(HIST_START_DATE, HIST_END_DATE),
-            lat_min=-90,
-            lat_max=90,  # should add arg for lat slice
         ).values.tolist()
         rmse_ssp245 = metric_calculator.calculate_rmse(
             metric="zonal_mean",
             adjustment=adjustment,
             time_slice=slice(SSP_START_DATE, SSP_END_DATE),
-            lat_min=-90,
-            lat_max=90,
         ).values.tolist()
         result_df = pd.DataFrame(
             {
@@ -89,15 +86,11 @@ def main(model, variable, adjustments, lat_min, lat_max, save_to_cloud, overwrit
             metric="temporal",
             adjustment=adjustment,
             time_slice=slice(HIST_START_DATE, HIST_END_DATE),
-            lat_min=lat_min,
-            lat_max=lat_max,
         )
         rmse_ssp245_map = metric_calculator.calculate_rmse(
             metric="temporal",
             adjustment=adjustment,
             time_slice=slice(SSP_START_DATE, SSP_END_DATE),
-            lat_min=lat_min,
-            lat_max=lat_max,
         )
         rmse_map = xr.concat(
             [
@@ -115,8 +108,6 @@ def main(model, variable, adjustments, lat_min, lat_max, save_to_cloud, overwrit
             metric="spatial",
             adjustment=adjustment,
             time_slice=slice(HIST_START_DATE, SSP_END_DATE),
-            lat_min=-90,
-            lat_max=90,
         ).to_dataset(name=data_label)
 
         # save data

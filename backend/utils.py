@@ -26,24 +26,25 @@ from constants import (
 logger = logging.getLogger(__name__)
 
 
-def standardize_dims(ds: xr.Dataset) -> xr.Dataset:
+def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Dataset:
     """Fixes common problems with xarray datasets
 
     Args:
         ds (xr.Dataset): Dataset with spatial and temporal dimensions
+        reset_coordinates (bool): Reset coordinates to regular grid. Default is False.
 
     Returns:
         xr.Dataset: Normalized dataset
     """
     # Rename dims if needed
     rename_dims = {}
-    if "latitude" in ds.dims:
+    if ("latitude" in ds.dims) or ("latitude" in ds.variables):
         rename_dims["latitude"] = "lat"
-    if "longitude" in ds.dims:
+    if ("longitude" in ds.dims) or ("longitude" in ds.variables):
         rename_dims["longitude"] = "lon"
-    if "Latitude" in ds.dims:
+    if ("Latitude" in ds.dims) or ("Latitude" in ds.variables):
         rename_dims["Latitude"] = "lat"
-    if "Longitude" in ds.dims:
+    if ("Longitude" in ds.dims) or ("Longitude" in ds.variables):
         rename_dims["Longitude"] = "lon"
     if "datetime" in ds.dims:
         rename_dims["datetime"] = "time"
@@ -54,20 +55,41 @@ def standardize_dims(ds: xr.Dataset) -> xr.Dataset:
     if "time" in ds.dims:
         ds["time"] = pd.to_datetime(ds["time"].dt.strftime("%Y-%m-01"))
 
-    # Shift longitudes
-    ds = ds.assign_coords(lon=(ds.lon % 360))
-    ds = ds.sortby("lon")
+    # only if rectilinear grid (tos is curvelinear grid)
+    if (len(ds["lat"].dims) == 1) and (len(ds["lon"].dims) == 1):
+        # Shift longitudes
+        ds = ds.assign_coords(lon=(ds.lon % 360))
+        ds = ds.sortby("lon")
 
-    ds = ds.sortby("lat")
+        ds = ds.sortby("lat")
 
-    # fix coordinates
-    lat_len = len(ds.lat)
-    lon_len = len(ds.lon)
-    lat_res = 180 / lat_len
-    lon_res = 360 / lon_len
-    lats = np.arange(-90 + lat_res / 2, 90, lat_res)
-    lons = np.arange(lon_res / 2, 360, lon_res)
-    ds = ds.assign_coords({"lat": lats, "lon": lons})
+        if reset_coorinates:
+            # fix coordinates
+            lat_len = len(ds.lat)
+            lon_len = len(ds.lon)
+            lat_res = 180 / lat_len
+            lon_res = 360 / lon_len
+            lats = np.arange(-90 + lat_res / 2, 90, lat_res)
+            lons = np.arange(lon_res / 2, 360, lon_res)
+            ds = ds.assign_coords({"lat": lats, "lon": lons})
+
+    else:
+        # check that lat is increaseing
+        sample_idx = 1
+        test_lats = ds["lat"].isel(i=sample_idx)
+        if test_lats[0] > test_lats[-1]:
+            ds = ds.assign_coords(j=ds["j"][::-1])
+            ds = ds.sortby("j")
+        test_lons = ds["lon"].isel(j=sample_idx)
+
+        # and that lon is 0 - 360
+        ds["lon"] = ds["lon"] % 360
+        if test_lons["lon"][0] != 0:
+            # for sorting purposes
+            ds = ds.assign_coords(i=test_lons["lon"].values)
+            ds = ds.sortby("i")
+            # reset to int array
+            ds = ds.assign_coords(i=np.arange(len(test_lons["lon"].values)))
 
     return ds
 
@@ -265,18 +287,33 @@ class DataFinder:
         old_var_name = self.variable
         old_freq_name = self.frequency
         self.variable = cell_var_name
-        self.frequency = "fx"
+        self.frequency = "Ofx" if cell_var_name == "areacello" else "fx"
         fx_ds = self.read_data(
             mip="CMIP",
             experiment="historical",
             ensemble=ENSEMBLE_MEMBERS[0],
         )
+        # fill value issue with areacello data
+        if "_FillValue" in fx_ds[cell_var_name].encoding:
+            fill_val = fx_ds[cell_var_name].encoding["_FillValue"]
+            fx_ds = fx_ds.where(fx_ds[cell_var_name] <= fill_val)
+
         self.variable = old_var_name
         self.frequency = old_freq_name
         return standardize_dims(fx_ds)
 
     def load_obs_ds(self):
         return standardize_dims(xr.open_zarr(self.obs_data_path))
+
+
+# little helper functions
+def anomaly(ds):
+    return ds.groupby("time.month") - ds.groupby("time.month").mean("time")
+
+
+def bias_adjustment(model, obs):
+    adjustment = model.mean(dim="time") - obs.mean(dim="time")
+    return model - adjustment
 
 
 class MetricCalculation:
@@ -292,86 +329,84 @@ class MetricCalculation:
             self.weights = weights
         else:
             self.weights = weights
-        self.model_bias_adjusted = None
-        self.model_anomaly = None
-        self.obs_anomaly = None
+
+        self.spatial_dims = [x for x in self.model.dims if x != "time"]
 
         self.model_zonal_mean = None
         self.obs_zonal_mean = None
+        self.weights_slice = None
 
-    def zonal_mean(self, lat_slice):
-        self.model_zonal_mean = (
-            self.model.sel(lat=lat_slice)
-            .weighted(self.weights.sel(lat=lat_slice).fillna(0))
-            .mean(dim=["lat", "lon"], keep_attrs=True)
+    def zonal_mean(self, lat_min, lat_max):
+        weights_slice = self.weights
+        if lat_min != -90:
+            # using .where instead of .sel to work with rectilinear and curvlinear grids
+            weights_slice = weights_slice.where(weights_slice.lat > lat_min)
+        if lat_max != 90:
+            weights_slice = weights_slice.where(weights_slice.lat < lat_max)
+
+        self.weights_slice = weights_slice
+
+        self.model_zonal_mean = self.model.weighted(weights_slice.fillna(0)).mean(
+            dim=self.spatial_dims, keep_attrs=True
         )
-        self.obs_zonal_mean = (
-            self.obs.sel(lat=lat_slice)
-            .weighted(self.weights.sel(lat=lat_slice).fillna(0))
-            .mean(dim=["lat", "lon"], keep_attrs=True)
+        self.obs_zonal_mean = self.obs.weighted(weights_slice.fillna(0)).mean(
+            dim=self.spatial_dims, keep_attrs=True
         )
 
-    # little helper functions
-    def anomaly(ds):
-        return ds.groupby("time.month") - ds.groupby("time.month").mean("time")
-
-    def bias_adjustment(model, obs):
-        adjustment = model.mean(dim="time") - obs.mean(dim="time")
-        return model - adjustment
-
-    def calculate_zonal_mean_rmse(
-        self, metric, time_slice, lat_slice, force_zonal_mean_calc=False
+    def calculate_rmse(
+        self,
+        metric,
+        adjustment,
+        time_slice,
+        lat_min,
+        lat_max,
+        force_zonal_mean_calc=False,
     ):
+
         logger.info(
-            f"calculating zonal mean rmse for time: {time_slice}, lat: {lat_slice}"
+            f"calculating {metric} for time: {time_slice}, adjustment: {adjustment}"
         )
-        if self.model_zonal_mean is None:
-            self.zonal_mean(lat_slice)
-        elif force_zonal_mean_calc:
-            # set this if calling function for multiple DIFFERENT zonal mean calculations
-            self.zonal_mean(lat_slice)
-        model_rmse_data = self.model_zonal_mean
-        obs_rmse_data = self.obs_zonal_mean
 
-        if metric == "bias_adjusted":
-            model_zonal_mean_bias_adjusted = self.bias_adjustment(
-                self.model_zonal_mean, self.obs_zonal_mean
-            )
-            model_rmse_data = model_zonal_mean_bias_adjusted
+        if metric == "zonal_mean":
+            if self.model_zonal_mean is None:
+                self.zonal_mean(lat_min, lat_max)
+            elif force_zonal_mean_calc:
+                # set this if calling function for multiple DIFFERENT zonal mean calculations
+                self.zonal_mean(lat_min, lat_max)
 
-        if metric == "anomaly":
-            model_zonal_mean_anomaly = self.anomaly(self.model_zonal_mean)
-            obs_zonal_mean_anomaly = self.anomaly(self.obs_zonal_mean)
-            model_rmse_data = model_zonal_mean_anomaly
-            obs_rmse_data = obs_zonal_mean_anomaly
+            model_rmse_data = self.model_zonal_mean
+            obs_rmse_data = self.obs_zonal_mean
+            weights = None
+            dims = ["time"]
+
+        elif metric == "spatial":
+            if self.weights_slice is None:
+                self.zonal_mean(lat_min, lat_max)
+            model_rmse_data = self.model
+            obs_rmse_data = self.obs
+            weights = self.weights_slice
+            dims = self.spatial_dims
+
+        elif metric == "temporal":
+            model_rmse_data = self.model
+            obs_rmse_data = self.obs
+            weights = None
+            dims = ["time"]
+
+        else:
+            raise ValueError(f"Metric not supported: {metric}")
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data).drop("month")
+            obs_rmse_data = anomaly(ds=obs_rmse_data).drop("month")
 
         return xs.rmse(
             a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
             b=obs_rmse_data.sel(time=time_slice).chunk({"time": -1}),
-            skipna=True,
-            keep_attrs=True,
-        ).values.tolist()
-
-    def calculate_rmse(self, metric, time_slice, dims):
-        logger.info(
-            f"calculating rmse for time: {time_slice}, metric: {metric}, across dims: {dims}"
-        )
-        model_rmse_data = self.model
-        obs_rmse_data = self.obs
-        if metric == "bias_adjusted":
-            if self.model_bias_adjusted is None:
-                self.model_bias_adjusted = self.bias_adjustment(self.model, self.obs)
-            model_rmse_data = self.model_bias_adjusted
-
-        if metric == "anomaly":
-            if self.model_anomaly is None and self.obs_anomaly is None:
-                self.model_anomaly = self.anomaly(self.model)
-                self.obs_anomaly = self.anomaly(self.obs)
-            model_rmse_data = self.model_anomaly
-            obs_rmse_data = self.obs_anomaly
-        return xs.rmse(
-            a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
-            b=obs_rmse_data.sel(time=time_slice).chunk({"time": -1}),
+            weights=weights,
             skipna=True,
             keep_attrs=True,
             dim=dims,
@@ -432,6 +467,8 @@ class SaveResults:
         logger.info(f"Results saved locally: {file_path}")
 
     def save_zarr(self, ds, file_name, save_to_cloud):
+        for var in list(ds.data_vars) + list(ds.coords):
+            ds[var].encoding = {}
         # file name should be org_model_....
         file_path = self.data_path + file_name
         if save_to_cloud:

@@ -486,7 +486,12 @@ class MetricCalculation:
     """
 
     def __init__(
-        self, observations: xr.Dataset, model: xr.Dataset, weights: xr.DataArray = None
+        self,
+        observations: xr.Dataset,
+        model: xr.Dataset,
+        weights: xr.DataArray = None,
+        lat_min: int = -90,
+        lat_max: int = 90,
     ):
         """Initialize MetricCalculation class. If weights dataarray not passed, a proxy weights dataset will be created.
 
@@ -494,9 +499,13 @@ class MetricCalculation:
             observations (xr.Dataset): Climate data observations
             model (xr.Dataset): Climate model data (historical and projected data)
             weights (xr.DataArray, optional): weights corresponding to grid cell area. Defaults to None.
+            lat_min (int): minimum latitude
+            lat_max (int): maximum latitude
         """
         self.obs = observations
         self.model = model
+        self.lat_min = lat_min
+        self.lat_max = lat_max
         # you can pass in the weights if the areacella or areacello data exists,
         # if not just us the cos of lat, which is proportional to cell area for a regular grid
         if weights is None:
@@ -513,51 +522,35 @@ class MetricCalculation:
                 weights["lon"] = self.model["lon"]
             self.weights = weights
 
+        # setting weights outside bounds to na, this will set their weight to 0 and therefore not includ in calculations
+        self.weights = self.weights.where(self.weights.lat > lat_min)
+        self.weights = self.weights.where(self.weights.lat < lat_max)
+
+        self.model_zonal_mean = None
+        self.obs_zonal_mean = None
+
         self.spatial_dims = [x for x in self.model.dims if x != "time"]
 
-    # only want to recalculate if new lat min or lat max set
-    def set_spatial_bounds(self, lat_min: int, lat_max: int) -> xr.Dataset:
-        """Sets weights outside latitude bounds to nan
-
-        Args:
-            lat_min (int): minimum latitude
-            lat_max (int): maximum latitude
-
-        Returns:
-            xr.Dataset: Weights dataset with data outside bounds set to nan
-        """
-        weights_slice = self.weights
-        # using .where instead of .sel to work with rectilinear and curvlinear grids
-        weights_slice = weights_slice.where(weights_slice.lat > lat_min)
-        weights_slice = weights_slice.where(weights_slice.lat < lat_max)
-
-        return weights_slice
-
-    def zonal_mean(self, zonal_weights: xr.Dataset):
+    def zonal_mean(self, ds: xr.Dataset):
         """Calculates zonal mean of model and observational datasets, weighted by the provided weights dataset
 
         Args:
-            zonal_weights (xr.Dataset): grid cell area weights to be applied to zonal mean calc.
+            ds (xr.Dataset): observations or model dataset to weight by cell area weights
 
         Returns:
             xr.Dataset: zonal mean of model dataset
             xr.Dataset: zonal mean of observations dataset
         """
-        model_zonal_mean = self.model.weighted(zonal_weights.fillna(0)).mean(
+        weighted_ds = ds.weighted(self.weights.fillna(0)).mean(
             dim=self.spatial_dims, keep_attrs=True
         )
-        obs_zonal_mean = self.obs.weighted(zonal_weights.fillna(0)).mean(
-            dim=self.spatial_dims, keep_attrs=True
-        )
-        return model_zonal_mean, obs_zonal_mean
+        return weighted_ds
 
     def calculate_rmse(
         self,
         metric: str,
         adjustment: str,
         time_slice: slice(str, str),
-        lat_min: int = None,
-        lat_max: int = None,
     ) -> xr.DataArray:
         """Calculates RMSE based on metric and adjustment provided. If lat bounds provided, zonal mean and spatial RMSE calculations will use adjusted weights.
 
@@ -565,8 +558,6 @@ class MetricCalculation:
             metric (str): Type of RMSE to calculate (zonal mean, temporal, or spatial)
             adjustment (str): adjustment to apply to data before RMSE calculation (bias adjustment or anomaly)
             time_slice (slice): time period to calculate RMSE over
-            lat_min (int, optional): Minimum latitude for spatial weights. Defaults to None.
-            lat_max (int, optional): Maximum latitude for spatial weights. Defaults to None.
 
         Raises:
             ValueError: If metric provided is not supported
@@ -578,20 +569,20 @@ class MetricCalculation:
             f"calculating {metric} for time: {time_slice}, adjustment: {adjustment}"
         )
 
-        if lat_min or lat_max:
-            zonal_weights = self.set_spatial_bounds(lat_min=lat_min, lat_max=lat_max)
-        else:
-            zonal_weights = self.weights
-
         if metric == "zonal_mean":
-            model_rmse_data, obs_rmse_data = self.zonal_mean(zonal_weights)
+            if self.model_zonal_mean is None:
+                self.model_zonal_mean = self.zonal_mean(self.model)
+            if self.obs_zonal_mean is None:
+                self.obs_zonal_mean = self.zonal_mean(self.obs)
+            model_rmse_data = self.model_zonal_mean
+            obs_rmse_data = self.obs_zonal_mean
             weights = None
             dims = ["time"]
 
         elif metric == "spatial":
             model_rmse_data = self.model
             obs_rmse_data = self.obs
-            weights = zonal_weights
+            weights = self.weights
             dims = self.spatial_dims
 
         elif metric == "temporal":
@@ -609,6 +600,7 @@ class MetricCalculation:
         if adjustment == "anomaly":
             model_rmse_data = anomaly(ds=model_rmse_data)
             obs_rmse_data = anomaly(ds=obs_rmse_data)
+
         return xs.rmse(
             a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
             b=obs_rmse_data.sel(time=time_slice).chunk({"time": -1}),

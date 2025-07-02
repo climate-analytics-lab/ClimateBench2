@@ -79,9 +79,6 @@ class DownloadObservations:
             logger.info(
                 f"downloading data from file paths in: {self.data_specs['wget_file_list']}"
             )
-            # # make temp dir to save data in
-            # if not os.path.exists(self.temp_dir):
-            #     os.makedirs(self.temp_dir)
             os.system(
                 f'wget --load-cookies ~/.urs_cookies --save-cookies ~/.urs_cookies --keep-session-cookies  --content-disposition -i "{self.data_specs['wget_file_list']}" -P {self.temp_dir}'
             )

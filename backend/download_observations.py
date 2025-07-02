@@ -5,7 +5,9 @@ import os
 
 import ee
 import geemap
+import numpy as np
 import pandas as pd
+import requests
 import xarray as xr
 
 from constants import (
@@ -32,16 +34,29 @@ class DownloadObservations:
         self.source_var_name = self.data_specs["source_var_name"]
 
         self.temp_dir = "raw_data"
+        os.makedirs(self.temp_dir)
 
         self.ds_cleaned = None
         self.ds_raw = None
         self.var_attrs = None
+        self.temp_file_name = None
 
     def download_raw_data(self):
 
         if self.data_specs.get("download_url", False):
             logger.info(f"downloading data from : {self.data_specs['download_url']}")
-            ds = xr.open_dataset(self.data_specs["download_url"]).sel(
+
+            self.temp_file_name = (
+                f"{self.temp_dir}/{self.data_specs['download_url'].split('/')[-1]}"
+            )
+
+            with requests.get(self.data_specs["download_url"], stream=True) as r:
+                r.raise_for_status()
+                with open(self.temp_file_name, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+            ds = xr.open_dataset(self.temp_file_name, chunks={}).sel(
                 time=slice(HIST_START_DATE, SSP_END_DATE)
             )
 
@@ -64,9 +79,9 @@ class DownloadObservations:
             logger.info(
                 f"downloading data from file paths in: {self.data_specs['wget_file_list']}"
             )
-            # make temp dir to save data in
-            if not os.path.exists(self.temp_dir):
-                os.makedirs(self.temp_dir)
+            # # make temp dir to save data in
+            # if not os.path.exists(self.temp_dir):
+            #     os.makedirs(self.temp_dir)
             os.system(
                 f'wget --load-cookies ~/.urs_cookies --save-cookies ~/.urs_cookies --keep-session-cookies  --content-disposition -i "{self.data_specs['wget_file_list']}" -P {self.temp_dir}'
             )
@@ -78,7 +93,7 @@ class DownloadObservations:
                 year = file.split(".")[1]
                 month = file.split(".")[2]
                 date = pd.to_datetime(f"{year}-{month}-01")
-                temp_ds = xr.open_dataset(file, decode_times=False)
+                temp_ds = xr.open_dataset(file, decode_times=False, chunks={})
                 temp_ds = temp_ds.expand_dims({"time": [date]})
                 ds_list.append(temp_ds)
             ds = xr.concat(ds_list, dim="time")
@@ -91,6 +106,33 @@ class DownloadObservations:
 
         self.ds_raw = ds
 
+    def hadcrut5_anomaly_preprocess(self):
+        logger.info(
+            f"Downloading climatology data from {self.data_specs['climatology_url']}"
+        )
+        clim_file_path = (
+            f"{self.temp_dir}/{self.data_specs['climatology_url'].split('/')[-1]}"
+        )
+
+        with requests.get(self.data_specs["climatology_url"], stream=True) as r:
+            r.raise_for_status()
+            with open(clim_file_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+        ds = xr.open_dataset(clim_file_path, chunks={})
+        ds["time"] = np.arange(1, 13)
+        ds = ds.rename({"time": "month"})
+        ds = ds.rename({"lat": "latitude", "lon": "longitude"})
+
+        self.ds_raw = (
+            self.ds_raw[self.source_var_name].groupby("time.month")
+            + ds[self.data_specs["climatology_var_name"]]
+        ).to_dataset(name=self.source_var_name)
+        self.ds_raw[self.source_var_name].attrs["units"] = ds[
+            self.data_specs["climatology_var_name"]
+        ].attrs["units"]
+
     def unit_conversion(self, ds):
         if self.variable == "pr":
             logger.info("converting pr units to kg m-2 s-1")
@@ -100,7 +142,9 @@ class DownloadObservations:
             ds[self.variable] = (
                 ds[self.variable] / 100
             )  # values should range 0 - 100 (units %)
-
+        if self.variable == "tas":
+            logger.info("converting tas units to K")
+            ds[self.variable] = ds[self.variable] + 273.15
         return ds
 
     def standardize_data(self):
@@ -145,6 +189,10 @@ class DownloadObservations:
 def main(variable, source, save_to_cloud):
     logger.info(f"Starting download for variable: {variable} from: {source}")
     downloader = DownloadObservations(variable, source)
+    downloader.download_raw_data()
+    if source == "HadCRUT5":
+        downloader.hadcrut5_anomaly_preprocess()
+    downloader.standardize_data()
     downloader.save_data(save_to_cloud=save_to_cloud)
     logger.info("Download complete")
 

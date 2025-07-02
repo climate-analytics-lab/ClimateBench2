@@ -81,12 +81,23 @@ OBSERVATION_DATA_SPECS = {
             "standard_name": "air_temperature",
             "units": "K",
         },
+        "HadCRUT5": {
+            "cloud_path": "gs://climatebench/observations/preprocessed/tas/tas_HadCRUT5.zarr",
+            "local_path": "observational_data/tas_HadCRUT5.zarr",
+            "download_url": "https://www.metoffice.gov.uk/hadobs/hadcrut5/data/HadCRUT.5.0.2.0/analysis/HadCRUT.5.0.2.0.analysis.anomalies.ensemble_mean.nc",
+            "climatology_url": "https://crudata.uea.ac.uk/cru/data/temperature/absolute_v5.nc",
+            "climatology_var_name": "tem",
+            "source_var_name": "tas_mean",
+            "long_name": "Near-Surface Air Temperature",
+            "standard_name": "air_temperature",
+            "units": "K",
+        },
     },
     "pr": {
         "noaa_gpcp": {
             "cloud_path": "gs://climatebench/observations/preprocessed/pr/pr_noaa_gpcp.zarr",
             "local_path": "observational_data/pr_noaa_gpcp.zarr",
-            "download_url": "http://psl.noaa.gov/thredds/dodsC/Datasets/gpcp/precip.mon.mean.nc",
+            "download_url": "https://downloads.psl.noaa.gov/Datasets/gpcp/precip.mon.mean.nc",
             "source_var_name": "precip",
             "long_name": "Average Monthly Rate of Precipitation",
             "standard_name": "precipitation_flux",
@@ -97,7 +108,7 @@ OBSERVATION_DATA_SPECS = {
         "noaa_oisst": {
             "cloud_path": "gs://climatebench/observations/preprocessed/tos/tos_noaa_oisst.zarr",
             "local_path": "observational_data/tos_noaa_oisst.zarr",
-            "download_url": "http://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres/sst.mon.mean.nc",
+            "download_url": "https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.mon.mean.nc",
             "source_var_name": "sst",
             "long_name": "Sea Surface Temperature",
             "standard_name": "sea_surface_temperature",

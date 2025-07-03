@@ -186,7 +186,7 @@ class DataFinder:
     The class can also find the model cell area data based on variable passed.
     """
 
-    def __init__(self, model: str, variable: str):
+    def __init__(self, model: str, variable: str, start_year: int, end_year: int):
         """Initialize DataFinder class.
 
         Args:
@@ -195,17 +195,36 @@ class DataFinder:
         """
         self.model = model
         self.variable = variable
+        self.start_year = start_year
+        self.end_year = end_year
+
         self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
-        self.frequency = VARIABLE_FREQUENCY_GROUP[self.variable]
+        self.mip = "CMIP" if self.start_year < 2015 else "ScenarioMIP"
+        # If the time range spans the two experiments
+        if (self.end_year >= 2015) & (self.mip == "CMIP"):
+            self.secondary_mip = "ScenarioMIP"
+        else:
+            self.secondary_mip = None
+
+        self.variable_frequency_table = VARIABLE_FREQUENCY_GROUP[self.variable]
+        self.area_variable_name = "areacello" if self.variable == "tos" else "areacella"
+        self.area_frequency_table = "Ofx" if self.variable == "tos" else "fx"
+
         self.obs_data_path_local = OBSERVATION_DATA_PATHS[self.variable]["local"]
         self.obs_data_path_cloud = OBSERVATION_DATA_PATHS[self.variable]["cloud"]
         self.grid = None
+
+        self.model_ds = None
+        self.fx_ds = None
+        self.obs_ds = None
 
     def check_local_files(
         self,
         mip: str,
         experiment: str,
         ensemble: str,
+        frequency_table: str,
+        variable: str,
     ) -> list[str]:
         """Find local file paths of climate model data. This is only relevant if using ESMValTool.
 
@@ -217,12 +236,19 @@ class DataFinder:
         Returns:
             list[str]: list of local file paths
         """
-        local_data_path = f"{os.environ['HOME']}/climate_data/CMIP6/{mip}/{self.org}/{self.model}/{experiment}/{ensemble}/{self.frequency}/{self.variable}/*/*/*"
+        local_data_path = f"{os.environ['HOME']}/climate_data/CMIP6/{mip}/{self.org}/{self.model}/{experiment}/{ensemble}/{frequency_table}/{variable}/*/*/*"
         local_files = glob.glob(local_data_path)
         self.local_files = local_files
         return local_files
 
-    def check_gcs_files(self, mip: str, experiment: str, ensemble: str) -> str:
+    def check_gcs_files(
+        self,
+        mip: str,
+        experiment: str,
+        ensemble: str,
+        frequency_table: str,
+        variable: str,
+    ) -> str:
         """Look for files in the public cmip6 google cloud bucket. Customize search keys for variable data vs cell area data.
         Sets the type of grid being used (gn for native grid, this is best), and returns the cloud storage path string ex: gs://path/to/data
 
@@ -236,8 +262,8 @@ class DataFinder:
         """
         search_keys = {
             "source_id": self.model,
-            "table_id": self.frequency,
-            "variable_id": self.variable,
+            "table_id": frequency_table,
+            "variable_id": variable,
             "member_id": ensemble,
             "activity_id": mip,
             "experiment_id": experiment,
@@ -247,7 +273,7 @@ class DataFinder:
 
         gcs_files = search_gcs(filters=search_keys, drop_older_versions=True)
 
-        if (len(gcs_files) == 0) and ("area" in self.variable):
+        if (len(gcs_files) == 0) and ("area" in variable):
             search_keys.pop("member_id")
             search_keys.pop("activity_id")
             search_keys.pop("experiment_id")
@@ -268,7 +294,8 @@ class DataFinder:
         self,
         experiment: str,
         ensemble: str,
-        data_node="esgf-data1.llnl.gov",
+        frequency_table: str,
+        variable: str,
     ) -> list[str]:
         """Check the ESGF llnl node for data. This is a slower process than the google cloud search and will return multiple netcdf paths. Should be used as last resort if data can not be found on the cloud.
 
@@ -285,45 +312,35 @@ class DataFinder:
             project="CMIP6",
             source_id=self.model,
             experiment_id=experiment,
-            variable=self.variable,
+            variable=variable,
             variant_label=ensemble,
-            frequency=self.frequency[-3:],  # fx for area, mon for variables
-            data_node=data_node,
+            frequency=frequency_table[-3:],  # O/fx for area, mon for variables
+            facets="grid_label,version",
         )
-        results = ctx.search()
 
-        if len(results) < 1:
+        if ctx.hit_count == 0:
             logger.warning(
-                f"No results found on ESGF node {data_node}. Try another node."
-            )
-            return None
-
-        elif len(results) > 1:
-            logger.warning(
-                f"{len(results)} results returned. Please filter more (e.g. grid, version)."
+                "No results found on ESGF using https://esgf-data.dkrz.de/esg-search . Try another node."
             )
             return None
 
         else:
+            results = ctx.search()
             file_url_list = []
             files = results[0].file_context().search()
             for file in files:
                 file_url_list.append(file.opendap_url)
             df = pd.DataFrame(file_url_list, columns=["file_url"])
-            if self.frequency != "fx":
-                df["file_start_year"] = (
-                    df["file_url"].str.split("_", expand=True)[7].str[:4].astype(int)
-                )
-                df["file_end_year"] = (
-                    df["file_url"].str.split("_", expand=True)[7].str[7:11].astype(int)
-                )
-                if experiment == "historical":
-                    df = df[df["file_end_year"] > 2005]
-                else:
-                    df = df[df["file_start_year"] < 2025]
             return df["file_url"].tolist()
 
-    def read_data(self, mip: str, experiment: str, ensemble: str) -> xr.Dataset:
+    def read_data(
+        self,
+        mip: str,
+        experiment: str,
+        ensemble: str,
+        frequency_table: str,
+        variable: str,
+    ) -> xr.Dataset:
         """First check local files, then check google cloud storage, then check ESGF. For reading CMIP6 data.
 
         Args:
@@ -337,14 +354,20 @@ class DataFinder:
         Returns:
             xr.Dataset: Climate model data for single experiment/ensemble
         """
-        local_file_path = self.check_local_files(mip, experiment, ensemble)
+        local_file_path = self.check_local_files(
+            mip, experiment, ensemble, frequency_table, variable
+        )
         if not local_file_path:
-            gcs_file_path = self.check_gcs_files(mip, experiment, ensemble)
+            gcs_file_path = self.check_gcs_files(
+                mip, experiment, ensemble, frequency_table, variable
+            )
             if not gcs_file_path:
-                esgf_file_path = self.check_esgf_files(experiment, ensemble)
+                esgf_file_path = self.check_esgf_files(
+                    experiment, ensemble, frequency_table, variable
+                )
                 if not esgf_file_path:
                     raise ValueError(
-                        f"can't find data for {mip}, {self.org}, {self.model}, {experiment}, {ensemble}, {self.frequency}, {self.variable}"
+                        f"can't find data for {mip}, {self.org}, {self.model}, {experiment}, {ensemble}, {frequency_table}, {variable}"
                     )
                 else:
                     # read data from esgf
@@ -378,6 +401,8 @@ class DataFinder:
                 mip=mip,
                 experiment=experiment,
                 ensemble=ensemble,
+                frequency_table=self.variable_frequency_table,
+                variable=self.variable,
             )
             ds = ds.drop_vars(
                 ["lat_bnds", "lon_bnds", "time_bnds", "height", "wavelength"],
@@ -395,25 +420,30 @@ class DataFinder:
         Returns:
             xr.Dataset: Analysis ready climate model data. Ensemble mean combination of historical and projected datasets.
         """
-        historical_ens_mean = self.load_ensemble_mean(
-            mip="CMIP",
-            experiment="historical",
-        ).sel(
-            time=slice(HIST_START_DATE, HIST_END_DATE)
-        )  # sometimes historical period goes beyond 2015
-        ssp_ens_mean = self.load_ensemble_mean(
-            mip="ScenarioMIP",
-            experiment="ssp245",
-        ).sel(time=slice(SSP_START_DATE, SSP_END_DATE))
-        model_ds = xr.concat(
-            [historical_ens_mean, ssp_ens_mean],
-            dim="time",
-            coords="minimal",
-            compat="override",
+        experiment = "historical" if self.mip == "CMIP" else "ssp245"
+        model_ds = self.load_ensemble_mean(mip=self.mip, experiment=experiment)
+        if self.secondary_mip:
+            # historical and projection meet at 2015. Some models overlap in 2015 so setting hard bounds to avoid downstream errors.
+            model_ds = model_ds.sel(
+                time=slice(f"{self.start_year}-01-01", "2014-12-31")
+            )
+            second_model_ens_mean = self.load_ensemble_mean(
+                mip=self.secondary_mip, experiment="ssp245"
+            )
+            model_ds = xr.concat(
+                [model_ds, second_model_ens_mean],
+                dim="time",
+                coords="minimal",
+                compat="override",
+            )
+        model_ds = model_ds.sel(
+            time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
         )
-        return standardize_dims(model_ds)
+        model_ds = standardize_dims(model_ds)
+        self.model_ds = model_ds
+        return self.model_ds
 
-    def load_cell_area_ds(self, cell_var_name: str) -> xr.DataArray:
+    def load_cell_area_ds(self) -> xr.DataArray:
         """Reads model cell area data. fx if atmospheric variable, Ofx if ocean variable. If data not found, prints warning and returns none. Can use cos(lat) as proxy for cell area. Passed through standardizer function to make sure dims are named correctly.
 
         Args:
@@ -422,32 +452,31 @@ class DataFinder:
         Returns:
             xr.DataArray: Dataarray of cell area data if available, else returns None
         """
-        # patch for now
-        old_var_name = self.variable
-        old_freq_name = self.frequency
-        self.variable = cell_var_name
-        self.frequency = "Ofx" if cell_var_name == "areacello" else "fx"
         try:
+            logger.info("Reading cell area data")
             fx_ds = self.read_data(
                 mip="CMIP",
                 experiment="historical",
                 ensemble=ENSEMBLE_MEMBERS[0],
+                frequency_table=self.area_frequency_table,
+                variable=self.area_variable_name,
             )
             # fill value issue with areacello data
-            if "_FillValue" in fx_ds[cell_var_name].encoding:
-                fill_val = fx_ds[cell_var_name].encoding["_FillValue"]
-                fx_ds = fx_ds.where(fx_ds[cell_var_name] <= fill_val)
-
-            self.variable = old_var_name
-            self.frequency = old_freq_name
-            return standardize_dims(fx_ds)[cell_var_name]
+            if "_FillValue" in fx_ds[self.area_variable_name].encoding:
+                fill_val = fx_ds[self.area_variable_name].encoding["_FillValue"]
+                fx_ds = fx_ds.where(fx_ds[self.area_variable_name] <= fill_val)
+            self.fx_ds = standardize_dims(fx_ds)[self.area_variable_name]
         except:
-            self.variable = old_var_name
-            self.frequency = old_freq_name
             logger.warning(
                 "No areacella/o data found. Using cos(lat) for cell weights."
             )
-            return None
+            if self.model_ds is None:
+                _ = self.load_model_ds()
+            weights = np.cos(np.deg2rad(self.model_ds.lat))
+            weights = weights.expand_dims({"lon": self.model_ds.lon})
+            weights.name = self.area_variable_name
+            self.fx_ds = weights
+        return self.fx_ds
 
     def load_obs_ds(self) -> xr.Dataset:
         """Reads observational data from climatebench google cloud bucket. passes data through standardizer function.

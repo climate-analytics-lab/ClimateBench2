@@ -16,11 +16,7 @@ from pyesgf.search import SearchConnection
 from constants import (
     CMIP6_MODEL_INSTITUTIONS,
     ENSEMBLE_MEMBERS,
-    HIST_END_DATE,
-    HIST_START_DATE,
     OBSERVATION_DATA_PATHS,
-    SSP_END_DATE,
-    SSP_START_DATE,
     VARIABLE_FREQUENCY_GROUP,
 )
 
@@ -488,12 +484,16 @@ class DataFinder:
             logger.info(
                 f"reading observations from local store: {self.obs_data_path_local}"
             )
-            return standardize_dims(xr.open_zarr(self.obs_data_path_local))
+            obs_ds = standardize_dims(xr.open_zarr(self.obs_data_path_local))
         else:
             logger.info(
                 f"reading observations from cloud store: {self.obs_data_path_cloud}"
             )
-            return standardize_dims(xr.open_zarr(self.obs_data_path_cloud))
+            obs_ds = standardize_dims(xr.open_zarr(self.obs_data_path_cloud))
+
+        return obs_ds.sel(
+            time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
+        )
 
 
 # little helper functions
@@ -518,7 +518,7 @@ class MetricCalculation:
         self,
         observations: xr.Dataset,
         model: xr.Dataset,
-        weights: xr.DataArray = None,
+        weights: xr.DataArray,
         lat_min: int = -90,
         lat_max: int = 90,
     ):
@@ -527,33 +527,27 @@ class MetricCalculation:
         Args:
             observations (xr.Dataset): Climate data observations
             model (xr.Dataset): Climate model data (historical and projected data)
-            weights (xr.DataArray, optional): weights corresponding to grid cell area. Defaults to None.
+            weights (xr.DataArray): weights corresponding to grid cell area.
             lat_min (int): minimum latitude
             lat_max (int): maximum latitude
         """
         self.obs = observations
         self.model = model
+
         self.lat_min = lat_min
         self.lat_max = lat_max
-        # you can pass in the weights if the areacella or areacello data exists,
-        # if not just us the cos of lat, which is proportional to cell area for a regular grid
-        if weights is None:
-            # need to turn this into a full xarray ds to match areacella/areacello
-            weights = np.cos(np.deg2rad(self.model.lat))
-            weights = weights.expand_dims({"lon": self.model.lon})
-            weights.name = "weights"
-            self.weights = weights
-        else:
-            # check that dims match model
-            if ~weights.lat.equals(self.model.lat):
-                weights["lat"] = self.model["lat"]
-            if ~weights.lon.equals(self.model.lon):
-                weights["lon"] = self.model["lon"]
-            self.weights = weights
+
+        # check that dims match model
+        if ~weights.lat.equals(self.model.lat):
+            weights["lat"] = self.model["lat"]
+        if ~weights.lon.equals(self.model.lon):
+            weights["lon"] = self.model["lon"]
 
         # setting weights outside bounds to na, this will set their weight to 0 and therefore not includ in calculations
-        self.weights = self.weights.where(self.weights.lat > lat_min)
-        self.weights = self.weights.where(self.weights.lat < lat_max)
+        weights = weights.where(weights.lat > lat_min)
+        weights = weights.where(weights.lat < lat_max)
+
+        self.weights = weights
 
         self.model_zonal_mean = None
         self.obs_zonal_mean = None
@@ -575,53 +569,13 @@ class MetricCalculation:
         )
         return weighted_ds
 
-    def calculate_rmse(
-        self,
-        metric: str,
-        adjustment: str,
-        time_slice: slice(str, str),
-    ) -> xr.DataArray:
-        """Calculates RMSE based on metric and adjustment provided. If lat bounds provided, zonal mean and spatial RMSE calculations will use adjusted weights.
-
-        Args:
-            metric (str): Type of RMSE to calculate (zonal mean, temporal, or spatial)
-            adjustment (str): adjustment to apply to data before RMSE calculation (bias adjustment or anomaly)
-            time_slice (slice): time period to calculate RMSE over
-
-        Raises:
-            ValueError: If metric provided is not supported
-
-        Returns:
-            xr.DataArray: Resulting RMSE calculation. Dimensions vary based on metric provided.
-        """
-        logger.info(
-            f"calculating {metric} for time: {time_slice}, adjustment: {adjustment}"
-        )
-
-        if metric == "zonal_mean":
-            if self.model_zonal_mean is None:
-                self.model_zonal_mean = self.zonal_mean(self.model)
-            if self.obs_zonal_mean is None:
-                self.obs_zonal_mean = self.zonal_mean(self.obs)
-            model_rmse_data = self.model_zonal_mean
-            obs_rmse_data = self.obs_zonal_mean
-            weights = None
-            dims = ["time"]
-
-        elif metric == "spatial":
-            model_rmse_data = self.model
-            obs_rmse_data = self.obs
-            weights = self.weights
-            dims = self.spatial_dims
-
-        elif metric == "temporal":
-            model_rmse_data = self.model
-            obs_rmse_data = self.obs
-            weights = None
-            dims = ["time"]
-
-        else:
-            raise ValueError(f"Metric not supported: {metric}")
+    def zonal_mean_rmse(self, adjustment=None):
+        if self.model_zonal_mean is None:
+            self.model_zonal_mean = self.zonal_mean(self.model)
+        if self.obs_zonal_mean is None:
+            self.obs_zonal_mean = self.zonal_mean(self.obs)
+        model_rmse_data = self.model_zonal_mean
+        obs_rmse_data = self.obs_zonal_mean
 
         if adjustment == "bias_adjusted":
             model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
@@ -631,12 +585,50 @@ class MetricCalculation:
             obs_rmse_data = anomaly(ds=obs_rmse_data)
 
         return xs.rmse(
-            a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
-            b=obs_rmse_data.sel(time=time_slice).chunk({"time": -1}),
-            weights=weights,
+            a=model_rmse_data.chunk({"time": -1}),
+            b=obs_rmse_data.chunk({"time": -1}),
             skipna=True,
             keep_attrs=True,
-            dim=dims,
+            dim=["time"],
+        ).values.tolist()
+
+    def spatial_rmse(self, adjustment=None):
+        model_rmse_data = self.model
+        obs_rmse_data = self.obs
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
+
+        return xs.rmse(
+            a=model_rmse_data.chunk({"time": -1}),
+            b=obs_rmse_data.chunk({"time": -1}),
+            weights=self.weights,
+            skipna=True,
+            keep_attrs=True,
+            dim=self.spatial_dims,
+        )
+
+    def temporal_rmse(self, adjustment=None):
+        model_rmse_data = self.model
+        obs_rmse_data = self.obs
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
+
+        return xs.rmse(
+            a=model_rmse_data.chunk({"time": -1}),
+            b=obs_rmse_data.chunk({"time": -1}),
+            skipna=True,
+            keep_attrs=True,
+            dim=["time"],
         )
 
 
@@ -646,7 +638,17 @@ class SaveResults:
     Options for saving data as csv and zarr.
     """
 
-    def __init__(self, variable: str, experiment: str):
+    def __init__(
+        self,
+        model: str,
+        variable: str,
+        metric: str,
+        adjustment: str,
+        start_year: int,
+        end_year: int,
+        lat_min: int = -90,
+        lat_max: int = 90,
+    ):
         """Initialize SaveResults class, sets local and cloud paths
 
         Args:
@@ -654,25 +656,57 @@ class SaveResults:
             experiment (str): Set of metric experiments.
         """
         self.variable = variable
-        self.experiment = experiment
+        self.model = model
+        self.metric = metric
+        self.adjustment = adjustment
+        self.start_year = start_year
+        self.end_year = end_year
+        self.lat_min = lat_min
+        self.lat_max = lat_max
+
+        self.data_label = (
+            self.metric
+            if self.adjustment is None
+            else f"{self.metric}_{self.adjustment}"
+        )
 
         self.storage_client = storage.Client(project="JCM and Benchmarking")
         self.bucket_name = "climatebench"
         self.bucket = self.storage_client.bucket(self.bucket_name)
         self.gcs_prefix = f"gs://{self.bucket_name}/"
-        self.data_path = f"results/{self.experiment}/{self.variable}/"
+        self.data_path = f"results/{self.variable}/"
 
-    def save_csv(
-        self, result_df: pd.DataFrame, file_name: str, save_to_cloud: bool = False
-    ):
+    def write_data(self, results, save_to_cloud):
+        if isinstance(results, float):
+            logger.info("Saving data to csv")
+            self.save_csv(results, save_to_cloud)
+
+        if isinstance(results, xr.DataArray):
+            logger.info("Saving data to zarr")
+            self.save_zarr(results, save_to_cloud)
+
+    def save_csv(self, value: float, save_to_cloud: bool = False):
         """Save tabular data locally or to google cloud
 
         Args:
-            result_df (pd.DataFrame): Dataframe to save
-            file_name (str): name of file to save results in. Path determined by class
+            value (float): Value to save in results csv
             save_to_cloud (bool): Save to cloud if passed. Default is False.
         """
-        file_path = self.data_path + file_name
+        result_df = pd.DataFrame(
+            {
+                "model": [self.model],
+                "variable": [self.variable],
+                "ensemble members": ["_".join(ENSEMBLE_MEMBERS)],
+                "metric": [self.data_label],
+                "lat_min": [self.lat_min],
+                "lat_max": [self.lat_max],
+                "start_year": [self.start_year],
+                "end_year": [self.end_year],
+                "value": [value],
+            }
+        )
+
+        file_path = self.data_path + "benchmark_results.csv"
         if save_to_cloud:
             full_gcs_path = self.gcs_prefix + file_path
             blob = storage.Blob(bucket=self.bucket, name=file_path)
@@ -706,7 +740,8 @@ class SaveResults:
 
             logger.info(f"Results saved locally: {file_path}")
 
-    def save_zarr(self, ds: xr.Dataset, file_name: str, save_to_cloud: bool = False):
+    # this could still use work. the file names are horrible. could expand dimensions?
+    def save_zarr(self, ds: xr.DataArray, save_to_cloud: bool = False):
         """Save dimentional data locally or to google cloud
 
         Args:
@@ -714,6 +749,8 @@ class SaveResults:
             file_name (str): name of file to save results in. Path determined by class
             save_to_cloud (bool): Save to cloud if passed. Default is False.
         """
+        file_name = f"{self.model}_{self.metric}_{self.lat_min}_{self.lat_max}_{self.start_year}_{self.end_year}_results.zarr"
+        ds = ds.to_dataset(name=self.data_label)
         for var in list(ds.data_vars) + list(ds.coords):
             ds[var].encoding = {}
         # file name should be org_model_....

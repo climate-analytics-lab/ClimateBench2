@@ -16,12 +16,9 @@ from pyesgf.search import SearchConnection
 from constants import (
     CMIP6_MODEL_INSTITUTIONS,
     ENSEMBLE_MEMBERS,
-    HIST_END_DATE,
-    HIST_START_DATE,
     OBSERVATION_DATA_PATHS,
-    SSP_END_DATE,
-    SSP_START_DATE,
     VARIABLE_FREQUENCY_GROUP,
+    SSP_EXPERIMENT,
 )
 
 logger = logging.getLogger(__name__)
@@ -183,29 +180,50 @@ class DataFinder:
     """The DataFinder class locates observational and model based on the variable and model passed.
     The model data returned is the ensemble mean of the historical and ssp experiments, concatenated together.
     The ensemble members and ssp experiment can be set in the constants file.
-    The class can also find the model cell area data based on variable passed.
+    The class can also find the model cell area data based on variable passed. If it can't be found, a proxy is created.
     """
 
-    def __init__(self, model: str, variable: str):
+    def __init__(self, model: str, variable: str, start_year: int, end_year: int):
         """Initialize DataFinder class.
 
         Args:
             model (str): Climate model of interest
             variable (str): Short name of climate variable
+            start_year (int): Start of time period for model and observational data
+            end_year (int): End of time period for model and observational data
         """
         self.model = model
         self.variable = variable
+        self.start_year = start_year
+        self.end_year = end_year
+
         self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
-        self.frequency = VARIABLE_FREQUENCY_GROUP[self.variable]
+        self.mip = "CMIP" if self.start_year < 2015 else "ScenarioMIP"
+        # If the time range spans the two experiments
+        if (self.end_year >= 2015) & (self.mip == "CMIP"):
+            self.secondary_mip = "ScenarioMIP"
+        else:
+            self.secondary_mip = None
+
+        self.variable_frequency_table = VARIABLE_FREQUENCY_GROUP[self.variable]
+        self.area_variable_name = "areacello" if self.variable == "tos" else "areacella"
+        self.area_frequency_table = "Ofx" if self.variable == "tos" else "fx"
+
         self.obs_data_path_local = OBSERVATION_DATA_PATHS[self.variable]["local"]
         self.obs_data_path_cloud = OBSERVATION_DATA_PATHS[self.variable]["cloud"]
         self.grid = None
+
+        self.model_ds = None
+        self.fx_ds = None
+        self.obs_ds = None
 
     def check_local_files(
         self,
         mip: str,
         experiment: str,
         ensemble: str,
+        frequency_table: str,
+        variable: str,
     ) -> list[str]:
         """Find local file paths of climate model data. This is only relevant if using ESMValTool.
 
@@ -213,16 +231,25 @@ class DataFinder:
             mip (str): ScenarioMIP or CMIP
             experiment (str): historical or ssp245
             ensemble (str): ensemble id rXiXpXfX
+            frequency_table (str): Amon, Omon, Ofx, fx
+            variable (str): short name of variable (ex: tas or areacella)
 
         Returns:
             list[str]: list of local file paths
         """
-        local_data_path = f"{os.environ['HOME']}/climate_data/CMIP6/{mip}/{self.org}/{self.model}/{experiment}/{ensemble}/{self.frequency}/{self.variable}/*/*/*"
+        local_data_path = f"{os.environ['HOME']}/climate_data/CMIP6/{mip}/{self.org}/{self.model}/{experiment}/{ensemble}/{frequency_table}/{variable}/*/*/*"
         local_files = glob.glob(local_data_path)
         self.local_files = local_files
         return local_files
 
-    def check_gcs_files(self, mip: str, experiment: str, ensemble: str) -> str:
+    def check_gcs_files(
+        self,
+        mip: str,
+        experiment: str,
+        ensemble: str,
+        frequency_table: str,
+        variable: str,
+    ) -> str:
         """Look for files in the public cmip6 google cloud bucket. Customize search keys for variable data vs cell area data.
         Sets the type of grid being used (gn for native grid, this is best), and returns the cloud storage path string ex: gs://path/to/data
 
@@ -230,14 +257,16 @@ class DataFinder:
             mip (str): ScenarioMIP or CMIP
             experiment (str): historical or ssp245
             ensemble (str): ensemble id rXiXpXfX
+            frequency_table (str): Amon, Omon, Ofx, fx
+            variable (str): short name of variable (ex: tas or areacella)
 
         Returns:
             str: cloud storage file path
         """
         search_keys = {
             "source_id": self.model,
-            "table_id": self.frequency,
-            "variable_id": self.variable,
+            "table_id": frequency_table,
+            "variable_id": variable,
             "member_id": ensemble,
             "activity_id": mip,
             "experiment_id": experiment,
@@ -247,7 +276,7 @@ class DataFinder:
 
         gcs_files = search_gcs(filters=search_keys, drop_older_versions=True)
 
-        if (len(gcs_files) == 0) and ("area" in self.variable):
+        if (len(gcs_files) == 0) and ("area" in variable):
             search_keys.pop("member_id")
             search_keys.pop("activity_id")
             search_keys.pop("experiment_id")
@@ -268,14 +297,16 @@ class DataFinder:
         self,
         experiment: str,
         ensemble: str,
-        data_node="esgf-data1.llnl.gov",
+        frequency_table: str,
+        variable: str,
     ) -> list[str]:
         """Check the ESGF llnl node for data. This is a slower process than the google cloud search and will return multiple netcdf paths. Should be used as last resort if data can not be found on the cloud.
 
         Args:
             experiment (str): historical or ssp245
             ensemble (str): ensemble id rXiXpXfX
-            data_node (str, optional): Node to search for data on. Sometimes a node is down, in which case you should try another one. Defaults to "esgf-data1.llnl.gov".
+            frequency_table (str): Amon, Omon, Ofx, fx
+            variable (str): short name of variable (ex: tas or areacella)
 
         Returns:
             list[str]: netcdf paths for accessing data
@@ -285,51 +316,43 @@ class DataFinder:
             project="CMIP6",
             source_id=self.model,
             experiment_id=experiment,
-            variable=self.variable,
+            variable=variable,
             variant_label=ensemble,
-            frequency=self.frequency[-3:],  # fx for area, mon for variables
-            data_node=data_node,
+            frequency=frequency_table[-3:],  # O/fx for area, mon for variables
+            facets="grid_label,version",
         )
-        results = ctx.search()
 
-        if len(results) < 1:
+        if ctx.hit_count == 0:
             logger.warning(
-                f"No results found on ESGF node {data_node}. Try another node."
-            )
-            return None
-
-        elif len(results) > 1:
-            logger.warning(
-                f"{len(results)} results returned. Please filter more (e.g. grid, version)."
+                "No results found on ESGF using https://esgf-data.dkrz.de/esg-search . Try another node."
             )
             return None
 
         else:
+            results = ctx.search()
             file_url_list = []
             files = results[0].file_context().search()
             for file in files:
                 file_url_list.append(file.opendap_url)
             df = pd.DataFrame(file_url_list, columns=["file_url"])
-            if self.frequency != "fx":
-                df["file_start_year"] = (
-                    df["file_url"].str.split("_", expand=True)[7].str[:4].astype(int)
-                )
-                df["file_end_year"] = (
-                    df["file_url"].str.split("_", expand=True)[7].str[7:11].astype(int)
-                )
-                if experiment == "historical":
-                    df = df[df["file_end_year"] > 2005]
-                else:
-                    df = df[df["file_start_year"] < 2025]
             return df["file_url"].tolist()
 
-    def read_data(self, mip: str, experiment: str, ensemble: str) -> xr.Dataset:
+    def read_data(
+        self,
+        mip: str,
+        experiment: str,
+        ensemble: str,
+        frequency_table: str,
+        variable: str,
+    ) -> xr.Dataset:
         """First check local files, then check google cloud storage, then check ESGF. For reading CMIP6 data.
 
         Args:
             mip (str): ScenarioMIP or CMIP
             experiment (str): historical or ssp245
             ensemble (str): ensemble id rXiXpXfX
+            frequency_table (str): Amon, Omon, Ofx, fx
+            variable (str): short name of variable (ex: tas or areacella)
 
         Raises:
             ValueError: Can't find data
@@ -337,14 +360,20 @@ class DataFinder:
         Returns:
             xr.Dataset: Climate model data for single experiment/ensemble
         """
-        local_file_path = self.check_local_files(mip, experiment, ensemble)
+        local_file_path = self.check_local_files(
+            mip, experiment, ensemble, frequency_table, variable
+        )
         if not local_file_path:
-            gcs_file_path = self.check_gcs_files(mip, experiment, ensemble)
+            gcs_file_path = self.check_gcs_files(
+                mip, experiment, ensemble, frequency_table, variable
+            )
             if not gcs_file_path:
-                esgf_file_path = self.check_esgf_files(experiment, ensemble)
+                esgf_file_path = self.check_esgf_files(
+                    experiment, ensemble, frequency_table, variable
+                )
                 if not esgf_file_path:
                     raise ValueError(
-                        f"can't find data for {mip}, {self.org}, {self.model}, {experiment}, {ensemble}, {self.frequency}, {self.variable}"
+                        f"can't find data for {mip}, {self.org}, {self.model}, {experiment}, {ensemble}, {frequency_table}, {variable}"
                     )
                 else:
                     # read data from esgf
@@ -378,6 +407,8 @@ class DataFinder:
                 mip=mip,
                 experiment=experiment,
                 ensemble=ensemble,
+                frequency_table=self.variable_frequency_table,
+                variable=self.variable,
             )
             ds = ds.drop_vars(
                 ["lat_bnds", "lon_bnds", "time_bnds", "height", "wavelength"],
@@ -395,25 +426,30 @@ class DataFinder:
         Returns:
             xr.Dataset: Analysis ready climate model data. Ensemble mean combination of historical and projected datasets.
         """
-        historical_ens_mean = self.load_ensemble_mean(
-            mip="CMIP",
-            experiment="historical",
-        ).sel(
-            time=slice(HIST_START_DATE, HIST_END_DATE)
-        )  # sometimes historical period goes beyond 2015
-        ssp_ens_mean = self.load_ensemble_mean(
-            mip="ScenarioMIP",
-            experiment="ssp245",
-        ).sel(time=slice(SSP_START_DATE, SSP_END_DATE))
-        model_ds = xr.concat(
-            [historical_ens_mean, ssp_ens_mean],
-            dim="time",
-            coords="minimal",
-            compat="override",
+        experiment = "historical" if self.mip == "CMIP" else SSP_EXPERIMENT
+        model_ds = self.load_ensemble_mean(mip=self.mip, experiment=experiment)
+        if self.secondary_mip:
+            # historical and projection meet at 2015. Some models overlap in 2015 so setting hard bounds to avoid downstream errors.
+            model_ds = model_ds.sel(
+                time=slice(f"{self.start_year}-01-01", "2014-12-31")
+            )
+            second_model_ens_mean = self.load_ensemble_mean(
+                mip=self.secondary_mip, experiment=SSP_EXPERIMENT
+            )
+            model_ds = xr.concat(
+                [model_ds, second_model_ens_mean],
+                dim="time",
+                coords="minimal",
+                compat="override",
+            )
+        model_ds = model_ds.sel(
+            time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
         )
-        return standardize_dims(model_ds)
+        model_ds = standardize_dims(model_ds)
+        self.model_ds = model_ds
+        return self.model_ds
 
-    def load_cell_area_ds(self, cell_var_name: str) -> xr.DataArray:
+    def load_cell_area_ds(self) -> xr.DataArray:
         """Reads model cell area data. fx if atmospheric variable, Ofx if ocean variable. If data not found, prints warning and returns none. Can use cos(lat) as proxy for cell area. Passed through standardizer function to make sure dims are named correctly.
 
         Args:
@@ -422,32 +458,31 @@ class DataFinder:
         Returns:
             xr.DataArray: Dataarray of cell area data if available, else returns None
         """
-        # patch for now
-        old_var_name = self.variable
-        old_freq_name = self.frequency
-        self.variable = cell_var_name
-        self.frequency = "Ofx" if cell_var_name == "areacello" else "fx"
         try:
+            logger.info("Reading cell area data")
             fx_ds = self.read_data(
                 mip="CMIP",
                 experiment="historical",
                 ensemble=ENSEMBLE_MEMBERS[0],
+                frequency_table=self.area_frequency_table,
+                variable=self.area_variable_name,
             )
             # fill value issue with areacello data
-            if "_FillValue" in fx_ds[cell_var_name].encoding:
-                fill_val = fx_ds[cell_var_name].encoding["_FillValue"]
-                fx_ds = fx_ds.where(fx_ds[cell_var_name] <= fill_val)
-
-            self.variable = old_var_name
-            self.frequency = old_freq_name
-            return standardize_dims(fx_ds)[cell_var_name]
+            if "_FillValue" in fx_ds[self.area_variable_name].encoding:
+                fill_val = fx_ds[self.area_variable_name].encoding["_FillValue"]
+                fx_ds = fx_ds.where(fx_ds[self.area_variable_name] <= fill_val)
+            self.fx_ds = standardize_dims(fx_ds)[self.area_variable_name]
         except:
-            self.variable = old_var_name
-            self.frequency = old_freq_name
             logger.warning(
                 "No areacella/o data found. Using cos(lat) for cell weights."
             )
-            return None
+            if self.model_ds is None:
+                _ = self.load_model_ds()
+            weights = np.cos(np.deg2rad(self.model_ds.lat))
+            weights = weights.expand_dims({"lon": self.model_ds.lon})
+            weights.name = self.area_variable_name
+            self.fx_ds = weights
+        return self.fx_ds
 
     def load_obs_ds(self) -> xr.Dataset:
         """Reads observational data from climatebench google cloud bucket. passes data through standardizer function.
@@ -459,12 +494,16 @@ class DataFinder:
             logger.info(
                 f"reading observations from local store: {self.obs_data_path_local}"
             )
-            return standardize_dims(xr.open_zarr(self.obs_data_path_local))
+            obs_ds = standardize_dims(xr.open_zarr(self.obs_data_path_local))
         else:
             logger.info(
                 f"reading observations from cloud store: {self.obs_data_path_cloud}"
             )
-            return standardize_dims(xr.open_zarr(self.obs_data_path_cloud))
+            obs_ds = standardize_dims(xr.open_zarr(self.obs_data_path_cloud))
+
+        return obs_ds.sel(
+            time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
+        )
 
 
 # little helper functions
@@ -480,16 +519,16 @@ def bias_adjustment(model, obs):
 
 class MetricCalculation:
     """The MetricCalculation class is for benchmarking climate model data against observations. It takes in model, observations, and weights datasets.
-    The weights dataset should be the cell area, so if one is not provided a proxy will be created by taking the cosine of latitude.
-    For now, there is an RMSE calculation option, with none, bias adjustment, and anomaly adjustment options.
-
+    The weights dataset should be the cell area.
+    For now, there are 3 RMSE calculation options (zonal mean, spatial, temporal) with 2 optional adjustment options (bias_adjusted, anomaly).
+    To add new metric calculation options, a function should be added that can be called as an agrument from the main script.
     """
 
     def __init__(
         self,
         observations: xr.Dataset,
         model: xr.Dataset,
-        weights: xr.DataArray = None,
+        weights: xr.DataArray,
         lat_min: int = -90,
         lat_max: int = 90,
     ):
@@ -498,33 +537,27 @@ class MetricCalculation:
         Args:
             observations (xr.Dataset): Climate data observations
             model (xr.Dataset): Climate model data (historical and projected data)
-            weights (xr.DataArray, optional): weights corresponding to grid cell area. Defaults to None.
-            lat_min (int): minimum latitude
-            lat_max (int): maximum latitude
+            weights (xr.DataArray): weights corresponding to grid cell area.
+            lat_min (int): minimum latitude. Defaults to -90.
+            lat_max (int): maximum latitude. Defaults to 90.
         """
         self.obs = observations
         self.model = model
+
         self.lat_min = lat_min
         self.lat_max = lat_max
-        # you can pass in the weights if the areacella or areacello data exists,
-        # if not just us the cos of lat, which is proportional to cell area for a regular grid
-        if weights is None:
-            # need to turn this into a full xarray ds to match areacella/areacello
-            weights = np.cos(np.deg2rad(self.model.lat))
-            weights = weights.expand_dims({"lon": self.model.lon})
-            weights.name = "weights"
-            self.weights = weights
-        else:
-            # check that dims match model
-            if ~weights.lat.equals(self.model.lat):
-                weights["lat"] = self.model["lat"]
-            if ~weights.lon.equals(self.model.lon):
-                weights["lon"] = self.model["lon"]
-            self.weights = weights
+
+        # check that dims match model
+        if ~weights.lat.equals(self.model.lat):
+            weights["lat"] = self.model["lat"]
+        if ~weights.lon.equals(self.model.lon):
+            weights["lon"] = self.model["lon"]
 
         # setting weights outside bounds to na, this will set their weight to 0 and therefore not includ in calculations
-        self.weights = self.weights.where(self.weights.lat > lat_min)
-        self.weights = self.weights.where(self.weights.lat < lat_max)
+        weights = weights.where(weights.lat > lat_min)
+        weights = weights.where(weights.lat < lat_max)
+
+        self.weights = weights
 
         self.model_zonal_mean = None
         self.obs_zonal_mean = None
@@ -546,53 +579,22 @@ class MetricCalculation:
         )
         return weighted_ds
 
-    def calculate_rmse(
-        self,
-        metric: str,
-        adjustment: str,
-        time_slice: slice(str, str),
-    ) -> xr.DataArray:
-        """Calculates RMSE based on metric and adjustment provided. If lat bounds provided, zonal mean and spatial RMSE calculations will use adjusted weights.
+    def zonal_mean_rmse(self, adjustment: str = None) -> float:
+        """First calculates the zonal mean of the model and observations datasets, then calculates the RMSE of the two time series.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
 
         Args:
-            metric (str): Type of RMSE to calculate (zonal mean, temporal, or spatial)
-            adjustment (str): adjustment to apply to data before RMSE calculation (bias adjustment or anomaly)
-            time_slice (slice): time period to calculate RMSE over
-
-        Raises:
-            ValueError: If metric provided is not supported
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
 
         Returns:
-            xr.DataArray: Resulting RMSE calculation. Dimensions vary based on metric provided.
+            float: RMSE value
         """
-        logger.info(
-            f"calculating {metric} for time: {time_slice}, adjustment: {adjustment}"
-        )
-
-        if metric == "zonal_mean":
-            if self.model_zonal_mean is None:
-                self.model_zonal_mean = self.zonal_mean(self.model)
-            if self.obs_zonal_mean is None:
-                self.obs_zonal_mean = self.zonal_mean(self.obs)
-            model_rmse_data = self.model_zonal_mean
-            obs_rmse_data = self.obs_zonal_mean
-            weights = None
-            dims = ["time"]
-
-        elif metric == "spatial":
-            model_rmse_data = self.model
-            obs_rmse_data = self.obs
-            weights = self.weights
-            dims = self.spatial_dims
-
-        elif metric == "temporal":
-            model_rmse_data = self.model
-            obs_rmse_data = self.obs
-            weights = None
-            dims = ["time"]
-
-        else:
-            raise ValueError(f"Metric not supported: {metric}")
+        if self.model_zonal_mean is None:
+            self.model_zonal_mean = self.zonal_mean(self.model)
+        if self.obs_zonal_mean is None:
+            self.obs_zonal_mean = self.zonal_mean(self.obs)
+        model_rmse_data = self.model_zonal_mean
+        obs_rmse_data = self.obs_zonal_mean
 
         if adjustment == "bias_adjusted":
             model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
@@ -602,48 +604,155 @@ class MetricCalculation:
             obs_rmse_data = anomaly(ds=obs_rmse_data)
 
         return xs.rmse(
-            a=model_rmse_data.sel(time=time_slice).chunk({"time": -1}),
-            b=obs_rmse_data.sel(time=time_slice).chunk({"time": -1}),
-            weights=weights,
+            a=model_rmse_data.chunk({"time": -1}),
+            b=obs_rmse_data.chunk({"time": -1}),
             skipna=True,
             keep_attrs=True,
-            dim=dims,
+            dim=["time"],
+        ).values.tolist()
+
+    def spatial_rmse(self, adjustment: str = None) -> xr.DataArray:
+        """For each time step, calculate the RMSE across the spatial dimensions. Data returned will be a time series.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            xr.DataArray: Time series of RMSE.
+        """
+        model_rmse_data = self.model
+        obs_rmse_data = self.obs
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
+
+        return xs.rmse(
+            a=model_rmse_data.chunk({"time": -1}),
+            b=obs_rmse_data.chunk({"time": -1}),
+            weights=self.weights,
+            skipna=True,
+            keep_attrs=True,
+            dim=self.spatial_dims,
+        )
+
+    def temporal_rmse(self, adjustment: str = None) -> xr.DataArray:
+        """For grid cell, calculate the RMSE across the time dimension. Data returned will be a map.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            xr.DataArray: Map of RMSE.
+        """
+        model_rmse_data = self.model
+        obs_rmse_data = self.obs
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
+
+        return xs.rmse(
+            a=model_rmse_data.chunk({"time": -1}),
+            b=obs_rmse_data.chunk({"time": -1}),
+            skipna=True,
+            keep_attrs=True,
+            dim=["time"],
         )
 
 
 class SaveResults:
     """The SaveResults class is for saving outputs from the benchmarking pipeline in an organized mannor.
-    The path is determined by the variable and "experiment" (for now, RMSE) but you can specify the specific file name.
     Options for saving data as csv and zarr.
     """
 
-    def __init__(self, variable: str, experiment: str):
+    def __init__(
+        self,
+        model: str,
+        variable: str,
+        metric: str,
+        adjustment: str,
+        start_year: int,
+        end_year: int,
+        lat_min: int = -90,
+        lat_max: int = 90,
+    ):
         """Initialize SaveResults class, sets local and cloud paths
 
         Args:
+            model (str): CMIP6 model name
             variable (str): Variable short name
-            experiment (str): Set of metric experiments.
+            metric (str): Name of metric calculated (function from MetricCalculation)
+            adjustment (str): Adjustment applied to the metric calculation
+            start_year (int): start of time period for calculated metric
+            end_year (int): end of time period for calculated metric
+            lat_min (int): spatial bound for calculated metric
+            lat_max (int): spatial bound for calculated metric
         """
         self.variable = variable
-        self.experiment = experiment
+        self.model = model
+        self.metric = metric
+        self.adjustment = adjustment
+        self.start_year = start_year
+        self.end_year = end_year
+        self.lat_min = lat_min
+        self.lat_max = lat_max
+
+        self.data_label = (
+            self.metric
+            if self.adjustment is None
+            else f"{self.metric}_{self.adjustment}"
+        )
 
         self.storage_client = storage.Client(project="JCM and Benchmarking")
         self.bucket_name = "climatebench"
         self.bucket = self.storage_client.bucket(self.bucket_name)
         self.gcs_prefix = f"gs://{self.bucket_name}/"
-        self.data_path = f"results/{self.experiment}/{self.variable}/"
+        self.data_path = f"results/{self.variable}/"
 
-    def save_csv(
-        self, result_df: pd.DataFrame, file_name: str, save_to_cloud: bool = False
-    ):
+    def write_data(self, results, save_to_cloud: bool):
+        """Save data. Datatype determines how data is saved. Options are csv for float, and zarr for xr.DataArray
+
+        Args:
+            results: data to be saved
+            save_to_cloud (bool): Save data locally if false
+        """
+        if isinstance(results, float):
+            logger.info("Saving data to csv")
+            self.save_csv(results, save_to_cloud)
+
+        if isinstance(results, xr.DataArray):
+            logger.info("Saving data to zarr")
+            self.save_zarr(results, save_to_cloud)
+
+    def save_csv(self, value: float, save_to_cloud: bool = False):
         """Save tabular data locally or to google cloud
 
         Args:
-            result_df (pd.DataFrame): Dataframe to save
-            file_name (str): name of file to save results in. Path determined by class
+            value (float): Value to save in results csv
             save_to_cloud (bool): Save to cloud if passed. Default is False.
         """
-        file_path = self.data_path + file_name
+        result_df = pd.DataFrame(
+            {
+                "model": [self.model],
+                "variable": [self.variable],
+                "ensemble members": ["_".join(ENSEMBLE_MEMBERS)],
+                "metric": [self.data_label],
+                "lat_min": [self.lat_min],
+                "lat_max": [self.lat_max],
+                "start_year": [self.start_year],
+                "end_year": [self.end_year],
+                "value": [value],
+            }
+        )
+
+        file_path = self.data_path + "benchmark_results.csv"
         if save_to_cloud:
             full_gcs_path = self.gcs_prefix + file_path
             blob = storage.Blob(bucket=self.bucket, name=file_path)
@@ -677,14 +786,16 @@ class SaveResults:
 
             logger.info(f"Results saved locally: {file_path}")
 
-    def save_zarr(self, ds: xr.Dataset, file_name: str, save_to_cloud: bool = False):
+    # this could still use work. the file names are horrible. could expand dimensions?
+    def save_zarr(self, ds: xr.DataArray, save_to_cloud: bool = False):
         """Save dimentional data locally or to google cloud
 
         Args:
             ds (xr.Dataset): Dataset to save
-            file_name (str): name of file to save results in. Path determined by class
             save_to_cloud (bool): Save to cloud if passed. Default is False.
         """
+        file_name = f"{self.model}_{self.metric}_{self.lat_min}_{self.lat_max}_{self.start_year}_{self.end_year}_results.zarr"
+        ds = ds.to_dataset(name=self.data_label)
         for var in list(ds.data_vars) + list(ds.coords):
             ds[var].encoding = {}
         # file name should be org_model_....

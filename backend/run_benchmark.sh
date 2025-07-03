@@ -12,6 +12,6 @@ for i in "${!models[@]}"; do
 
   for variable in "${variables[@]}"; do
     echo "Running for MODEL=$model, VARIABLE=$variable"
-    python model_benchmark.py --model "$model" --variable "$variable" --adjustments none bias_adjusted anomaly ##### <--- can modify this to be a subset of metrics
+    python model_benchmark.py --model "$model" --variable "$variable" --metric zonal_mean_rmse ##### <--- can modify this to be a subset of metrics
   done
 done

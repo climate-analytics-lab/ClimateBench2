@@ -10,16 +10,16 @@ logger.setLevel(logging.INFO)
 
 
 def main(
-    model,
-    variable,
-    metric,
-    adjustment,
-    lat_min,
-    lat_max,
-    start_year,
-    end_year,
-    save_to_cloud,
-    overwrite,
+    model: str,
+    variable: str,
+    metric: str,
+    adjustment: str,
+    lat_min: int = -90,
+    lat_max: int = 90,
+    start_year: int = 2005,
+    end_year: int = 2014,
+    save_to_cloud: bool = False,
+    overwrite: bool = False,
 ):
     logger.info(
         f"Processing model: {model}, variable: {variable}, metric: {metric}, adjustment: {adjustment}"

@@ -18,6 +18,7 @@ from constants import (
     ENSEMBLE_MEMBERS,
     OBSERVATION_DATA_PATHS,
     VARIABLE_FREQUENCY_GROUP,
+    SSP_EXPERIMENT,
 )
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,7 @@ class DataFinder:
     """The DataFinder class locates observational and model based on the variable and model passed.
     The model data returned is the ensemble mean of the historical and ssp experiments, concatenated together.
     The ensemble members and ssp experiment can be set in the constants file.
-    The class can also find the model cell area data based on variable passed.
+    The class can also find the model cell area data based on variable passed. If it can't be found, a proxy is created.
     """
 
     def __init__(self, model: str, variable: str, start_year: int, end_year: int):
@@ -188,6 +189,8 @@ class DataFinder:
         Args:
             model (str): Climate model of interest
             variable (str): Short name of climate variable
+            start_year (int): Start of time period for model and observational data
+            end_year (int): End of time period for model and observational data
         """
         self.model = model
         self.variable = variable
@@ -228,6 +231,8 @@ class DataFinder:
             mip (str): ScenarioMIP or CMIP
             experiment (str): historical or ssp245
             ensemble (str): ensemble id rXiXpXfX
+            frequency_table (str): Amon, Omon, Ofx, fx
+            variable (str): short name of variable (ex: tas or areacella)
 
         Returns:
             list[str]: list of local file paths
@@ -252,6 +257,8 @@ class DataFinder:
             mip (str): ScenarioMIP or CMIP
             experiment (str): historical or ssp245
             ensemble (str): ensemble id rXiXpXfX
+            frequency_table (str): Amon, Omon, Ofx, fx
+            variable (str): short name of variable (ex: tas or areacella)
 
         Returns:
             str: cloud storage file path
@@ -298,7 +305,8 @@ class DataFinder:
         Args:
             experiment (str): historical or ssp245
             ensemble (str): ensemble id rXiXpXfX
-            data_node (str, optional): Node to search for data on. Sometimes a node is down, in which case you should try another one. Defaults to "esgf-data1.llnl.gov".
+            frequency_table (str): Amon, Omon, Ofx, fx
+            variable (str): short name of variable (ex: tas or areacella)
 
         Returns:
             list[str]: netcdf paths for accessing data
@@ -343,6 +351,8 @@ class DataFinder:
             mip (str): ScenarioMIP or CMIP
             experiment (str): historical or ssp245
             ensemble (str): ensemble id rXiXpXfX
+            frequency_table (str): Amon, Omon, Ofx, fx
+            variable (str): short name of variable (ex: tas or areacella)
 
         Raises:
             ValueError: Can't find data
@@ -416,7 +426,7 @@ class DataFinder:
         Returns:
             xr.Dataset: Analysis ready climate model data. Ensemble mean combination of historical and projected datasets.
         """
-        experiment = "historical" if self.mip == "CMIP" else "ssp245"
+        experiment = "historical" if self.mip == "CMIP" else SSP_EXPERIMENT
         model_ds = self.load_ensemble_mean(mip=self.mip, experiment=experiment)
         if self.secondary_mip:
             # historical and projection meet at 2015. Some models overlap in 2015 so setting hard bounds to avoid downstream errors.
@@ -424,7 +434,7 @@ class DataFinder:
                 time=slice(f"{self.start_year}-01-01", "2014-12-31")
             )
             second_model_ens_mean = self.load_ensemble_mean(
-                mip=self.secondary_mip, experiment="ssp245"
+                mip=self.secondary_mip, experiment=SSP_EXPERIMENT
             )
             model_ds = xr.concat(
                 [model_ds, second_model_ens_mean],
@@ -509,9 +519,9 @@ def bias_adjustment(model, obs):
 
 class MetricCalculation:
     """The MetricCalculation class is for benchmarking climate model data against observations. It takes in model, observations, and weights datasets.
-    The weights dataset should be the cell area, so if one is not provided a proxy will be created by taking the cosine of latitude.
-    For now, there is an RMSE calculation option, with none, bias adjustment, and anomaly adjustment options.
-
+    The weights dataset should be the cell area.
+    For now, there are 3 RMSE calculation options (zonal mean, spatial, temporal) with 2 optional adjustment options (bias_adjusted, anomaly).
+    To add new metric calculation options, a function should be added that can be called as an agrument from the main script.
     """
 
     def __init__(
@@ -528,8 +538,8 @@ class MetricCalculation:
             observations (xr.Dataset): Climate data observations
             model (xr.Dataset): Climate model data (historical and projected data)
             weights (xr.DataArray): weights corresponding to grid cell area.
-            lat_min (int): minimum latitude
-            lat_max (int): maximum latitude
+            lat_min (int): minimum latitude. Defaults to -90.
+            lat_max (int): maximum latitude. Defaults to 90.
         """
         self.obs = observations
         self.model = model
@@ -569,7 +579,16 @@ class MetricCalculation:
         )
         return weighted_ds
 
-    def zonal_mean_rmse(self, adjustment=None):
+    def zonal_mean_rmse(self, adjustment: str = None) -> float:
+        """First calculates the zonal mean of the model and observations datasets, then calculates the RMSE of the two time series.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            float: RMSE value
+        """
         if self.model_zonal_mean is None:
             self.model_zonal_mean = self.zonal_mean(self.model)
         if self.obs_zonal_mean is None:
@@ -592,7 +611,15 @@ class MetricCalculation:
             dim=["time"],
         ).values.tolist()
 
-    def spatial_rmse(self, adjustment=None):
+    def spatial_rmse(self, adjustment: str = None) -> xr.DataArray:
+        """For each time step, calculate the RMSE across the spatial dimensions. Data returned will be a time series.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            xr.DataArray: Time series of RMSE.
+        """
         model_rmse_data = self.model
         obs_rmse_data = self.obs
 
@@ -612,7 +639,15 @@ class MetricCalculation:
             dim=self.spatial_dims,
         )
 
-    def temporal_rmse(self, adjustment=None):
+    def temporal_rmse(self, adjustment: str = None) -> xr.DataArray:
+        """For grid cell, calculate the RMSE across the time dimension. Data returned will be a map.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            xr.DataArray: Map of RMSE.
+        """
         model_rmse_data = self.model
         obs_rmse_data = self.obs
 
@@ -634,7 +669,6 @@ class MetricCalculation:
 
 class SaveResults:
     """The SaveResults class is for saving outputs from the benchmarking pipeline in an organized mannor.
-    The path is determined by the variable and "experiment" (for now, RMSE) but you can specify the specific file name.
     Options for saving data as csv and zarr.
     """
 
@@ -652,8 +686,14 @@ class SaveResults:
         """Initialize SaveResults class, sets local and cloud paths
 
         Args:
+            model (str): CMIP6 model name
             variable (str): Variable short name
-            experiment (str): Set of metric experiments.
+            metric (str): Name of metric calculated (function from MetricCalculation)
+            adjustment (str): Adjustment applied to the metric calculation
+            start_year (int): start of time period for calculated metric
+            end_year (int): end of time period for calculated metric
+            lat_min (int): spatial bound for calculated metric
+            lat_max (int): spatial bound for calculated metric
         """
         self.variable = variable
         self.model = model
@@ -676,7 +716,13 @@ class SaveResults:
         self.gcs_prefix = f"gs://{self.bucket_name}/"
         self.data_path = f"results/{self.variable}/"
 
-    def write_data(self, results, save_to_cloud):
+    def write_data(self, results, save_to_cloud: bool):
+        """Save data. Datatype determines how data is saved. Options are csv for float, and zarr for xr.DataArray
+
+        Args:
+            results: data to be saved
+            save_to_cloud (bool): Save data locally if false
+        """
         if isinstance(results, float):
             logger.info("Saving data to csv")
             self.save_csv(results, save_to_cloud)
@@ -746,7 +792,6 @@ class SaveResults:
 
         Args:
             ds (xr.Dataset): Dataset to save
-            file_name (str): name of file to save results in. Path determined by class
             save_to_cloud (bool): Save to cloud if passed. Default is False.
         """
         file_name = f"{self.model}_{self.metric}_{self.lat_min}_{self.lat_max}_{self.start_year}_{self.end_year}_results.zarr"

@@ -182,4 +182,22 @@
     .App .main-content .probabilistic-scores .stat-card {
         min-width: auto;
     }
-} 
+}
+
+<table>
+  <thead>
+    <tr>
+      <th>Model</th>
+      <th>Accuracy</th>
+      <th>Log Loss</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td data-label="Model">XGBoost</td>
+      <td data-label="Accuracy">92%</td>
+      <td data-label="Log Loss">0.21</td>
+    </tr>
+    <!-- more rows -->
+  </tbody>
+</table>

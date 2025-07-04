@@ -201,3 +201,69 @@
     <!-- more rows -->
   </tbody>
 </table>
+
+/* Probabilistic Scores Table Styles */
+.App .main-content .probabilistic-scores table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.App .main-content .probabilistic-scores th,
+.App .main-content .probabilistic-scores td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 14px;
+    color: #374151;
+}
+
+.App .main-content .probabilistic-scores th {
+    background-color: #f9fafb;
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.App .main-content .probabilistic-scores tr:hover {
+    background-color: #f1f5f9;
+}
+
+@media (max-width: 768px) {
+    .App .main-content .probabilistic-scores table,
+    .App .main-content .probabilistic-scores thead,
+    .App .main-content .probabilistic-scores tbody,
+    .App .main-content .probabilistic-scores th,
+    .App .main-content .probabilistic-scores td,
+    .App .main-content .probabilistic-scores tr {
+        display: block;
+    }
+
+    .App .main-content .probabilistic-scores tr {
+        margin-bottom: 15px;
+    }
+
+    .App .main-content .probabilistic-scores td {
+        padding-left: 50%;
+        position: relative;
+        text-align: left;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    .App .main-content .probabilistic-scores td::before {
+        content: attr(data-label);
+        position: absolute;
+        left: 16px;
+        top: 12px;
+        font-weight: 600;
+        color: #6b7280;
+    }
+
+    .App .main-content .probabilistic-scores th {
+        display: none;
+    }
+}
+

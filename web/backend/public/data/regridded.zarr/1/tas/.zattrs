@@ -1,0 +1,17 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "y",
+        "x"
+    ],
+    "cell_measures": "area: areacella",
+    "cell_methods": "area: time: mean",
+    "coordinates": "height",
+    "description": "near-surface (usually, 2 meter) air temperature",
+    "history": "none",
+    "interval_operation": "900 s",
+    "interval_write": "1 month",
+    "long_name": "Near-Surface Air Temperature",
+    "online_operation": "average",
+    "standard_name": "air_temperature",
+    "units": "K"
+}

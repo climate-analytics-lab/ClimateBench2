@@ -134,15 +134,15 @@ OBSERVATION_DATA_SPECS = {
             "source_var_name": "Aerosol_Optical_Depth_Land_Ocean_Mean_Mean",
             "long_name": "Ambient Aerosol Optical Thickness at 550nm",
             "standard_name": "atmosphere_optical_thickness_due_to_ambient_aerosol_particles",
-            "units": None,
+            "units": "NA",
         },
     },
 }
 # using nested dict incase we have multiple obs datasets for one var. This dict should use the main obs dataset.
 OBSERVATION_DATA_PATHS = {
     "tas": {
-        "cloud": OBSERVATION_DATA_SPECS["tas"]["nasa_airs"]["cloud_path"],
-        "local": OBSERVATION_DATA_SPECS["tas"]["nasa_airs"]["local_path"],
+        "cloud": OBSERVATION_DATA_SPECS["tas"]["HadCRUT5"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["tas"]["HadCRUT5"]["local_path"],
     },
     "tos": {
         "cloud": OBSERVATION_DATA_SPECS["tos"]["noaa_oisst"]["cloud_path"],

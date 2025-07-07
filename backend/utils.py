@@ -414,6 +414,7 @@ class DataFinder:
                 ["lat_bnds", "lon_bnds", "time_bnds", "height", "wavelength"],
                 errors="ignore",
             )
+            ds = standardize_dims(ds)
             ds.expand_dims({"ensemble": [ensemble]})
             ensemble_ds_list.append(ds)
         return xr.concat(
@@ -445,7 +446,6 @@ class DataFinder:
         model_ds = model_ds.sel(
             time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
         )
-        model_ds = standardize_dims(model_ds)
         self.model_ds = model_ds
         return self.model_ds
 

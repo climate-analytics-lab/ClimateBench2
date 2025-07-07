@@ -112,11 +112,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--start_year",
         default=2005,
+        type=int,
         help="Start year for metric calculatino time period.",
     )
     parser.add_argument(
         "--end_year",
         default=2014,
+        type=int,
         help="End year for metric calculatino time period.",
     )
     parser.add_argument(

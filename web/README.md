@@ -29,7 +29,7 @@ carbon_plan_demo/
 npm install
 
 # Make the start script executable (first time only)
-cd ..
+# Make sure you are in root directory (web)
 chmod +x start.sh
 
 # Start all services

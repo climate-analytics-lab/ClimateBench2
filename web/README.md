@@ -25,7 +25,11 @@ carbon_plan_demo/
 ### Starting All Services
 
 ```bash
+# navigate to frontend directory and run
+npm install
+
 # Make the start script executable (first time only)
+cd ..
 chmod +x start.sh
 
 # Start all services

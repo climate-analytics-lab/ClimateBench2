@@ -102,11 +102,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lat_min",
         default=-90,
+        type=int,
         help="minimum latitude for zonal slice. must be less than lat max but greater than -90",
     )
     parser.add_argument(
         "--lat_max",
         default=90,
+        type=int,
         help="maximum latitude for zonal slice. must be greater than lat min but less than 90",
     )
     parser.add_argument(

@@ -5,41 +5,38 @@ A comprehensive climate data visualization and analysis platform with interactiv
 ## 🏗️ Project Structure
 
 ```
-carbon_plan_demo/
+web/
 ├── frontend/          # Next.js frontend application
 │   ├── pages/         # Next.js pages
 │   ├── components/    # React components
 │   ├── styles/        # CSS stylesheets
-│   ├── services/      # API services
-│   ├── public/        # Static assets
 │   └── package.json   # Frontend dependencies
 ├── backend/           # Python backend services
-│   ├── map_server.py  # Zarr data server for climate maps
-│   ├── api_server.py  # FastAPI server for RMSE and variable data
-│   └── requirements.txt # Python dependencies
-└── start.sh          # Script to start all services
+│   ├── data_server.py # Data server for metric table and climate maps
+└── minimal_start.sh   # Script to start all services
 ```
 
 ## 🚀 Quick Start
 
 ### Starting All Services
+You will need to have the google cloud cli installed and set up.
 
 ```bash
 # navigate to frontend directory and run
+cd frontend
 npm install
+cd ..
 
 # Make the start script executable (first time only)
-# Make sure you are in root directory (web)
-chmod +x start.sh
+chmod +x minimal_start.sh
 
 # Start all services
-./start.sh
+./minimal_start.sh
 ```
 
 This will start:
 - **Frontend**: http://localhost:3000 (Next.js development server)
-- **Map Backend**: http://localhost:8000 (Zarr data server)
-- **API Backend**: http://localhost:8001 (FastAPI server)
+- **Backend**: http://localhost:8000 (Data server)
 
 ## 🔑 Environment Setup
 

@@ -18,23 +18,22 @@ const errorVariableOptions = [
   { value: 'tos_error', label: 'Sea Surface Temperature (C)' },
 ]
 
-// Example model options
 const modelOptions = [
-  { value: 'FGOALS-g3', label: 'FGOALS-g3' },
-  { value: 'FGOALS-f3-L', label: 'FGOALS-f3-L' },
+  // { value: 'FGOALS-g3', label: 'FGOALS-g3' },
+  // { value: 'FGOALS-f3-L', label: 'FGOALS-f3-L' },
   { value: 'CanESM5', label: 'CanESM5' },
-  { value: 'ACCESS-CM2', label: 'ACCESS-CM2' },
-  { value: 'EC-Earth3-Veg', label: 'EC-Earth3-Veg' },
-  { value: 'EC-Earth3-Veg-LR', label: 'EC-Earth3-Veg-LR' },
-  { value: 'FIO-ESM-2-0', label: 'FIO-ESM-2-0' },
+  // { value: 'ACCESS-CM2', label: 'ACCESS-CM2' },
+  // { value: 'EC-Earth3-Veg', label: 'EC-Earth3-Veg' },
+  // { value: 'EC-Earth3-Veg-LR', label: 'EC-Earth3-Veg-LR' },
+  // { value: 'FIO-ESM-2-0', label: 'FIO-ESM-2-0' },
   { value: 'IPSL-CM6A-LR', label: 'IPSL-CM6A-LR' },
-  { value: 'MIROC6', label: 'MIROC6' },
+  // { value: 'MIROC6', label: 'MIROC6' },
   { value: 'MPI-ESM1-2-LR', label: 'MPI-ESM1-2-LR' },
-  { value: 'MRI-ESM2-0', label: 'MRI-ESM2-0' },
+  // { value: 'MRI-ESM2-0', label: 'MRI-ESM2-0' },
   { value: 'CESM2-WACCM', label: 'CESM2-WACCM' },
-  { value: 'NorESM2-LM', label: 'NorESM2-LM' },
+  // { value: 'NorESM2-LM', label: 'NorESM2-LM' },
   { value: 'KACE-1-0-G', label: 'KACE-1-0-G' },
-  { value: 'GFDL-ESM4', label: 'GFDL-ESM4' },
+  // { value: 'GFDL-ESM4', label: 'GFDL-ESM4' },
 ]
 
 // Define clim ranges for each variable
@@ -108,7 +107,7 @@ const Index = () => {
       <section className="section" id="model-map">
         <h2>Climate Map</h2>
         <div style={{ height: '80vh', width: '100%', position: 'relative' }}>
-          <Map zoom={2} center={[0, 0]} debug={false}>
+          <Map zoom={1} center={[0, 0]} debug={false}>
             <Line
               color={'white'}
               source={
@@ -123,7 +122,7 @@ const Index = () => {
               display={true}
               opacity={1}
               mode={'texture'}
-              source="http://localhost:8000/public/data/model_data_pyramid.zarr/"
+              source="http://localhost:8000/public/map_data_subset_pyramid.zarr/"
               variable={selectedVariable}
               selector={{ year: selectedYear, model: selectedModel }}
             />

@@ -29,9 +29,16 @@ const metricOptions = [
 ];
 
 const periodOptions = [
-  { value: 'historical (1960-2014)', label: '1960-2014' },
-  { value: 'historical (1990-2014)', label: '1990-2014' },
-  { value: 'historical (2005-2014)', label: '2005-2014' },
+  { value: 'Historical (1960-2014)', label: '1960-2014' },
+  { value: 'Historical (1990-2014)', label: '1990-2014' },
+  { value: 'Historical (2005-2014)', label: '2005-2014' },
+];
+
+const regionOptions = [
+  { value: 'global', label: 'Global' },
+  { value: 'northern_hemisphere', label: 'Northern Hemisphere' },
+  { value: 'southern_hemisphere', label: 'Southern Hemisphere' },
+  { value: 'tropics', label: 'Tropics' },
 ];
 
 const sortOptions = [
@@ -41,14 +48,15 @@ const sortOptions = [
   { value: 'percent', label: 'Percent Difference' },
 ];
 
-const futurePeriod = 'SSP245 (2015-2024)';
+const futurePeriod = 'SSP2-4.5';
 const futureLabel = '2015-2024';
-const csvUrl = 'http://localhost:8000/public/data/zonal_mean_rmse.csv';
+const csvUrl = 'http://localhost:8000/public/rmse_results.csv';
 
 const Overview = () => {
   const [selectedVariable, setSelectedVariable] = useState('tas');
   const [selectedMetric, setSelectedMetric] = useState('zonal_mean_rmse');
-  const [selectedPeriod, setSelectedPeriod] = useState('historical (2005-2014)');
+  const [selectedPeriod, setSelectedPeriod] = useState('Historical (2005-2014)');
+  const [selectedRegion, setSelectedRegion] = useState('global');
   const [sortBy, setSortBy] = useState('future');
   const [tableData, setTableData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -70,7 +78,7 @@ const Overview = () => {
   }, []);
 
   const filtered = tableData.filter(
-    d => d.variable === selectedVariable && d.metric === selectedMetric
+    d => d.variable === selectedVariable && d.metric === selectedMetric && d.region === selectedRegion
   );
 
   // Helper functions for formatting and difference calculations
@@ -178,6 +186,17 @@ const Overview = () => {
             </select>
           </label>
           <label>
+            Region:&nbsp;
+            <select
+              value={selectedRegion}
+              onChange={e => setSelectedRegion(e.target.value)}
+            >
+              {regionOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
             Sort By:&nbsp;
             <select
               value={sortBy}
@@ -214,8 +233,8 @@ const Overview = () => {
                 <tr>
                   <th scope="col">Rank</th>
                   <th scope="col">Model</th>
-                  <th scope="col">{periodOptions.find(p => p.value === selectedPeriod)?.label}</th>
-                  <th scope="col">2015-2024</th>
+                  <th scope="col">Historical</th>
+                  <th scope="col">SSP2-4.5</th>
                   <th scope="col">Difference</th>
                   <th scope="col">Percent Difference</th>
                 </tr>

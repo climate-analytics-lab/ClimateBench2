@@ -1,4 +1,4 @@
-# Carbon Plan Demo
+# Climate Bench Web App
 
 A comprehensive climate data visualization and analysis platform with interactive maps, probabilistic scores, and overview dashboards.
 

@@ -1,0 +1,4 @@
+frontend/.next
+frontend/node_modules
+frontend/package-lock.json
+backend/public

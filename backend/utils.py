@@ -610,6 +610,38 @@ class MetricCalculation:
             keep_attrs=True,
             dim=["time"],
         ).values.tolist()
+    
+    def zonal_mean_mae(self, adjustment: str = None) -> float:
+        """First calculates the zonal mean of the model and observations datasets, then calculates the MAE of the two time series.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            float: RMSE value
+        """
+        if self.model_zonal_mean is None:
+            self.model_zonal_mean = self.zonal_mean(self.model)
+        if self.obs_zonal_mean is None:
+            self.obs_zonal_mean = self.zonal_mean(self.obs)
+        model_rmse_data = self.model_zonal_mean
+        obs_rmse_data = self.obs_zonal_mean
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
+
+        return xs.mae(
+            a=model_rmse_data.chunk({"time": -1}),
+            b=obs_rmse_data.chunk({"time": -1}),
+            skipna=True,
+            keep_attrs=True,
+            dim=["time"],
+        ).values.tolist()
 
     def spatial_rmse(self, adjustment: str = None) -> xr.DataArray:
         """For each time step, calculate the RMSE across the spatial dimensions. Data returned will be a time series.

@@ -90,7 +90,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--metric",
         required=True,
-        choices=["zonal_mean_rmse", "spatial_rmse", "temporal_rmse"],
+        choices=["zonal_mean_rmse", "spatial_rmse", "temporal_rmse", "zonal_mean_mae"],
         help="Metric to calculate. Must be a member of the MetricCalculation class.",
     )
     parser.add_argument(

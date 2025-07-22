@@ -142,6 +142,11 @@ class DownloadObservations:
         if self.variable == "tas":
             logger.info("converting tas units to K")
             ds[self.variable] = ds[self.variable] + 273.15
+        if self.variable == "od550aer":
+            logger.info("Scaling od550aer data by 0.001")
+            ds[self.variable] = (
+                ds[self.variable] / 1000
+            )  # unitless values but range is ~0-5
         return ds
 
     def standardize_data(self):

@@ -6,7 +6,7 @@ VARIABLE_FREQUENCY_GROUP = {
     "tos": "Omon",
     "od550aer": "AERmon",
 }
-HIST_START_DATE = "2005-01-01"
+HIST_START_DATE = "1960-01-01"
 HIST_END_DATE = "2014-12-31"
 SSP_START_DATE = "2015-01-01"
 SSP_END_DATE = "2024-12-31"
@@ -92,6 +92,15 @@ OBSERVATION_DATA_SPECS = {
             "standard_name": "air_temperature",
             "units": "K",
         },
+        "HadCRUT5_error": {
+            "cloud_path": "gs://climatebench/observations/preprocessed/tas/tas_HadCRUT5_error.zarr",
+            "local_path": "observational_data/tas_HadCRUT5_error.zarr",
+            "download_url": "https://www.metoffice.gov.uk/hadobs/hadcrut5/data/HadCRUT.5.0.2.0/non-infilled/HadCRUT.5.0.2.0.uncorrelated.nc",
+            "source_var_name": "tas_unc",
+            "long_name": "standard_uncertainty in blended air_temperature_anomaly over land with sea_water_temperature_anomaly",
+            "standard_name": "tas_unc",
+            "units": "K",
+        },
     },
     "pr": {
         "noaa_gpcp": {
@@ -101,6 +110,15 @@ OBSERVATION_DATA_SPECS = {
             "source_var_name": "precip",
             "long_name": "Average Monthly Rate of Precipitation",
             "standard_name": "precipitation_flux",
+            "units": "kg m-2 s-1",
+        },
+        "noaa_gpcp_error": {
+            "cloud_path": "gs://climatebench/observations/preprocessed/pr/pr_noaa_gpcp_error.zarr",
+            "local_path": "observational_data/pr_noaa_gpcp_error.zarr",
+            "download_url": "https://downloads.psl.noaa.gov/Datasets/gpcp/precip.mon.mean.error.nc",
+            "source_var_name": "precip",
+            "long_name": "Absolute Error: Monthly Rate of Precipitation",
+            "standard_name": "precipitation_flux_error",
             "units": "kg m-2 s-1",
         },
     },
@@ -134,15 +152,15 @@ OBSERVATION_DATA_SPECS = {
             "source_var_name": "Aerosol_Optical_Depth_Land_Ocean_Mean_Mean",
             "long_name": "Ambient Aerosol Optical Thickness at 550nm",
             "standard_name": "atmosphere_optical_thickness_due_to_ambient_aerosol_particles",
-            "units": None,
+            "units": "NA",
         },
     },
 }
 # using nested dict incase we have multiple obs datasets for one var. This dict should use the main obs dataset.
 OBSERVATION_DATA_PATHS = {
     "tas": {
-        "cloud": OBSERVATION_DATA_SPECS["tas"]["nasa_airs"]["cloud_path"],
-        "local": OBSERVATION_DATA_SPECS["tas"]["nasa_airs"]["local_path"],
+        "cloud": OBSERVATION_DATA_SPECS["tas"]["HadCRUT5"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["tas"]["HadCRUT5"]["local_path"],
     },
     "tos": {
         "cloud": OBSERVATION_DATA_SPECS["tos"]["noaa_oisst"]["cloud_path"],

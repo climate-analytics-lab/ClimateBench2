@@ -90,7 +90,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--metric",
         required=True,
-        choices=["zonal_mean_rmse", "spatial_rmse", "temporal_rmse"],
+        choices=["zonal_mean_rmse", "spatial_rmse", "temporal_rmse", "zonal_mean_mae"],
         help="Metric to calculate. Must be a member of the MetricCalculation class.",
     )
     parser.add_argument(
@@ -102,11 +102,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lat_min",
         default=-90,
+        type=int,
         help="minimum latitude for zonal slice. must be less than lat max but greater than -90",
     )
     parser.add_argument(
         "--lat_max",
         default=90,
+        type=int,
         help="maximum latitude for zonal slice. must be greater than lat min but less than 90",
     )
     parser.add_argument(

@@ -26,6 +26,9 @@ const metricOptions = [
   { value: 'zonal_mean_rmse', label: 'RMSE' },
   { value: 'zonal_mean_rmse_bias_adjusted', label: 'RMSE Bias Adjusted' },
   { value: 'zonal_mean_rmse_anomaly', label: 'RMSE Anomaly' },
+  { value: 'zonal_mean_mae', label: 'MAE' },
+  { value: 'zonal_mean_mae_bias_adjusted', label: 'MAE Bias Adjusted' },
+  { value: 'zonal_mean_mae_anomaly', label: 'MAE Anomaly' },
 ];
 
 const periodOptions = [
@@ -50,7 +53,7 @@ const sortOptions = [
 
 const futurePeriod = 'SSP2-4.5';
 const futureLabel = '2015-2024';
-const csvUrl = 'http://localhost:8000/public/rmse_results.csv';
+const csvUrl = 'http://localhost:8000/public/benchmark_results.csv';
 
 const Overview = () => {
   const [selectedVariable, setSelectedVariable] = useState('tas');

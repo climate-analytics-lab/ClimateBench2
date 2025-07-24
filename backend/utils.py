@@ -391,7 +391,7 @@ class DataFinder:
 
         return ds
 
-    def load_ensemble_mean(self, mip: str, experiment: str) -> xr.Dataset:
+    def load_ensemble_mean(self, mip: str, experiment: str, ensemble_mean: bool = True) -> xr.Dataset:
         """Finds data for all ensemble members and returns the mean. Ensemble members based on constant.
 
         Args:
@@ -415,27 +415,31 @@ class DataFinder:
                 errors="ignore",
             )
             ds = standardize_dims(ds)
-            ds.expand_dims({"ensemble": [ensemble]})
+            ds = ds.expand_dims({"ensemble": [ensemble]})
             ensemble_ds_list.append(ds)
-        return xr.concat(
+        model_ens_ds = xr.concat(
             ensemble_ds_list, dim="ensemble", combine_attrs="override"
-        ).mean(dim="ensemble")
+        )
+        if ensemble_mean:
+            return model_ens_ds.mean(dim="ensemble")
+        else:
+            return model_ens_ds
 
-    def load_model_ds(self) -> xr.Dataset:
+    def load_model_ds(self, ensemble_mean=True) -> xr.Dataset:
         """Loads ensemble mean of historical and projected (ssp245) climate model data. Combines into one dataset and passes through standardizer function. Returned data should have "lat" "lon" and "time" dimensions that are sorted in ascending order. Lon values are from 0-360 and time is monthly on the first of the month.
 
         Returns:
             xr.Dataset: Analysis ready climate model data. Ensemble mean combination of historical and projected datasets.
         """
         experiment = "historical" if self.mip == "CMIP" else SSP_EXPERIMENT
-        model_ds = self.load_ensemble_mean(mip=self.mip, experiment=experiment)
+        model_ds = self.load_ensemble_mean(mip=self.mip, experiment=experiment, ensemble_mean=ensemble_mean)
         if self.secondary_mip:
             # historical and projection meet at 2015. Some models overlap in 2015 so setting hard bounds to avoid downstream errors.
             model_ds = model_ds.sel(
                 time=slice(f"{self.start_year}-01-01", "2014-12-31")
             )
             second_model_ens_mean = self.load_ensemble_mean(
-                mip=self.secondary_mip, experiment=SSP_EXPERIMENT
+                mip=self.secondary_mip, experiment=SSP_EXPERIMENT, ensemble_mean=ensemble_mean
             )
             model_ds = xr.concat(
                 [model_ds, second_model_ens_mean],
@@ -562,7 +566,7 @@ class MetricCalculation:
         self.model_zonal_mean = None
         self.obs_zonal_mean = None
 
-        self.spatial_dims = [x for x in self.model.dims if x != "time"]
+        self.spatial_dims = [x for x in self.model.dims if (x != "time") and (x != "ensemble")]
 
     def zonal_mean(self, ds: xr.Dataset):
         """Calculates zonal mean of model and observational datasets, weighted by the provided weights dataset
@@ -642,6 +646,41 @@ class MetricCalculation:
             keep_attrs=True,
             dim=["time"],
         ).values.tolist()
+    
+    def zonal_mean_crps(self, adjustment: str = None) -> float:
+        """First calculates the zonal mean of the model and observations datasets, then calculates the CRPS of the two time series.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            float: RMSE value
+        """
+        if self.model_zonal_mean is None:
+            self.model_zonal_mean = self.zonal_mean(self.model)
+        if self.obs_zonal_mean is None:
+            self.obs_zonal_mean = self.zonal_mean(self.obs)
+        model_rmse_data = self.model_zonal_mean
+        obs_rmse_data = self.obs_zonal_mean
+
+        # check for ensemble dim in model ds
+        if "ensemble" not in model_rmse_data.dims:
+            ValueError("no ensemble dimension")
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
+
+        return xs.crps_ensemble(
+            forecasts=model_rmse_data.chunk({"time": -1,"ensemble":-1}),
+            observations=obs_rmse_data.chunk({"time": -1}),
+            member_dim='ensemble',
+            keep_attrs=True,
+        ).values.tolist()
 
     def spatial_rmse(self, adjustment: str = None) -> xr.DataArray:
         """For each time step, calculate the RMSE across the spatial dimensions. Data returned will be a time series.
@@ -667,6 +706,66 @@ class MetricCalculation:
             b=obs_rmse_data.chunk({"time": -1}),
             weights=self.weights,
             skipna=True,
+            keep_attrs=True,
+            dim=self.spatial_dims,
+        )
+    
+    def spatial_mae(self, adjustment: str = None) -> xr.DataArray:
+        """For each time step, calculate the RMSE across the spatial dimensions. Data returned will be a time series.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            xr.DataArray: Time series of RMSE.
+        """
+        model_rmse_data = self.model
+        obs_rmse_data = self.obs
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
+
+        return xs.mae(
+            a=model_rmse_data.chunk({"time": -1}),
+            b=obs_rmse_data.chunk({"time": -1}),
+            weights=self.weights,
+            skipna=True,
+            keep_attrs=True,
+            dim=self.spatial_dims,
+        )
+    
+    def spatial_crps(self, adjustment: str = None) -> xr.DataArray:
+        """For each time step, calculate the CRPS across the spatial dimensions. Data returned will be a time series.
+        Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            xr.DataArray: Time series of RMSE.
+        """
+        model_rmse_data = self.model
+        obs_rmse_data = self.obs
+
+        # check for ensemble dim in model ds
+        if "ensemble" not in model_rmse_data.dims:
+            ValueError("no ensemble dimension")
+
+        if adjustment == "bias_adjusted":
+            model_rmse_data = bias_adjustment(model=model_rmse_data, obs=obs_rmse_data)
+
+        if adjustment == "anomaly":
+            model_rmse_data = anomaly(ds=model_rmse_data)
+            obs_rmse_data = anomaly(ds=obs_rmse_data)
+
+        return xs.crps_ensemble(
+            forecasts=model_rmse_data.chunk({"time": -1,"ensemble":-1}),
+            observations=obs_rmse_data.chunk({"time": -1}),
+            weights=self.weights.fillna(0),
+            member_dim='ensemble',
             keep_attrs=True,
             dim=self.spatial_dims,
         )

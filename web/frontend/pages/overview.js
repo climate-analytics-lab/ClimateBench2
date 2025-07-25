@@ -156,8 +156,9 @@ const Overview = () => {
         <h2>Zonal Mean RMSE Table</h2>
         <div className="metric-controls" style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
           <label>
-            Variable:&nbsp;
+            <span style={{ fontWeight: 'bold' }}>Variable:</span>&nbsp;
             <select
+              className="widget-select"
               value={selectedVariable}
               onChange={e => setSelectedVariable(e.target.value)}
             >
@@ -167,8 +168,9 @@ const Overview = () => {
             </select>
           </label>
           <label>
-            Metric:&nbsp;
+            <span style={{ fontWeight: 'bold' }}>Metric:</span>&nbsp;
             <select
+              className="widget-select"
               value={selectedMetric}
               onChange={e => setSelectedMetric(e.target.value)}
             >
@@ -178,8 +180,9 @@ const Overview = () => {
             </select>
           </label>
           <label>
-            Historical Period:&nbsp;
+            <span style={{ fontWeight: 'bold' }}>Historical Period:</span>&nbsp;
             <select
+              className="widget-select"
               value={selectedPeriod}
               onChange={e => setSelectedPeriod(e.target.value)}
             >
@@ -189,8 +192,9 @@ const Overview = () => {
             </select>
           </label>
           <label>
-            Region:&nbsp;
+            <span style={{ fontWeight: 'bold' }}>Region:</span>&nbsp;
             <select
+              className="widget-select"
               value={selectedRegion}
               onChange={e => setSelectedRegion(e.target.value)}
             >
@@ -200,8 +204,9 @@ const Overview = () => {
             </select>
           </label>
           <label>
-            Sort By:&nbsp;
+            <span style={{ fontWeight: 'bold' }}>Sort By:</span>&nbsp;
             <select
+              className="widget-select"
               value={sortBy}
               onChange={e => setSortBy(e.target.value)}
             >

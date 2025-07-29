@@ -90,8 +90,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--metric",
         required=True,
-        choices=["zonal_mean_rmse", "spatial_rmse", "temporal_rmse", "zonal_mean_mae"],
-        help="Metric to calculate. Must be a member of the MetricCalculation class.",
+        choices=["zonal_mean_rmse", "spatial_rmse", "temporal_rmse", "zonal_mean_mae", "crps_ensemble_weighted"],
+        help="Metric to calculate. Must be a member of the MetricCalculation class. For CRPS, use 'crps_ensemble_weighted' (spatially weighted mean CRPS ensemble score).",
     )
     parser.add_argument(
         "--adjustment",

@@ -698,6 +698,42 @@ class MetricCalculation:
             dim=["time"],
         )
 
+    def crps_ensemble_weighted(self, adjustment: str = None) -> float:
+        """Compute the spatially weighted mean CRPS ensemble score using xskillscore.
+
+        Args:
+            adjustment (str, optional): Adjustment option to apply. Defaults to None.
+
+        Returns:
+            float: Weighted mean CRPS ensemble score
+        """
+        model_data = self.model
+        obs_data = self.obs
+
+        if adjustment == "bias_adjusted":
+            model_data = bias_adjustment(model=model_data, obs=obs_data)
+        if adjustment == "anomaly":
+            model_data = anomaly(ds=model_data)
+            obs_data = anomaly(ds=obs_data)
+
+        # xs.crps_ensemble expects forecast (ensemble, ...) and obs (...)
+        # Compute CRPS at each grid cell and time, then spatially weight
+        crps = xs.crps_ensemble(
+            forecast=model_data,
+            obs=obs_data,
+            member_dim="ensemble",
+            skipna=True
+        )
+        # Weight the spatial mean (over all spatial dims except time)
+        spatial_dims = [d for d in crps.dims if d not in ["time"]]
+        weighted_crps = crps.weighted(self.weights.fillna(0)).mean(dim=spatial_dims, skipna=True)
+        # Take mean over time (if present)
+        if "time" in weighted_crps.dims:
+            result = weighted_crps.mean(dim="time", skipna=True).item()
+        else:
+            result = weighted_crps.item()
+        return float(result)
+
 
 class SaveResults:
     """The SaveResults class is for saving outputs from the benchmarking pipeline in an organized mannor.

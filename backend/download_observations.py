@@ -46,19 +46,38 @@ class DownloadObservations:
         if self.data_specs.get("download_url", False):
             logger.info(f"downloading data from : {self.data_specs['download_url']}")
 
-            self.temp_file_name = (
-                f"{self.temp_dir}/{self.data_specs['download_url'].split('/')[-1]}"
-            )
+            if self.data_specs.get("download_multiple", False):
+                start_year = self.data_specs['file_date_range'][0]
+                end_year = self.data_specs['file_date_range'][1]
+                for year in range(start_year,end_year):
+                    download_url = self.data_specs['download_url'].format(year)
+                    temp_file_name = (
+                        f"{self.temp_dir}/{download_url.split('/')[-1]}"
+                    )
+                    with requests.get(download_url, stream=True) as r:
+                        r.raise_for_status()
+                        with open(temp_file_name, "wb") as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                f.write(chunk)
 
-            with requests.get(self.data_specs["download_url"], stream=True) as r:
-                r.raise_for_status()
-                with open(self.temp_file_name, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                ds = xr.open_mfdataset(f"{self.temp_dir}/*", chunks={}).sel(
+                    time=slice(HIST_START_DATE, SSP_END_DATE)
+                )
+                ds = ds.resample(time='MS').mean()
+            else:
+                self.temp_file_name = (
+                    f"{self.temp_dir}/{self.data_specs['download_url'].split('/')[-1]}"
+                )
 
-            ds = xr.open_dataset(self.temp_file_name, chunks={}).sel(
-                time=slice(HIST_START_DATE, SSP_END_DATE)
-            )
+                with requests.get(self.data_specs["download_url"], stream=True) as r:
+                    r.raise_for_status()
+                    with open(self.temp_file_name, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+
+                ds = xr.open_dataset(self.temp_file_name, chunks={}).sel(
+                    time=slice(HIST_START_DATE, SSP_END_DATE)
+                )
 
             self.var_attrs = ds[self.source_var_name].attrs
 

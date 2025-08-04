@@ -1,0 +1,973 @@
+{
+    "metadata": {
+        ".zattrs": {
+            "multiscales": [
+                {
+                    "datasets": [
+                        {
+                            "crs": "EPSG:3857",
+                            "level": 0,
+                            "path": "0",
+                            "pixels_per_tile": 128
+                        },
+                        {
+                            "crs": "EPSG:3857",
+                            "level": 1,
+                            "path": "1",
+                            "pixels_per_tile": 128
+                        }
+                    ],
+                    "metadata": {
+                        "args": [],
+                        "kwargs": {
+                            "method": "bilinear",
+                            "pixels_per_tile": 128,
+                            "projection": "web-mercator",
+                            "regridder_apply_kws": null,
+                            "regridder_kws": {
+                                "periodic": true
+                            }
+                        },
+                        "method": "pyramid_regrid",
+                        "version": "0.4.0"
+                    },
+                    "type": "reduce"
+                }
+            ],
+            "title": "multiscale data pyramid",
+            "version": "0.4.0"
+        },
+        ".zgroup": {
+            "zarr_format": 2
+        },
+        "0/.zattrs": {
+            "multiscales": [
+                {
+                    "datasets": [
+                        {
+                            "crs": "EPSG:3857",
+                            "level": 0,
+                            "path": "."
+                        }
+                    ],
+                    "metadata": {
+                        "args": [],
+                        "kwargs": {
+                            "method": "bilinear",
+                            "pixels_per_tile": 128,
+                            "projection": "web-mercator",
+                            "regridder_apply_kws": null,
+                            "regridder_kws": {
+                                "periodic": true
+                            }
+                        },
+                        "method": "pyramid_regrid",
+                        "version": "0.4.0"
+                    },
+                    "type": "reduce"
+                }
+            ],
+            "regrid_method": "bilinear"
+        },
+        "0/.zgroup": {
+            "zarr_format": 2
+        },
+        "0/clt/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/clt/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/clt_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/clt_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/model/.zarray": {
+            "chunks": [
+                5
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<U16",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5
+            ],
+            "zarr_format": 2
+        },
+        "0/model/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model"
+            ]
+        },
+        "0/od550aer/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/od550aer/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/od550aer_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/od550aer_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/pr/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/pr/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/pr_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/pr_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/spatial_ref/.zarray": {
+            "chunks": [],
+            "compressor": null,
+            "dtype": "<i4",
+            "fill_value": -2147483647,
+            "filters": null,
+            "order": "C",
+            "shape": [],
+            "zarr_format": 2
+        },
+        "0/spatial_ref/.zattrs": {
+            "_ARRAY_DIMENSIONS": [],
+            "crs_wkt": "GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Latitude\",NORTH],AXIS[\"Longitude\",EAST],AUTHORITY[\"EPSG\",\"4326\"]]",
+            "geographic_crs_name": "WGS 84",
+            "grid_mapping_name": "latitude_longitude",
+            "horizontal_datum_name": "World Geodetic System 1984",
+            "inverse_flattening": 298.257223563,
+            "longitude_of_prime_meridian": 0.0,
+            "prime_meridian_name": "Greenwich",
+            "reference_ellipsoid_name": "WGS 84",
+            "semi_major_axis": 6378137.0,
+            "semi_minor_axis": 6356752.314245179,
+            "spatial_ref": "GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Latitude\",NORTH],AXIS[\"Longitude\",EAST],AUTHORITY[\"EPSG\",\"4326\"]]"
+        },
+        "0/tas/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/tas/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/tas_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/tas_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/tos/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/tos/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/tos_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                128,
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/tos_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "0/x/.zarray": {
+            "chunks": [
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/x/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "x"
+            ]
+        },
+        "0/y/.zarray": {
+            "chunks": [
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                128
+            ],
+            "zarr_format": 2
+        },
+        "0/y/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "y"
+            ]
+        },
+        "0/year/.zarray": {
+            "chunks": [
+                20
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<i4",
+            "fill_value": -2147483647,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                20
+            ],
+            "zarr_format": 2
+        },
+        "0/year/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "year"
+            ]
+        },
+        "1/.zattrs": {
+            "multiscales": [
+                {
+                    "datasets": [
+                        {
+                            "crs": "EPSG:3857",
+                            "level": 1,
+                            "path": "."
+                        }
+                    ],
+                    "metadata": {
+                        "args": [],
+                        "kwargs": {
+                            "method": "bilinear",
+                            "pixels_per_tile": 128,
+                            "projection": "web-mercator",
+                            "regridder_apply_kws": null,
+                            "regridder_kws": {
+                                "periodic": true
+                            }
+                        },
+                        "method": "pyramid_regrid",
+                        "version": "0.4.0"
+                    },
+                    "type": "reduce"
+                }
+            ],
+            "regrid_method": "bilinear"
+        },
+        "1/.zgroup": {
+            "zarr_format": 2
+        },
+        "1/clt/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/clt/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/clt_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/clt_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/model/.zarray": {
+            "chunks": [
+                5
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<U16",
+            "fill_value": null,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5
+            ],
+            "zarr_format": 2
+        },
+        "1/model/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model"
+            ]
+        },
+        "1/od550aer/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/od550aer/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/od550aer_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/od550aer_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/pr/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/pr/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/pr_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/pr_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/spatial_ref/.zarray": {
+            "chunks": [],
+            "compressor": null,
+            "dtype": "<i4",
+            "fill_value": -2147483647,
+            "filters": null,
+            "order": "C",
+            "shape": [],
+            "zarr_format": 2
+        },
+        "1/spatial_ref/.zattrs": {
+            "_ARRAY_DIMENSIONS": [],
+            "crs_wkt": "GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Latitude\",NORTH],AXIS[\"Longitude\",EAST],AUTHORITY[\"EPSG\",\"4326\"]]",
+            "geographic_crs_name": "WGS 84",
+            "grid_mapping_name": "latitude_longitude",
+            "horizontal_datum_name": "World Geodetic System 1984",
+            "inverse_flattening": 298.257223563,
+            "longitude_of_prime_meridian": 0.0,
+            "prime_meridian_name": "Greenwich",
+            "reference_ellipsoid_name": "WGS 84",
+            "semi_major_axis": 6378137.0,
+            "semi_minor_axis": 6356752.314245179,
+            "spatial_ref": "GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Latitude\",NORTH],AXIS[\"Longitude\",EAST],AUTHORITY[\"EPSG\",\"4326\"]]"
+        },
+        "1/tas/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/tas/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/tas_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/tas_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/tos/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/tos/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/tos_error/.zarray": {
+            "chunks": [
+                1,
+                20,
+                128,
+                128
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5,
+                20,
+                256,
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/tos_error/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "model",
+                "year",
+                "y",
+                "x"
+            ],
+            "coordinates": "spatial_ref"
+        },
+        "1/x/.zarray": {
+            "chunks": [
+                256
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/x/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "x"
+            ]
+        },
+        "1/y/.zarray": {
+            "chunks": [
+                256
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<f4",
+            "fill_value": 9.969209968386869e+36,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                256
+            ],
+            "zarr_format": 2
+        },
+        "1/y/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "y"
+            ]
+        },
+        "1/year/.zarray": {
+            "chunks": [
+                20
+            ],
+            "compressor": {
+                "id": "zlib",
+                "level": 1
+            },
+            "dtype": "<i4",
+            "fill_value": -2147483647,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                20
+            ],
+            "zarr_format": 2
+        },
+        "1/year/.zattrs": {
+            "_ARRAY_DIMENSIONS": [
+                "year"
+            ]
+        }
+    },
+    "zarr_consolidated_format": 1
+}

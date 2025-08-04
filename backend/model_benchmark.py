@@ -30,7 +30,8 @@ def main(
     )
 
     logger.info("Reading model data")
-    model_ds = data_finder.load_model_ds()
+    ensemble_mean = False if "crps" in metric else True        
+    model_ds = data_finder.load_model_ds(ensemble_mean=ensemble_mean)
     logger.info("Reading model cell area data")
     fx_ds = data_finder.load_cell_area_ds()
     logger.info("Reading observations")
@@ -90,8 +91,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--metric",
         required=True,
-        choices=["zonal_mean_rmse", "spatial_rmse", "temporal_rmse", "zonal_mean_mae", "crps_ensemble_weighted"],
-        help="Metric to calculate. Must be a member of the MetricCalculation class. For CRPS, use 'crps_ensemble_weighted' (spatially weighted mean CRPS ensemble score).",
+        choices=["zonal_mean_rmse",  "zonal_mean_mae",  "zonal_mean_crps", "spatial_rmse", "spatial_mae", "spatial_crps", "temporal_rmse"],
+        help="Metric to calculate. Must be a member of the MetricCalculation class.",
     )
     parser.add_argument(
         "--adjustment",

@@ -73,7 +73,7 @@ CMIP6_MODEL_INSTITUTIONS = {
 OBSERVATION_DATA_SPECS = {
     "tas": {
         "nasa_airs": {
-            "cloud_path": "gs://climatebench/observations/preprocessed/tas/tas_nasa_airs.zarr",
+            "cloud_path": "gs://climatebench/observations/tas_nasa_airs.zarr",
             "local_path": "observational_data/tas_nasa_airs.zarr",
             "wget_file_list": "observational_data/subset_AIRS3STM_7.0_20250521_202757_.txt",
             "source_var_name": "SurfAirTemp_A",
@@ -82,7 +82,7 @@ OBSERVATION_DATA_SPECS = {
             "units": "K",
         },
         "HadCRUT5": {
-            "cloud_path": "gs://climatebench/observations/preprocessed/tas/tas_HadCRUT5.zarr",
+            "cloud_path": "gs://climatebench/observations/tas_HadCRUT5.zarr",
             "local_path": "observational_data/tas_HadCRUT5.zarr",
             "download_url": "https://www.metoffice.gov.uk/hadobs/hadcrut5/data/HadCRUT.5.0.2.0/analysis/HadCRUT.5.0.2.0.analysis.anomalies.ensemble_mean.nc",
             "climatology_url": "https://crudata.uea.ac.uk/cru/data/temperature/absolute_v5.nc",
@@ -93,7 +93,7 @@ OBSERVATION_DATA_SPECS = {
             "units": "K",
         },
         "HadCRUT5_error": {
-            "cloud_path": "gs://climatebench/observations/preprocessed/tas/tas_HadCRUT5_error.zarr",
+            "cloud_path": "gs://climatebench/observations/tas_HadCRUT5_error.zarr",
             "local_path": "observational_data/tas_HadCRUT5_error.zarr",
             "download_url": "https://www.metoffice.gov.uk/hadobs/hadcrut5/data/HadCRUT.5.0.2.0/non-infilled/HadCRUT.5.0.2.0.uncorrelated.nc",
             "source_var_name": "tas_unc",
@@ -104,7 +104,7 @@ OBSERVATION_DATA_SPECS = {
     },
     "pr": {
         "noaa_gpcp": {
-            "cloud_path": "gs://climatebench/observations/preprocessed/pr/pr_noaa_gpcp.zarr",
+            "cloud_path": "gs://climatebench/observations/pr_noaa_gpcp.zarr",
             "local_path": "observational_data/pr_noaa_gpcp.zarr",
             "download_url": "https://downloads.psl.noaa.gov/Datasets/gpcp/precip.mon.mean.nc",
             "source_var_name": "precip",
@@ -113,7 +113,7 @@ OBSERVATION_DATA_SPECS = {
             "units": "kg m-2 s-1",
         },
         "noaa_gpcp_error": {
-            "cloud_path": "gs://climatebench/observations/preprocessed/pr/pr_noaa_gpcp_error.zarr",
+            "cloud_path": "gs://climatebench/observations/pr_noaa_gpcp_error.zarr",
             "local_path": "observational_data/pr_noaa_gpcp_error.zarr",
             "download_url": "https://downloads.psl.noaa.gov/Datasets/gpcp/precip.mon.mean.error.nc",
             "source_var_name": "precip",
@@ -124,7 +124,7 @@ OBSERVATION_DATA_SPECS = {
     },
     "tos": {
         "noaa_oisst": {
-            "cloud_path": "gs://climatebench/observations/preprocessed/tos/tos_noaa_oisst.zarr",
+            "cloud_path": "gs://climatebench/observations/tos_noaa_oisst.zarr",
             "local_path": "observational_data/tos_noaa_oisst.zarr",
             "download_url": "https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.mon.mean.nc",
             "source_var_name": "sst",
@@ -135,7 +135,7 @@ OBSERVATION_DATA_SPECS = {
     },
     "clt": {
         "nasa_modis": {
-            "cloud_path": "gs://climatebench/observations/preprocessed/clt/clt_nasa_modis.zarr",
+            "cloud_path": "gs://climatebench/observations/clt_nasa_modis.zarr",
             "local_path": "observational_data/clt_nasa_modis.zarr",
             "gee_image_collection": "MODIS/061/MOD08_M3",
             "source_var_name": "Cloud_Fraction_Mean_Mean",
@@ -146,7 +146,7 @@ OBSERVATION_DATA_SPECS = {
     },
     "od550aer": {
         "nasa_modis": {
-            "cloud_path": "gs://climatebench/observations/preprocessed/od550aer/od550aer_nasa_modis.zarr",
+            "cloud_path": "gs://climatebench/observations/od550aer_nasa_modis.zarr",
             "local_path": "observational_data/od550aer_nasa_modis.zarr",
             "gee_image_collection": "MODIS/061/MOD08_M3",
             "source_var_name": "Aerosol_Optical_Depth_Land_Ocean_Mean_Mean",

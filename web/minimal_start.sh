@@ -10,7 +10,7 @@ check_port() {
   lsof -i :$1 >/dev/null 2>&1
 }
 
-# Start the map backend server (map_server.py in backend/)
+# Start the map backend server (data_server.py in backend/)
 echo "Starting map backend server on port 8000..."
 cd backend
 if is_conda_env_active; then

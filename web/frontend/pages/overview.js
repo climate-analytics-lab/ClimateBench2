@@ -1,18 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import Papa from 'papaparse';
 
-// Helper to parse CSV text into array of objects
-function parseCSV(text) {
-  const lines = text.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim());
-  return lines.slice(1).map(line => {
-    const values = line.split(',');
-    const obj = {};
-    headers.forEach((h, i) => {
-      obj[h] = values[i];
-    });
-    return obj;
-  });
-}
+// Using Papa Parse for more robust CSV parsing
 
 const variableOptions = [
   { value: 'tas', label: 'Temperature (K)' },
@@ -53,7 +42,6 @@ const sortOptions = [
 
 const futurePeriod = 'SSP2-4.5';
 const futureLabel = '2015-2024';
-const csvUrl = 'http://localhost:8000/public/benchmark_results.csv';
 
 const Overview = () => {
   const [selectedVariable, setSelectedVariable] = useState('tas');
@@ -62,23 +50,41 @@ const Overview = () => {
   const [selectedRegion, setSelectedRegion] = useState('global');
   const [sortBy, setSortBy] = useState('future');
   const [tableData, setTableData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Load CSV data on component mount
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    fetch(csvUrl)
-      .then(res => res.text())
-      .then(text => {
-        setTableData(parseCSV(text));
-        setLoading(false);
-      })
-      .catch(err => {
-        setError('Failed to load zonal mean RMSE data');
-        setLoading(false);
-      });
+    const loadData = async () => {
+      setError(null);
+      try {
+        const response = await fetch('/benchmark_results.csv');
+        if (!response.ok) throw new Error('Failed to load CSV file');
+        const csvText = await response.text();
+        
+        // Parse CSV using Papa Parse
+        const parseResult = Papa.parse(csvText, {
+          header: true,
+          skipEmptyLines: true,
+          transformHeader: (header) => header.trim()
+        });
+        
+        if (parseResult.errors.length > 0) {
+          throw new Error('CSV parsing error: ' + parseResult.errors[0].message);
+        }
+        
+        setTableData(parseResult.data);
+      } catch (err) {
+        setError('Failed to load benchmark data: ' + err.message);
+      }
+    };
+    
+    loadData();
   }, []);
+
+  // Simple handler for dropdown changes
+  const handleSelectionChange = (setter, value) => {
+    setter(value);
+  };
 
   const filtered = tableData.filter(
     d => d.variable === selectedVariable && d.metric === selectedMetric && d.region === selectedRegion
@@ -160,7 +166,7 @@ const Overview = () => {
             <select
               className="widget-select"
               value={selectedVariable}
-              onChange={e => setSelectedVariable(e.target.value)}
+              onChange={e => handleSelectionChange(setSelectedVariable, e.target.value)}
             >
               {variableOptions.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -172,7 +178,7 @@ const Overview = () => {
             <select
               className="widget-select"
               value={selectedMetric}
-              onChange={e => setSelectedMetric(e.target.value)}
+              onChange={e => handleSelectionChange(setSelectedMetric, e.target.value)}
             >
               {metricOptions.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -184,7 +190,7 @@ const Overview = () => {
             <select
               className="widget-select"
               value={selectedPeriod}
-              onChange={e => setSelectedPeriod(e.target.value)}
+              onChange={e => handleSelectionChange(setSelectedPeriod, e.target.value)}
             >
               {periodOptions.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -196,7 +202,7 @@ const Overview = () => {
             <select
               className="widget-select"
               value={selectedRegion}
-              onChange={e => setSelectedRegion(e.target.value)}
+              onChange={e => handleSelectionChange(setSelectedRegion, e.target.value)}
             >
               {regionOptions.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -208,7 +214,7 @@ const Overview = () => {
             <select
               className="widget-select"
               value={sortBy}
-              onChange={e => setSortBy(e.target.value)}
+              onChange={e => handleSelectionChange(setSortBy, e.target.value)}
             >
               {sortOptions.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -216,17 +222,13 @@ const Overview = () => {
             </select>
           </label>
         </div>
-        {loading && (
-          <div className="loading" role="status" aria-live="polite">
-            <span>Loading zonal mean RMSE data...</span>
-          </div>
-        )}
         {error && (
-          <div className="error" role="alert">
+          <div className="error" role="alert" style={{ margin: '20px 0' }}>
             <strong>Error:</strong> {error}
           </div>
         )}
-        {!loading && !error && (
+        
+        {!error && (
           <div className="table-container">
             <table 
               className="models-table" 

@@ -48,7 +48,9 @@
 }
 
 .App .main-content .overview .models-table th:nth-child(3),
-.App .main-content .overview .models-table th:nth-child(4) {
+.App .main-content .overview .models-table th:nth-child(4),
+.App .main-content .overview .models-table th:nth-child(5),
+.App .main-content .overview .models-table th:nth-child(6) {
     text-align: right;
     width: 180px;
     font-size: 12px;
@@ -80,7 +82,9 @@
 }
 
 .App .main-content .overview .models-table td:nth-child(3),
-.App .main-content .overview .models-table td:nth-child(4) {
+.App .main-content .overview .models-table td:nth-child(4),
+.App .main-content .overview .models-table td:nth-child(5),
+.App .main-content .overview .models-table td:nth-child(6) {
     text-align: right;
     font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
     font-size: 13px;
@@ -262,7 +266,9 @@
     }
     
     .App .main-content .overview .models-table th:nth-child(3),
-    .App .main-content .overview .models-table th:nth-child(4) {
+    .App .main-content .overview .models-table th:nth-child(4),
+    .App .main-content .overview .models-table th:nth-child(5),
+    .App .main-content .overview .models-table th:nth-child(6) {
         width: 140px;
     }
     
@@ -271,7 +277,9 @@
     }
     
     .App .main-content .overview .models-table td:nth-child(3),
-    .App .main-content .overview .models-table td:nth-child(4) {
+    .App .main-content .overview .models-table td:nth-child(4),
+    .App .main-content .overview .models-table td:nth-child(5),
+    .App .main-content .overview .models-table td:nth-child(6) {
         width: 140px;
         font-size: 12px;
     }
@@ -296,7 +304,9 @@
     }
     
     .App .main-content .overview .models-table th:nth-child(3),
-    .App .main-content .overview .models-table th:nth-child(4) {
+    .App .main-content .overview .models-table th:nth-child(4),
+    .App .main-content .overview .models-table th:nth-child(5),
+    .App .main-content .overview .models-table th:nth-child(6) {
         width: 120px;
     }
     
@@ -305,7 +315,9 @@
     }
     
     .App .main-content .overview .models-table td:nth-child(3),
-    .App .main-content .overview .models-table td:nth-child(4) {
+    .App .main-content .overview .models-table td:nth-child(4),
+    .App .main-content .overview .models-table td:nth-child(5),
+    .App .main-content .overview .models-table td:nth-child(6) {
         width: 120px;
         font-size: 11px;
     }

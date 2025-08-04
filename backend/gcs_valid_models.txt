@@ -1,0 +1,18 @@
+# Models with ALL variables and ALL ensemble members (GCS bucket):
+# Bucket: gs://cmip6/CMIP6/ScenarioMIP
+FGOALS-f3-L
+FGOALS-g3
+CanESM5
+ACCESS-ESM1-5
+ACCESS-CM2
+EC-Earth3-Veg
+EC-Earth3-Veg-LR
+FIO-ESM-2-0
+IPSL-CM6A-LR
+MIROC6
+MPI-ESM1-2-LR
+MRI-ESM2-0
+CESM2
+CESM2-WACCM
+NorESM2-LM
+GFDL-ESM4

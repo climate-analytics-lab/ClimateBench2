@@ -15,11 +15,20 @@ body {
   background-color: #fff;
 }
 
-/* App container */
+html, body {
+  min-height: 100vh;
+  height: auto;
+  width: 100vw;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .App {
   min-height: 100vh;
+  height: auto;
   display: flex;
   flex-direction: column;
+  overflow: visible;
 }
 
 /* Container */
@@ -29,10 +38,16 @@ body {
   padding: 0 20px;
 }
 
-/* Main content */
 .main-content {
   padding: 40px 0;
+  min-height: 100vh;
+  height: auto;
   flex: 1;
+  overflow: visible;
+}
+
+.map-page {
+  padding: 0 !important;
 }
 
 /* Section styles */

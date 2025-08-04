@@ -1,0 +1,29 @@
+{
+    "multiscales": [
+        {
+            "datasets": [
+                {
+                    "crs": "EPSG:3857",
+                    "level": 1,
+                    "path": "."
+                }
+            ],
+            "metadata": {
+                "args": [],
+                "kwargs": {
+                    "method": "bilinear",
+                    "pixels_per_tile": 128,
+                    "projection": "web-mercator",
+                    "regridder_apply_kws": null,
+                    "regridder_kws": {
+                        "periodic": true
+                    }
+                },
+                "method": "pyramid_regrid",
+                "version": "0.4.0"
+            },
+            "type": "reduce"
+        }
+    ],
+    "regrid_method": "bilinear"
+}

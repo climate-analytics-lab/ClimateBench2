@@ -1,0 +1,37 @@
+{
+    "multiscales": [
+        {
+            "datasets": [
+                {
+                    "crs": "EPSG:3857",
+                    "level": 0,
+                    "path": "0",
+                    "pixels_per_tile": 128
+                },
+                {
+                    "crs": "EPSG:3857",
+                    "level": 1,
+                    "path": "1",
+                    "pixels_per_tile": 128
+                }
+            ],
+            "metadata": {
+                "args": [],
+                "kwargs": {
+                    "method": "bilinear",
+                    "pixels_per_tile": 128,
+                    "projection": "web-mercator",
+                    "regridder_apply_kws": null,
+                    "regridder_kws": {
+                        "periodic": true
+                    }
+                },
+                "method": "pyramid_regrid",
+                "version": "0.4.0"
+            },
+            "type": "reduce"
+        }
+    ],
+    "title": "multiscale data pyramid",
+    "version": "0.4.0"
+}

@@ -1,156 +1,164 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
-const Plot = dynamic(() => import('react-plotly.js'), { ssr: false });
-import { fetchProbabilisticData } from '../services/api';
+import Papa from 'papaparse';
+
+// Dynamically import Plot with SSR disabled to prevent "self is not defined" error
+const Plot = dynamic(() => import('react-plotly.js'), { 
+  ssr: false,
+  loading: () => <div className="loading">Loading chart...</div>
+});
+
+
 
 const ProbabilisticScores = () => {
   const [widgets, setWidgets] = useState({
-    variable: 'pr',
-    metric: 'crps',
-    level: 'surface',
+    variable: 'tas',
     region: 'global',
-    year: '2020',
-    resolution: 'low'
+    metric: 'MAE'
   });
-  
-  const [chartData, setChartData] = useState([]);
-  const [chartLayout, setChartLayout] = useState({});
+
+  const [plotData, setPlotData] = useState([]);
+  const [plotLayout, setPlotLayout] = useState({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [modelNames, setModelNames] = useState([]);
+  const [error, setError] = useState('');
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
-
-  const chartContainerRef = useRef(null);
-
-  const capitalize = (str) => {
-    return str.charAt(0).toUpperCase() + str.slice(1);
-  };
-
-  const fetchAndPlotProbabilisticData = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const result = await fetchProbabilisticData(
-        widgets.variable,
-        widgets.metric,
-        widgets.level,
-        widgets.region,
-        widgets.year,
-        widgets.resolution
-      );
-
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-
-      const data = result;
-      const observedColor = '#4285F4'; // Google blue
-      const modelColor = '#9AA0A6'; // Google grey
-
-      const traces = [
-        {
-          x: data.time,
-          y: data[widgets.variable],
-          type: "scatter",
-          mode: "lines",
-          name: "Observed",
-          line: { 
-            width: 4, 
-            color: observedColor
-          },
-          hovertemplate: '<b>Observed</b><br>' +
-                        'Time: %{x}<br>' +
-                        'Value: %{y:.3f}<br>' +
-                        '<extra></extra>',
-          hoverlabel: {
-            bgcolor: observedColor,
-            font: { color: 'white', size: 12 }
-          }
-        },
-      ];
-
-      if (data.predicted) {
-        Object.entries(data.predicted).forEach(([modelName, predData], index) => {
-          traces.push({
-            x: predData.time,
-            y: predData.values,
-            type: "scatter",
-            mode: "lines",
-            name: modelName,
-            line: {
-              width: 2,
-              color: modelColor,
-              dash: 'dot',
-              shape: 'spline'
-            },
-            opacity: 0.3,
-            hovertemplate: '<b>' + modelName + '</b><br>' +
-                          'Time: %{x}<br>' +
-                          'Predicted: %{y:.3f}<br>' +
-                          '<extra></extra>',
-            hoverlabel: {
-              bgcolor: modelColor,
-              font: { color: 'white', size: 11 }
-            }
-          });
-        });
-      }
-
-      setChartData(traces);
-      
-      // Store model names for legend
-      if (data.predicted) {
-        setModelNames(Object.keys(data.predicted));
-      }
-      
-    } catch (err) {
-      console.error("Failed to fetch probabilistic data:", err);
-      setError('Failed to load probabilistic data');
-    } finally {
-      setLoading(false);
-    }
-  }, [widgets.variable, widgets.metric, widgets.level, widgets.region, widgets.year, widgets.resolution]);
-
-  const updateChart = useCallback(() => {
-    const variable = widgets.variable.charAt(0).toUpperCase() + widgets.variable.slice(1);
-    const metric = widgets.metric.toUpperCase();
-    const level = widgets.level === "surface" ? "Surface" : `${widgets.level} hPa`;
-    const region = widgets.region.charAt(0).toUpperCase() + widgets.region.slice(1).replace(/_/g, " ");
-    const year = widgets.year;
-
-    setChartLayout(layout => ({
-      ...layout,
-      title: {
-        text: `${metric} for ${variable} at ${level} - ${region} (${year})`,
-        font: { size: 20, family: "Arial" },
-      }
-    }));
-  }, [widgets.variable, widgets.metric, widgets.level, widgets.region, widgets.year]);
-
-  const handleWidgetChange = (widgetName, value) => {
+  // Debounced handler to prevent rapid changes
+  const handleWidgetChange = useCallback((widgetName, value) => {
+    setIsTransitioning(true);
     setWidgets(prev => ({
       ...prev,
       [widgetName]: value
     }));
+  }, []);
+
+  // Debounced effect to prevent rapid API calls
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      fetchTimeSeriesData();
+    }, 300); // 300ms delay
+
+    return () => clearTimeout(timeoutId);
+  }, [widgets.variable, widgets.region, widgets.metric]);
+
+  const fetchTimeSeriesData = async () => {
+    if (!isTransitioning) {
+      setLoading(true);
+    }
+    setError('');
+    try {
+      // Choose the appropriate CSV file based on metric
+      const csvFile = widgets.metric === 'CRPS' 
+        ? '/crps_benchmark_results.csv' 
+        : '/benchmark_results_time_series.csv';
+      
+      // Load CSV file directly from frontend public directory
+      const response = await fetch(csvFile);
+      if (!response.ok) throw new Error('Failed to load CSV file');
+      const csvText = await response.text();
+      
+      // Parse CSV using Papa Parse
+      const parseResult = Papa.parse(csvText, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (header) => header.trim()
+      });
+      
+      if (parseResult.errors.length > 0) {
+        throw new Error('CSV parsing error: ' + parseResult.errors[0].message);
+      }
+      
+      const csvData = parseResult.data;
+      
+              // Filter data based on selected variable and metric
+        const filteredData = widgets.metric === 'CRPS'
+          ? csvData.filter(row => 
+              row.variable === widgets.variable && 
+              row.metric === 'CRPS'
+            )
+          : csvData.filter(row => 
+              row.variable === widgets.variable && 
+              row.metric === widgets.metric
+            );
+
+      // Group data by model
+      const modelGroups = {};
+      filteredData.forEach(row => {
+        const model = row.model;
+        const regionValue = row[widgets.region]; // Get value for selected region
+        
+        if (!modelGroups[model]) {
+          modelGroups[model] = [];
+        }
+        
+        if (regionValue && !isNaN(parseFloat(regionValue))) {
+          modelGroups[model].push({
+            timestamp: row.time,
+            value: parseFloat(regionValue)
+          });
+        }
+      });
+
+      // Create a trace for each model
+      const traces = Object.entries(modelGroups).map(([model, modelData], index) => {
+        // Sort by timestamp
+        const sortedData = modelData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        
+        // Define Google blue color variations for different models
+        const colors = [
+          '#4285F4', '#1a73e8', '#1967d2', '#1557b0', '#174ea6',
+          '#5094ed', '#6ba6f7', '#8ab4f8', '#aecbfa', '#c8d7fc',
+          '#2d5aa0', '#1c4587'
+        ];
+        
+        return {
+          x: sortedData.map(d => d.timestamp),
+          y: sortedData.map(d => d.value),
+          type: 'scatter',
+          mode: 'lines',
+          name: model,
+          line: { 
+            color: colors[index % colors.length],
+            width: 2
+          }
+        };
+      });
+
+      setPlotData(traces);
+
+      setPlotLayout({
+        title: `${widgets.metric} Time Series for ${widgets.variable} (${widgets.region})`,
+        xaxis: { title: 'Time' },
+        yaxis: { title: `${widgets.metric} for ${widgets.variable}` },
+        legend: {
+          orientation: 'h',
+          x: 0,
+          y: -0.2,
+          xanchor: 'left',
+          yanchor: 'top',
+          bgcolor: 'rgba(255,255,255,0.8)',
+          bordercolor: '#e5e7eb',
+          borderwidth: 1,
+          font: { size: 11 }
+        },
+        margin: { t: 40, b: 80 }
+      });
+    } catch (err) {
+      setError(err.message);
+      setPlotData([]);
+    } finally {
+      setLoading(false);
+      setIsTransitioning(false);
+    }
   };
 
-  useEffect(() => {
-    fetchAndPlotProbabilisticData();
-    updateChart();
-  }, [fetchAndPlotProbabilisticData, updateChart]);
+
 
   return (
     <div className="main-content probabilistic-scores">
       <h2 className="section-title">Probabilistic Scores</h2>
-
-      <p>
-        This page shows probabilistic forecast evaluation metrics for ensemble weather prediction models. 
-        Probabilistic forecasts provide uncertainty estimates alongside point predictions, making them crucial 
-        for decision-making in weather-sensitive applications.
-      </p>
-
+      <p>This page shows climate model evaluation metrics comparing predictions with observations. You can select between MAE (Mean Absolute Error), RMSE (Root Mean Square Error), and CRPS (Continuous Ranked Probability Score) to analyze model performance across different variables and regions over time. CRPS data is loaded from dedicated benchmark results.</p>
+      
       <div className="widget-menu">
         <div className="widget-row">
           <div className="widget-group">
@@ -161,44 +169,14 @@ const ProbabilisticScores = () => {
               value={widgets.variable}
               onChange={(e) => handleWidgetChange('variable', e.target.value)}
             >
+              <option value="tas">Air Temperature (tas)</option>
+              <option value="pr">Precipitation (pr)</option>
               <option value="tos">Sea Surface Temperature (tos)</option>
               <option value="clt">Cloud Cover (clt)</option>
-              <option value="pr">Precipitation (pr)</option>
-              <option value="tas">Air Temperature (tas)</option>
-              <option value="areacello">Ocean Grid Cell Area (areacello)</option>
               <option value="od550aer">Aerosol Optical Depth (od550aer)</option>
-              <option value="areacella">Atmospheric Grid Cell Area (areacella)</option>
             </select>
           </div>
-
-          <div className="widget-group">
-            <label htmlFor="metric-select">Metric</label>
-            <select 
-              id="metric-select" 
-              className="widget-select"
-              value={widgets.metric}
-              onChange={(e) => handleWidgetChange('metric', e.target.value)}
-            >
-              <option value="crps">Continuous Ranked Probability Score (CRPS)</option>
-              <option value="reliability">Reliability</option>
-              <option value="sharpness">Sharpness</option>
-            </select>
-          </div>
-
-          <div className="widget-group">
-            <label htmlFor="level-select">Level</label>
-            <select 
-              id="level-select" 
-              className="widget-select"
-              value={widgets.level}
-              onChange={(e) => handleWidgetChange('level', e.target.value)}
-            >
-              <option value="surface">Surface</option>
-              <option value="500">500 hPa</option>
-              <option value="850">850 hPa</option>
-            </select>
-          </div>
-
+          
           <div className="widget-group">
             <label htmlFor="region-select">Region</label>
             <select 
@@ -208,136 +186,100 @@ const ProbabilisticScores = () => {
               onChange={(e) => handleWidgetChange('region', e.target.value)}
             >
               <option value="global">Global</option>
-              <option value="tropics">Tropics (20°S–20°N)</option>
-              <option value="mid_latitudes">Mid-latitudes (20°–60°)</option>
-              <option value="polar">Polar (60°–90°)</option>
+              <option value="tropics">Tropics</option>
+              <option value="northern_hemisphere">Northern Hemisphere</option>
+              <option value="southern_hemisphere">Southern Hemisphere</option>
             </select>
           </div>
-
+          
           <div className="widget-group">
-            <label htmlFor="year-select">Year</label>
+            <label htmlFor="metric-select">Metric</label>
             <select 
-              id="year-select" 
+              id="metric-select" 
               className="widget-select"
-              value={widgets.year}
-              onChange={(e) => handleWidgetChange('year', e.target.value)}
+              value={widgets.metric}
+              onChange={(e) => handleWidgetChange('metric', e.target.value)}
             >
-              <option value="2020">2020</option>
-              <option value="2021">2021</option>
-              <option value="2022">2022</option>
-              <option value="2023">2023</option>
-            </select>
-          </div>
-
-          <div className="widget-group">
-            <label htmlFor="resolution-select">Resolution</label>
-            <select 
-              id="resolution-select" 
-              className="widget-select"
-              value={widgets.resolution}
-              onChange={(e) => handleWidgetChange('resolution', e.target.value)}
-            >
-              <option value="low">Low (1°)</option>
-              <option value="medium">Medium (0.5°)</option>
-              <option value="high">High (0.25°)</option>
+              <option value="MAE">Mean Absolute Error (MAE)</option>
+              <option value="RMSE">Root Mean Square Error (RMSE)</option>
+              <option value="CRPS">Continuous Ranked Probability Score (CRPS)</option>
             </select>
           </div>
         </div>
       </div>
 
-
-
-      {loading && (
-        <div className="loading-container">
-          <div className="loading">Loading probabilistic data...</div>
+      {/* Chart Section */}
+      <div className="chart-section" style={{ position: 'relative', minHeight: '500px' }}>
+        {/* Loading overlay */}
+        {(loading || isTransitioning) && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(255, 255, 255, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10,
+            transition: 'opacity 0.3s ease'
+          }}>
+            <div className="loading">Loading data...</div>
+          </div>
+        )}
+        
+        {/* Error overlay */}
+        {error && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10
+          }}>
+            <div className="error">Error: {error}</div>
+          </div>
+        )}
+        
+        {/* Chart placeholder to maintain layout */}
+        <div style={{ 
+          width: '100%', 
+          height: '500px',
+          opacity: (loading || isTransitioning || error) ? 0.3 : 1,
+          transition: 'opacity 0.3s ease'
+        }}>
+          {plotData.length > 0 ? (
+            <Plot
+              data={plotData}
+              layout={plotLayout}
+              config={{
+                responsive: true,
+                displayModeBar: true,
+                modeBarButtonsToRemove: ['pan2d', 'lasso2d']
+              }}
+              style={{ width: '100%', height: '500px' }}
+            />
+          ) : !loading && !error && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100%',
+              color: '#666'
+            }}>
+              No data available for the selected variable.
+            </div>
+          )}
         </div>
-      )}
-
-      {error && (
-        <div className="error-container">
-          <div className="error">Error: {error}</div>
-        </div>
-      )}
-
-      {!loading && !error && (
-        <div className="chart-container" ref={chartContainerRef}>
-          <Plot
-            data={chartData}
-            layout={{
-              ...chartLayout,
-              width: chartContainerRef.current?.offsetWidth || 800,
-              height: 500,
-              margin: { l: 60, r: 60, t: 100, b: 80 },
-              paper_bgcolor: 'rgba(0,0,0,0)',
-              plot_bgcolor: 'rgba(0,0,0,0)',
-              xaxis: { 
-                title: { 
-                  text: 'Time',
-                  font: { size: 14, color: '#333' }
-                },
-                gridcolor: 'rgba(128,128,128,0.2)',
-                zeroline: false,
-                showline: true,
-                linecolor: '#ccc',
-                tickfont: { size: 12, color: '#666' }
-              },
-              yaxis: { 
-                title: { 
-                  text: capitalize(widgets.variable),
-                  font: { size: 14, color: '#333' }
-                },
-                gridcolor: 'rgba(128,128,128,0.2)',
-                zeroline: false,
-                showline: true,
-                linecolor: '#ccc',
-                tickfont: { size: 12, color: '#666' }
-              },
-              showlegend: true,
-              legend: {
-                orientation: 'h',
-                y: -0.25,
-                x: 0.5,
-                xanchor: 'center',
-                yanchor: 'top',
-                bgcolor: 'rgba(255,255,255,0.95)',
-                bordercolor: '#ddd',
-                borderwidth: 1,
-                font: { size: 10 },
-                itemsizing: 'constant',
-              },
-              hovermode: 'closest',
-              hoverdistance: 100,
-              spikedistance: 1000,
-              title: {
-                font: { 
-                  size: 18, 
-                  color: '#1a73e8',
-                  family: 'Arial, sans-serif'
-                },
-                x: 0.5,
-                xanchor: 'center'
-              }
-            }}
-            config={{ 
-              responsive: true,
-              displayModeBar: true,
-              modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d'],
-              displaylogo: false,
-              toImageButtonOptions: {
-                format: 'png',
-                filename: 'probabilistic_scores',
-                height: 500,
-                width: 800,
-                scale: 2
-              }
-            }}
-          />
-          
-
-        </div>
-      )}
+      </div>
     </div>
   );
 };
 
-export default ProbabilisticScores; 
+export default ProbabilisticScores;

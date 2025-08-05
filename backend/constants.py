@@ -145,6 +145,15 @@ OBSERVATION_DATA_SPECS = {
             "standard_name": "cloud_area_fraction",
             "units": "percent",
         },
+        "nasa_modis_error": {
+            "cloud_path": "gs://climatebench/observations/clt_nasa_modis_error.zarr",
+            "local_path": "observational_data/clt_nasa_modis_error.zarr",
+            "gee_image_collection": "MODIS/061/MOD08_M3",
+            "source_var_name": "Cloud_Fraction_Std_Deviation_Mean",
+            "long_name": "Total Cloud Cover Percentage",
+            "standard_name": "cloud_area_fraction",
+            "units": "percent",
+        },
     },
     "od550aer": {
         "nasa_modis": {

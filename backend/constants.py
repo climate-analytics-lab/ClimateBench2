@@ -1,4 +1,8 @@
-ENSEMBLE_MEMBERS = ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]#, "r4i1p1f1", "r5i1p1f1", "r6i1p1f1", "r7i1p1f1", "r8i1p1f1", "r9i1p1f1", "r10i1p1f1"]
+ENSEMBLE_MEMBERS = [
+    "r1i1p1f1",
+    "r2i1p1f1",
+    "r3i1p1f1",
+]  # , "r4i1p1f1", "r5i1p1f1", "r6i1p1f1", "r7i1p1f1", "r8i1p1f1", "r9i1p1f1", "r10i1p1f1"]
 VARIABLE_FREQUENCY_GROUP = {
     "tas": "Amon",
     "pr": "Amon",
@@ -128,7 +132,7 @@ OBSERVATION_DATA_SPECS = {
             "local_path": "observational_data/tos_noaa_oisst_error.zarr",
             "download_url": "https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.err.{}.nc",
             "download_multiple": True,
-            "file_date_range": [1981,2025],
+            "file_date_range": [1981, 2025],
             "source_var_name": "err",
             "long_name": "Sea Surface Temperature",
             "standard_name": "sea_surface_temperature",
@@ -164,6 +168,25 @@ OBSERVATION_DATA_SPECS = {
             "long_name": "Ambient Aerosol Optical Thickness at 550nm",
             "standard_name": "atmosphere_optical_thickness_due_to_ambient_aerosol_particles",
             "units": "NA",
+        },
+        "nasa_modis_error": {
+            "cloud_path": "gs://climatebench/observations/od550aer_nasa_modis_error.zarr",
+            "local_path": "observational_data/od550aer_nasa_modis_error.zarr",
+            "gee_image_collection": "MODIS/006/MOD44W",
+            "source_var_name": "water_mask",
+            "long_name": "Ambient Aerosol Optical Thickness at 550nm",
+            "standard_name": "atmosphere_optical_thickness_due_to_ambient_aerosol_particles",
+            "units": "NA",
+            "error_values": {
+                "land": {
+                    "absolute": 0.5,
+                    "relative": 0.15,
+                },
+                "ocean": {
+                    "absolute": 0.4,
+                    "relative": 0.1,
+                },
+            },
         },
     },
 }

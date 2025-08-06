@@ -47,13 +47,11 @@ class DownloadObservations:
             logger.info(f"downloading data from : {self.data_specs['download_url']}")
 
             if self.data_specs.get("download_multiple", False):
-                start_year = self.data_specs['file_date_range'][0]
-                end_year = self.data_specs['file_date_range'][1]
-                for year in range(start_year,end_year):
-                    download_url = self.data_specs['download_url'].format(year)
-                    temp_file_name = (
-                        f"{self.temp_dir}/{download_url.split('/')[-1]}"
-                    )
+                start_year = self.data_specs["file_date_range"][0]
+                end_year = self.data_specs["file_date_range"][1]
+                for year in range(start_year, end_year):
+                    download_url = self.data_specs["download_url"].format(year)
+                    temp_file_name = f"{self.temp_dir}/{download_url.split('/')[-1]}"
                     with requests.get(download_url, stream=True) as r:
                         r.raise_for_status()
                         with open(temp_file_name, "wb") as f:
@@ -63,7 +61,7 @@ class DownloadObservations:
                 ds = xr.open_mfdataset(f"{self.temp_dir}/*", chunks={}).sel(
                     time=slice(HIST_START_DATE, SSP_END_DATE)
                 )
-                ds = ds.resample(time='MS').mean()
+                ds = ds.resample(time="MS").mean()
             else:
                 self.temp_file_name = (
                     f"{self.temp_dir}/{self.data_specs['download_url'].split('/')[-1]}"
@@ -149,6 +147,39 @@ class DownloadObservations:
             self.data_specs["climatology_var_name"]
         ].attrs["units"]
 
+    def modis_od550aer_error_preprocess(self):
+        logger.info("creating error from land/water mask")
+        ds = self.ds_raw.isel(time=0).squeeze().drop_vars("time", errors="ignore")
+
+        err_da = ds[self.source_var_name].where(ds[self.source_var_name] == 0, 1).T
+        err_abs_da = err_da * self.data_specs["error_values"]["ocean"]["absolute"]
+        err_ds = err_abs_da.where(
+            err_abs_da != 0, self.data_specs["error_values"]["land"]["absolute"]
+        ).to_dataset(name="absolute_error")
+        err_rel_da = err_da * self.data_specs["error_values"]["ocean"]["relative"]
+        err_ds["relative_error"] = err_rel_da.where(
+            err_rel_da != 0, self.data_specs["error_values"]["land"]["relative"]
+        )
+
+        err_ds = err_ds.assign_coords(lon=(err_ds.lon % 360))
+        err_ds = err_ds.sortby("lon")
+
+        # read od550aer values
+        local_var_path = OBSERVATION_DATA_SPECS[self.variable]["nasa_modis"][
+            "local_path"
+        ]
+        if os.path.exists(local_var_path):
+            var_ds = xr.open_zarr(local_var_path, chunks={})
+        else:
+            var_ds = xr.open_zarr(
+                OBSERVATION_DATA_SPECS[self.variable]["nasa_modis"]["cloud_path"],
+                chunks={},
+            )
+
+        self.ds_raw = (
+            var_ds[self.variable] * err_ds["relative_error"] + err_ds["absolute_error"]
+        ).to_dataset(name=self.source_var_name)
+
     def unit_conversion(self, ds):
         if self.variable == "pr":
             logger.info("converting pr units to kg m-2 s-1")
@@ -161,7 +192,7 @@ class DownloadObservations:
         if self.variable == "tas":
             logger.info("converting tas units to K")
             ds[self.variable] = ds[self.variable] + 273.15
-        if self.variable == "od550aer":
+        if (self.variable == "od550aer") & ("error" not in self.source):
             logger.info("Scaling od550aer data by 0.001")
             ds[self.variable] = (
                 ds[self.variable] / 1000
@@ -213,6 +244,8 @@ def main(variable, source, save_to_cloud):
     downloader.download_raw_data()
     if source == "HadCRUT5":
         downloader.hadcrut5_anomaly_preprocess()
+    if (source == "nasa_modis_error") & (variable == "od550aer"):
+        downloader.modis_od550aer_error_preprocess()
     downloader.standardize_data()
     downloader.save_data(save_to_cloud=save_to_cloud)
     logger.info("Download complete")

@@ -270,7 +270,6 @@ def main(output_file: str = "crps_benchmark_results.csv", start_year: int = 2005
         df = pd.DataFrame(all_results)
         df.to_csv(output_file, index=False)
         logger.info(f"\n✅ Saved {len(all_results)} benchmark records to {output_file}")
-        logger.info(f"📊 Summary:")
         logger.info(f"  Models processed: {df['model'].nunique()}")
         logger.info(f"  Variables processed: {df['variable'].nunique()}")
         logger.info(f"  Regions: {df['region'].nunique()}")

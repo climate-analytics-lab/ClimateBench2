@@ -140,10 +140,17 @@ class DownloadObservations:
                 ds[self.variable] / 100
             )  # values should range 0 - 100 (units %)
         if self.variable == "tas":
-            logger.info("converting tas units to K")
-            ds[self.variable] = ds[self.variable] + 273.15
+            logger.info("converting tas units to degC")
+            # If data is in Kelvin, convert to Celsius
+            if ds[self.variable].attrs.get("units", "").upper() in ["K", "KELVIN"]:
+                ds[self.variable] = ds[self.variable] - 273.15
+        if self.variable == "tos":
+            logger.info("converting tos units to degC")
+            # If data is in Kelvin, convert to Celsius
+            if ds[self.variable].attrs.get("units", "").upper() in ["K", "KELVIN"]:
+                ds[self.variable] = ds[self.variable] - 273.15
         if self.variable == "od550aer":
-            logger.info("Scaling od550aer data by 0.001")
+            logger.info("Scaling od550aer data by 0.0000001")
             ds[self.variable] = (
                 ds[self.variable] / 1000
             )  # unitless values but range is ~0-5

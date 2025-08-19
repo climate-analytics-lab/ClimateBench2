@@ -12,18 +12,18 @@ const Plot = dynamic(() => import('react-plotly.js'), {
 
 const yearOptions = [2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024]
 const variableOptions = [
-  { value: 'tas', label: 'Temperature (K)' },
+  { value: 'tas', label: 'Temperature (°C)' },
   { value: 'pr', label: 'Precipitation (kg/(m2*s))' },
   { value: 'clt', label: 'Cloud Area Fraction (%)' },
   { value: 'od550aer', label: 'Aerosol Optical Depth at 550nm' },
-  { value: 'tos', label: 'Sea Surface Temperature (C)' },
+  { value: 'tos', label: 'Sea Surface Temperature (°C)' },
 ]
 const errorVariableOptions = [
-  { value: 'tas_error', label: 'Temperature (K)' },
+  { value: 'tas_error', label: 'Temperature (°C)' },
   { value: 'pr_error', label: 'Precipitation (kg/(m2*s))' },
   { value: 'clt_error', label: 'Cloud Area Fraction (%)' },
   { value: 'od550aer_error', label: 'Aerosol Optical Depth at 550nm' },
-  { value: 'tos_error', label: 'Sea Surface Temperature (C)' },
+  { value: 'tos_error', label: 'Sea Surface Temperature (°C)' },
 ]
 
 const modelOptions = [
@@ -44,22 +44,22 @@ const regionOptions = [
 
 // Time series variable options (without error versions)
 const timeseriesVariableOptions = [
-  { value: 'tas', label: 'Temperature (K)' },
+  { value: 'tas', label: 'Temperature (°C)' },
   { value: 'pr', label: 'Precipitation (kg/(m2*s))' },
   { value: 'clt', label: 'Cloud Area Fraction (%)' },
   { value: 'od550aer', label: 'Aerosol Optical Depth at 550nm' },
-  { value: 'tos', label: 'Sea Surface Temperature (C)' },
+  { value: 'tos', label: 'Sea Surface Temperature (°C)' },
 ]
 
 // Define clim ranges for each variable
 const climOptions = {
-  tas: [250, 300],
-  pr: [0, 0.0001],
+  tas: [-25, 35],
+  pr: [0, 0.00000001],
   clt: [0, 100],
   od550aer: [0, 1],
-  tos: [0, 30],
+  tos: [-2, 32],
   tas_error: [-10, 10],
-  pr_error: [-0.00005, 0.00005],
+  pr_error: [-0.000000005, 0.000000005],
   clt_error: [-20, 20],
   od550aer_error: [-0.5, 0.5],
   tos_error: [-5, 5],

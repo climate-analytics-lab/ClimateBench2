@@ -1,6 +1,6 @@
 {
   "name": "simple-map-demo",
-  "version": "1.0.0",
+  "version": "1.0.00000",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -12,10 +12,10 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@carbonplan/colormaps": "^2.0.0",
+    "@carbonplan/colormaps": "^2.0.00000",
     "@carbonplan/maps": "^2.0.2",
-    "@carbonplan/theme": "^7.0.0",
-    "axios": "^1.10.0",
+    "@carbonplan/theme": "^7.0.00000",
+    "axios": "^1.10.00000",
     "next": "^11.1.0",
     "papaparse": "^5.5.3",
     "plotly.js-dist": "^3.0.1",

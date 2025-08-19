@@ -160,7 +160,7 @@ def sample_dataarrays():
 #         time_slice=slice("2000-01", "2000-12"),
 #         metric="bias_adjusted",
 #     )
-#     assert np.isclose(result, 0.0)
+#     assert np.isclose(result, 0.00000)
 
 
 # def test_anomaly_rmse(sample_dataarrays):

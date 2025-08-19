@@ -4,11 +4,11 @@ import Papa from 'papaparse';
 // Using Papa Parse for more robust CSV parsing
 
 const variableOptions = [
-  { value: 'tas', label: 'Temperature (K)' },
+  { value: 'tas', label: 'Temperature (°C)' },
   { value: 'pr', label: 'Precipitation (kg/(m2*s))' },
   { value: 'clt', label: 'Cloud Area Fraction (%)' },
   { value: 'od550aer', label: 'Aerosol Optical Depth at 550nm' },
-  { value: 'tos', label: 'Sea Surface Temperature (C)' },
+  { value: 'tos', label: 'Sea Surface Temperature (°C)' },
 ];
 
 const metricOptions = [

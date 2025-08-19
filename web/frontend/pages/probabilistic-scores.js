@@ -49,7 +49,7 @@ const ProbabilisticScores = () => {
     try {
       // Choose the appropriate CSV file based on metric
       const csvFile = widgets.metric === 'CRPS' 
-        ? '/crps_benchmark_results.csv' 
+        ? '/benchmark_results_crps_time_series.csv' 
         : '/benchmark_results_time_series.csv';
       
       // Load CSV file directly from frontend public directory
@@ -157,7 +157,7 @@ const ProbabilisticScores = () => {
   return (
     <div className="main-content probabilistic-scores">
       <h2 className="section-title">Probabilistic Scores</h2>
-      <p>This page shows climate model evaluation metrics comparing predictions with observations. You can select between MAE (Mean Absolute Error), RMSE (Root Mean Square Error), and CRPS (Continuous Ranked Probability Score) to analyze model performance across different variables and regions over time. CRPS data is loaded from dedicated benchmark results.</p>
+      <p>This page shows climate model evaluation metrics comparing predictions with observations. You can select between MAE (Mean Absolute Error), RMSE (Root Mean Square Error), and CRPS (Continuous Ranked Probability Score) to analyze model performance across different variables and regions over time. CRPS data is loaded from dedicated CRPS time series benchmark results.</p>
       
       <div className="widget-menu">
         <div className="widget-row">

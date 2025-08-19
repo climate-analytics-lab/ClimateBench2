@@ -49,8 +49,19 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
         rename_lat_lon["nav_lat"] = "lat"
     if ("nav_lon" in ds.dims) or ("nav_lon" in ds.variables):
         rename_lat_lon["nav_lon"] = "lon"
+    
+    # Only rename if the target names don't already exist to avoid conflicts
     if rename_lat_lon:
-        ds = ds.rename(rename_lat_lon)
+        # Check for conflicts
+        conflicts = []
+        for old_name, new_name in rename_lat_lon.items():
+            if new_name in ds.dims or new_name in ds.variables:
+                conflicts.append(f"{old_name} -> {new_name}")
+        
+        if conflicts:
+            logger.warning(f"Skipping coordinate renaming due to conflicts: {conflicts}")
+        else:
+            ds = ds.rename(rename_lat_lon)
     # atp, lat and lon should be dimensions if regular grid, or coordinates if curvlinear grid
     rename_dims = {}
     if "nlon" in ds.dims:
@@ -451,6 +462,10 @@ class DataFinder:
             time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
         )
         self.model_ds = model_ds
+        
+        # Convert temperature units to Celsius if needed
+        self.model_ds = self._convert_temperature_units(self.model_ds)
+        
         return self.model_ds
 
     def load_cell_area_ds(self) -> xr.DataArray:
@@ -488,6 +503,29 @@ class DataFinder:
             self.fx_ds = weights
         return self.fx_ds
 
+    def _convert_temperature_units(self, ds: xr.Dataset) -> xr.Dataset:
+        """Convert temperature variables from Kelvin to Celsius if needed.
+        
+        Args:
+            ds: Dataset containing temperature variables
+            
+        Returns:
+            Dataset with temperature variables converted to Celsius
+        """
+        if self.variable in ["tas", "tos"]:
+            # Get the main variable from the dataset
+            var_name = self.variable if self.variable in ds.data_vars else list(ds.data_vars)[0]
+            
+            # Check if the variable has units attribute and is in Kelvin
+            if hasattr(ds[var_name], 'attrs') and 'units' in ds[var_name].attrs:
+                units = ds[var_name].attrs['units'].upper()
+                if units in ['K', 'KELVIN']:
+                    logger.info(f"Converting {self.variable} from Kelvin to Celsius")
+                    ds[var_name] = ds[var_name] - 273.15
+                    ds[var_name].attrs['units'] = 'degC'
+        
+        return ds
+
     def load_obs_ds(self) -> xr.Dataset:
         """Reads observational data from climatebench google cloud bucket. passes data through standardizer function.
 
@@ -505,9 +543,14 @@ class DataFinder:
             )
             obs_ds = standardize_dims(xr.open_zarr(self.obs_data_path_cloud))
 
-        return obs_ds.sel(
+        obs_ds = obs_ds.sel(
             time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
         )
+        
+        # Convert temperature units to Celsius if needed
+        obs_ds = self._convert_temperature_units(obs_ds)
+        
+        return obs_ds
 
 
 # little helper functions

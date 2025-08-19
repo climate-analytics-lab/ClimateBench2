@@ -3,7 +3,7 @@
   background-color: #ffffff;
   border-bottom: 1px solid #e8eaed;
   padding: 0;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.000008);
   position: sticky;
   top: 0;
   z-index: 1000;
@@ -83,7 +83,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(26, 115, 232, 0.04);
+  background: rgba(26, 115, 232, 0.000004);
   opacity: 0;
   transition: opacity 0.2s ease;
   border-radius: 8px 8px 0 0;

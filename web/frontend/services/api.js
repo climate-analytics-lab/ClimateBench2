@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-const OVERVIEW_API_BASE_URL = 'http://127.0.0.1:8001';  // RMSE data for overview
-const PROBABILISTIC_API_BASE_URL = 'http://127.0.0.1:8002';  // Probabilistic data
+const OVERVIEW_API_BASE_URL = 'http://127.0.00000.1:8001';  // RMSE data for overview
+const PROBABILISTIC_API_BASE_URL = 'http://127.0.00000.1:8002';  // Probabilistic data
 
 // Create axios instances with default config
 const overviewApiClient = axios.create({

@@ -110,6 +110,63 @@ This class is a WIP and will probably be updated. Doc strings are up-to-date so 
     - `overwrite()` This will delete all files in the path for the path constructed by the class. Works for local and cloud paths. 
 
 
+## crps_timeseries_generator.py
+This script generates CRPS (Continuous Ranked Probability Score) time series for climate models with regional calculations. It processes multiple model-variable combinations and outputs a CSV file with time series data for different regions.
+
+### Regional Calculations
+The script calculates CRPS for the following regions:
+- **Global**: 90°S to 90°N (full globe)
+- **Northern Hemisphere**: 0°N to 90°N
+- **Southern Hemisphere**: 90°S to 0°N  
+- **Tropics**: 23.5°S to 23.5°N
+
+Each region is calculated separately using the MetricCalculation class with appropriate latitude bounds, providing more accurate regional assessments than using global values.
+
+### Output Format
+The output CSV contains columns for:
+- `time`: Date in YYYY-MM-DD format
+- `model`: Model name
+- `variable`: Variable name (tas, pr, tos, clt, od550aer)
+- `global`: Global CRPS value
+- `northern_hemisphere`: Northern Hemisphere CRPS value
+- `southern_hemisphere`: Southern Hemisphere CRPS value
+- `tropics`: Tropical CRPS value
+- `metric`: Always "CRPS"
+
+### Usage
+```bash
+# Run with default settings (2005-2014, all models)
+python crps_timeseries_generator.py
+
+# Run in test mode (2 models, 2005-2007)
+python crps_timeseries_generator.py --test-mode
+
+# Custom time period
+python crps_timeseries_generator.py --start-year 2000 --end-year 2010
+
+# Custom output file
+python crps_timeseries_generator.py --output-file my_results.csv
+
+# Parallel processing with more workers
+python crps_timeseries_generator.py --workers 8
+```
+
+### Script Arguments
+- `--output-file`: Output CSV file path (default: benchmark_results_crps_time_series.csv)
+- `--start-year`: Start year for time series (default: 2005)
+- `--end-year`: End year for time series (default: 2014)
+- `--test-mode`: Run in test mode with limited models and time period
+- `--workers`: Number of parallel workers (default: 4)
+
+### Testing
+A test script is provided to verify regional calculations:
+```bash
+python test_regional_crps.py
+```
+
+This will test the regional CRPS functionality with a small subset of data to ensure calculations work correctly.
+
+
 ## Notes on environment setup
 All code in this folder should run using the backend_env in `env.yml`. This environment includes `gcsfs`, which will allow google cloud acces. You may also need to set up the google cloud cli and authenticate to access data in the climatebench bucket.
 - [Google cloud cli set up instructions](https://cloud.google.com/sdk/docs/install)

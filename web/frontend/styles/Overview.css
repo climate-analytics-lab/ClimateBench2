@@ -101,7 +101,7 @@
 .App .main-content .overview .models-table tbody tr:hover {
     background-color: #f8fafc;
     transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.000006);
 }
 
 .App .main-content .overview .models-table tbody tr:nth-child(even) {
@@ -201,7 +201,7 @@
 
 .App .main-content .overview #metric-select:hover {
     border-color: #1a73e8;
-    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.08);
+    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.000008);
 }
 
 .App .main-content .overview #metric-select:focus {
@@ -232,7 +232,7 @@
 
 .App .main-content .overview .widget-select:hover {
     border-color: #1a73e8;
-    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.08);
+    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.000008);
 }
 
 .App .main-content .overview .widget-select:focus {

@@ -79,7 +79,7 @@ OBSERVATION_DATA_SPECS = {
             "source_var_name": "SurfAirTemp_A",
             "long_name": "Near-Surface Air Temperature",
             "standard_name": "air_temperature",
-            "units": "K",
+            "units": "degC",
         },
         "HadCRUT5": {
             "cloud_path": "gs://climatebench/observations/tas_HadCRUT5.zarr",
@@ -90,7 +90,7 @@ OBSERVATION_DATA_SPECS = {
             "source_var_name": "tas_mean",
             "long_name": "Near-Surface Air Temperature",
             "standard_name": "air_temperature",
-            "units": "K",
+            "units": "degC",
         },
         "HadCRUT5_error": {
             "cloud_path": "gs://climatebench/observations/tas_HadCRUT5_error.zarr",
@@ -99,7 +99,7 @@ OBSERVATION_DATA_SPECS = {
             "source_var_name": "tas_unc",
             "long_name": "standard_uncertainty in blended air_temperature_anomaly over land with sea_water_temperature_anomaly",
             "standard_name": "tas_unc",
-            "units": "K",
+            "units": "degC",
         },
     },
     "pr": {

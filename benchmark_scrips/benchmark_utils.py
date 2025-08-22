@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import shutil
+import sys
 from csv import writer
 
 import dask.array as da
@@ -13,127 +14,18 @@ import xskillscore as xs
 from google.cloud import storage
 from pyesgf.search import SearchConnection
 
+sys.path.append("..")
+
 from constants import (
     CMIP6_MODEL_INSTITUTIONS,
     ENSEMBLE_MEMBERS,
     OBSERVATION_DATA_PATHS,
-    VARIABLE_FREQUENCY_GROUP,
     SSP_EXPERIMENT,
+    VARIABLE_FREQUENCY_GROUP,
 )
+from utils import standardize_dims
 
 logger = logging.getLogger(__name__)
-
-
-def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Dataset:
-    """Fixes common problems with xarray datasets
-
-    Args:
-        ds (xr.Dataset): Dataset with spatial and temporal dimensions
-        reset_coordinates (bool): Reset coordinates to regular grid. Default is False.
-
-    Returns:
-        xr.Dataset: Normalized dataset
-    """
-    # Rename dims if needed
-    # first rename lat/lon
-    rename_lat_lon = {}
-    if ("latitude" in ds.dims) or ("latitude" in ds.variables):
-        rename_lat_lon["latitude"] = "lat"
-    if ("longitude" in ds.dims) or ("longitude" in ds.variables):
-        rename_lat_lon["longitude"] = "lon"
-    if ("Latitude" in ds.dims) or ("Latitude" in ds.variables):
-        rename_lat_lon["Latitude"] = "lat"
-    if ("Longitude" in ds.dims) or ("Longitude" in ds.variables):
-        rename_lat_lon["Longitude"] = "lon"
-    if ("nav_lat" in ds.dims) or ("nav_lat" in ds.variables):
-        rename_lat_lon["nav_lat"] = "lat"
-    if ("nav_lon" in ds.dims) or ("nav_lon" in ds.variables):
-        rename_lat_lon["nav_lon"] = "lon"
-    if rename_lat_lon:
-        ds = ds.rename(rename_lat_lon)
-    # atp, lat and lon should be dimensions if regular grid, or coordinates if curvlinear grid
-    rename_dims = {}
-    if "nlon" in ds.dims:
-        rename_dims["nlon"] = "i"
-    if "nlat" in ds.dims:
-        rename_dims["nlat"] = "j"
-    if "x" in ds.dims:
-        rename_dims["x"] = "i" if "lon" in ds.variables else "lon"
-    if "y" in ds.dims:
-        rename_dims["y"] = "j" if "lat" in ds.variables else "lat"
-    if "datetime" in ds.dims:
-        rename_dims["datetime"] = "time"
-    if rename_dims:
-        ds = ds.rename(rename_dims)
-
-    # fix time
-    if "time" in ds.dims:
-        ds["time"] = pd.to_datetime(ds["time"].dt.strftime("%Y-%m-01"))
-        ds = ds.sortby("time")  # make sure its in the right order before slicing
-
-    # only if rectilinear grid (tos is curvelinear grid)
-    if (len(ds["lat"].dims) == 1) and (len(ds["lon"].dims) == 1):
-        # Shift longitudes
-        ds = ds.assign_coords(lon=(ds.lon % 360))
-        ds = ds.sortby("lon")
-
-        ds = ds.sortby("lat")
-
-        if reset_coorinates:
-            # fix coordinates
-            lat_len = len(ds.lat)
-            lon_len = len(ds.lon)
-            lat_res = 180 / lat_len
-            lon_res = 360 / lon_len
-            lats = np.arange(-90 + lat_res / 2, 90, lat_res)
-            lons = np.arange(lon_res / 2, 360, lon_res)
-            ds = ds.assign_coords({"lat": lats, "lon": lons})
-
-    else:
-        # check that lat is increaseing
-        sample_idx = 1
-        test_lats = ds["lat"].isel(i=sample_idx)
-        if test_lats[0] > test_lats[-1]:
-            ds = ds.assign_coords(j=ds["j"][::-1])
-            ds = ds.sortby("j")
-        test_lons = ds["lon"].isel(j=sample_idx)
-
-        # and that lon is 0 - 360
-        ds["lon"] = ds["lon"] % 360
-        if test_lons["lon"][0] != 0:
-            # for sorting purposes
-            ds = ds.assign_coords(i=test_lons["lon"].values)
-            ds = ds.sortby("i")
-            # reset to int array
-            ds = ds.assign_coords(i=np.arange(len(test_lons["lon"].values)))
-
-    return ds
-
-
-def build_zarr_store(var_name: str, dims_dict: dict, attributes: dict, store_path: str):
-    """Build the template for the zarr file that will be populated with data later on
-
-    Args:
-        var_name (str): Name of variable to save data as
-        dims_dict (dict): dictionairy with dimesion names as keys and dimension values as items
-        attributes (dict): dataset attribures
-        store_path (str): where to save data
-    """
-    array_size = []
-    chunk_size = []
-    for key, item in dims_dict.items():
-        array_size.append(len(item))
-        chunk_size.append(1) if key == "time" else chunk_size.append(-1)
-    data = da.zeros(array_size, chunks=(chunk_size))
-    # Build dataset
-    ds = xr.Dataset(
-        data_vars={var_name: (dims_dict.keys(), data)},
-        coords=dims_dict,
-    )
-    ds.attrs = attributes
-    ds.to_zarr(
-        store_path, compute=False, mode="w", consolidated=True
-    )  # save template, will write each model to its region slice
 
 
 def search_gcs(filters: dict, drop_older_versions: bool) -> pd.DataFrame:
@@ -391,7 +283,9 @@ class DataFinder:
 
         return ds
 
-    def load_ensemble_mean(self, mip: str, experiment: str, ensemble_mean: bool = True) -> xr.Dataset:
+    def load_ensemble_mean(
+        self, mip: str, experiment: str, ensemble_mean: bool = True
+    ) -> xr.Dataset:
         """Finds data for all ensemble members and returns the mean. Ensemble members based on constant.
 
         Args:
@@ -432,14 +326,18 @@ class DataFinder:
             xr.Dataset: Analysis ready climate model data. Ensemble mean combination of historical and projected datasets.
         """
         experiment = "historical" if self.mip == "CMIP" else SSP_EXPERIMENT
-        model_ds = self.load_ensemble_mean(mip=self.mip, experiment=experiment, ensemble_mean=ensemble_mean)
+        model_ds = self.load_ensemble_mean(
+            mip=self.mip, experiment=experiment, ensemble_mean=ensemble_mean
+        )
         if self.secondary_mip:
             # historical and projection meet at 2015. Some models overlap in 2015 so setting hard bounds to avoid downstream errors.
             model_ds = model_ds.sel(
                 time=slice(f"{self.start_year}-01-01", "2014-12-31")
             )
             second_model_ens_mean = self.load_ensemble_mean(
-                mip=self.secondary_mip, experiment=SSP_EXPERIMENT, ensemble_mean=ensemble_mean
+                mip=self.secondary_mip,
+                experiment=SSP_EXPERIMENT,
+                ensemble_mean=ensemble_mean,
             )
             model_ds = xr.concat(
                 [model_ds, second_model_ens_mean],
@@ -566,7 +464,9 @@ class MetricCalculation:
         self.model_zonal_mean = None
         self.obs_zonal_mean = None
 
-        self.spatial_dims = [x for x in self.model.dims if (x != "time") and (x != "ensemble")]
+        self.spatial_dims = [
+            x for x in self.model.dims if (x != "time") and (x != "ensemble")
+        ]
 
     def zonal_mean(self, ds: xr.Dataset):
         """Calculates zonal mean of model and observational datasets, weighted by the provided weights dataset
@@ -614,7 +514,7 @@ class MetricCalculation:
             keep_attrs=True,
             dim=["time"],
         ).values.tolist()
-    
+
     def zonal_mean_mae(self, adjustment: str = None) -> float:
         """First calculates the zonal mean of the model and observations datasets, then calculates the MAE of the two time series.
         Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
@@ -646,7 +546,7 @@ class MetricCalculation:
             keep_attrs=True,
             dim=["time"],
         ).values.tolist()
-    
+
     def zonal_mean_crps(self, adjustment: str = None) -> float:
         """First calculates the zonal mean of the model and observations datasets, then calculates the CRPS of the two time series.
         Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
@@ -676,9 +576,9 @@ class MetricCalculation:
             obs_rmse_data = anomaly(ds=obs_rmse_data)
 
         return xs.crps_ensemble(
-            forecasts=model_rmse_data.chunk({"time": -1,"ensemble":-1}),
+            forecasts=model_rmse_data.chunk({"time": -1, "ensemble": -1}),
             observations=obs_rmse_data.chunk({"time": -1}),
-            member_dim='ensemble',
+            member_dim="ensemble",
             keep_attrs=True,
         ).values.tolist()
 
@@ -709,7 +609,7 @@ class MetricCalculation:
             keep_attrs=True,
             dim=self.spatial_dims,
         )
-    
+
     def spatial_mae(self, adjustment: str = None) -> xr.DataArray:
         """For each time step, calculate the RMSE across the spatial dimensions. Data returned will be a time series.
         Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
@@ -737,7 +637,7 @@ class MetricCalculation:
             keep_attrs=True,
             dim=self.spatial_dims,
         )
-    
+
     def spatial_crps(self, adjustment: str = None) -> xr.DataArray:
         """For each time step, calculate the CRPS across the spatial dimensions. Data returned will be a time series.
         Bias adjustment centers the model time series on the observations. Anomaly adjustment calculates the monthly anomalies for both datasets.
@@ -762,10 +662,10 @@ class MetricCalculation:
             obs_rmse_data = anomaly(ds=obs_rmse_data)
 
         return xs.crps_ensemble(
-            forecasts=model_rmse_data.chunk({"time": -1,"ensemble":-1}),
+            forecasts=model_rmse_data.chunk({"time": -1, "ensemble": -1}),
             observations=obs_rmse_data.chunk({"time": -1}),
             weights=self.weights.fillna(0),
-            member_dim='ensemble',
+            member_dim="ensemble",
             keep_attrs=True,
             dim=self.spatial_dims,
         )
@@ -845,7 +745,7 @@ class SaveResults:
         self.bucket_name = "climatebench"
         self.bucket = self.storage_client.bucket(self.bucket_name)
         self.gcs_prefix = f"gs://{self.bucket_name}/"
-        self.data_path = f"results/{self.variable}/"
+        self.data_path = f"../results/{self.variable}/"
 
     def write_data(self, results, save_to_cloud: bool):
         """Save data. Datatype determines how data is saved. Options are csv for float, and zarr for xr.DataArray

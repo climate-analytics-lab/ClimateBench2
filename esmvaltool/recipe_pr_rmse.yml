@@ -1,9 +1,9 @@
 ---
 documentation:
-  title: FGOALS-g3 vs GPCP RMSE Time Series
+  title: CMIP pr vs GPCP benchmark
   description: >
-    Regrid GPCP (obs4MIPs) to FGOALS-g3 grid, compute the ensemble mean of FGOALS-g3 (CMIP6),
-    then calculate RMSE over space (lat/lon) for each time step (2005–2014), and plot a time series.
+    Plots zonal mean of select CMIP6 models vs GPCP.
+    Portrait plot of RMSE of zonal means vs GPCP for historical and SSP2-4.5 experiments.
 
   authors:
     - tobin_willa
@@ -12,22 +12,19 @@ preprocessors:
 
   obs_ts_prep:
     regrid:
-      target_grid: 2x2 # will want to modify this later to regrid to the model resolution
+      target_grid: 2x2 
       scheme: linear
     regrid_time:
-      calendar: standard # this will ensure all cubes time formatting is the same
+      calendar: standard
     area_statistics:
-      operator: mean  # area weighted by default
-    convert_units:
-      units: mm day-1 # converting units from kg m-2 s-1 (so numbers are not e-5)
+      operator: mean
 
   model_ts_prep:
-    # custom_order: true
     multi_model_statistics:
       span: overlap 
       groupby: [dataset]
       statistics: [mean]
-      keep_input_datasets: False # if true, all ensemble members will be plotted
+      keep_input_datasets: False
     regrid:
       target_grid: 2x2 
       scheme: linear
@@ -35,8 +32,6 @@ preprocessors:
       calendar: standard
     area_statistics:
       operator: mean
-    convert_units:
-      units: mm day-1
   
   model_ens_rmse:
     custom_order: true
@@ -51,12 +46,10 @@ preprocessors:
       scheme: linear
     regrid_time:
       calendar: standard
-    convert_units:
-      units: mm day-1
     area_statistics:
       operator: mean
     distance_metric:
-      metric: weighted_rmse # also option for unweighted rmse. shouldnt make a difference when computing on global mean time series since all time stamps are equal
+      metric: weighted_rmse 
       keep_reference_dataset: false
     
 
@@ -78,7 +71,6 @@ diagnostics:
         ensemble: mean
         preprocessor: model_ts_prep
         additional_datasets:
-          # models that caused recipe to fail: GFDL-ESM4, CESM2, IPSL-CM6A-LR, EC-Earth3. Likely due to not having all ensemble members on ESGF.
           - {dataset: FGOALS-g3, project: CMIP6, exp: [historical, ssp245], ensemble: r1i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
           - {dataset: FGOALS-g3, project: CMIP6, exp: [historical, ssp245], ensemble: r2i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
           - {dataset: FGOALS-g3, project: CMIP6, exp: [historical, ssp245], ensemble: r3i1p1f1, grid: gn, start_year: 2005, end_year: 2024, }
@@ -182,14 +174,8 @@ diagnostics:
       plot1:
         script: portrait_plot.py
         x_by: dataset
-        y_by: exp  # extra_facet
-        # group_by: project
+        y_by: exp 
         normalize: None
-        # # default_split: Ref1
-        # # nan_color: null
         plot_kwargs:
           vmin: 0
-          vmax: 0.5
-        # cbar_kwargs:
-        #   label: Relative RMSE
-        #   extend: both
+          vmax: 0.00001

@@ -1,10 +1,5 @@
 # ClimateBench2
 
-## Project Overview
-Brief description of ClimateBench2, its purpose, and main goals.
-
----
-
 ## Directory Structure
 
 - `constants.py`, `utils.py`, `env.yml` – Environment setup and shared codes
@@ -16,16 +11,12 @@ Brief description of ClimateBench2, its purpose, and main goals.
 - `results/` – Where calculated benchmarks will be saved
 - `paleo_scripts/` – Paleoclimate benchmarking and data prep
 
----
-
 ## Setup
 
 ```
 conda env create -f env.yml
 conda activate backend_env
 ```
-
----
 
 ## Observational Data
 
@@ -45,8 +36,6 @@ There are currently observational datasets for:
 - Cloud area fraction               -- [MODIS](https://developers.google.com/earth-engine/datasets/catalog/MODIS_061_MOD08_M3)
 - Aerosol optical depth             -- [MODIS](https://developers.google.com/earth-engine/datasets/catalog/MODIS_061_MOD08_M3)
 
----
-
 ## Benchmarking
 The ClimateBench framework allows users to customize the calculated score to the region and time period of interest. There are three skill measures (RMSE, MAE, CRPS) with the option to calculate on the zonal mean, or across all pixels. Users can also use the bias adjustment or anomaly option for additionally preprocessing. 
 
@@ -64,8 +53,6 @@ chmod +x run_benchmark.sh
 ./run_benchmark.sh
 ```
 
----
-
 ## App Data Preparation
 
 The app data preparation notebooks create the figures displayed in the [ClimateBench web app](https://climate-analytics-lab.github.io/ClimateBench_app/index.html). These include:
@@ -76,8 +63,6 @@ The app data preparation notebooks create the figures displayed in the [ClimateB
 
 - store_zonal_means.ipynb calculates the zonal mean time series for the models and observations. 
 - process_results.ipynb reformats benchmark results for easier reading in the web app.
-
----
 
 ## Paleoclimate Benchmarks
 
@@ -91,8 +76,6 @@ python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/ClimateBe
 
 Then you can download and organize the paleo proxy data using the `paleo_scripts/prep_paleo_obs.ipynb`.
 And finally, you can calculate the error in the global mean surface temperature anomaly using `paleo_scripts/paleo_benchmarks.ipynb`.
-
----
 
 ## ESMValTool
 

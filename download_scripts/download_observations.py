@@ -27,7 +27,7 @@ from constants import (
 from utils import standardize_dims
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.INFO)
 
 @contextmanager
 def temporary_directory():
@@ -70,7 +70,6 @@ class DownloadObservations:
             )
 
         self.data_specs = OBSERVATION_DATA_SPECS[self.variable][self.source]
-        # need to add path to git root
         self.local_data_path = (
             "/".join(os.getcwd().split("/")[:-1]) + "/" + self.data_specs["local_path"]
         )

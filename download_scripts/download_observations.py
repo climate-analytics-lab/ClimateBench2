@@ -2,6 +2,12 @@ import argparse
 import glob
 import logging
 import os
+import shutil
+import sys
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import ee
 import geemap
@@ -9,9 +15,8 @@ import numpy as np
 import pandas as pd
 import requests
 import xarray as xr
-import sys
 
-sys.path.append('..')
+sys.path.append("..")
 
 from constants import (
     GOOGLE_CLOUD_PROJECT,
@@ -22,70 +27,117 @@ from constants import (
 from utils import standardize_dims
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+
+
+@contextmanager
+def temporary_directory():
+    """Context manager for temporary directory"""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        yield temp_dir
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def download_file(url: str, output_path: str) -> None:
+    """Download a file with basic error handling"""
+    logger.info(f"Downloading {url}")
+    try:
+        with requests.get(url, stream=True, timeout=300) as response:
+            response.raise_for_status()
+            with open(output_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+        logger.info(f"Download completed: {output_path}")
+    except Exception as e:
+        logger.error(f"Download failed: {e}")
+        raise
 
 
 class DownloadObservations:
+    """Main class for downloading and processing observation data"""
 
-    def __init__(self, variable, source):
+    def __init__(self, variable: str, source: str):
         self.source = source
         self.variable = variable
 
+        if variable not in OBSERVATION_DATA_SPECS:
+            raise ValueError(f"Variable '{variable}' not supported")
+        if source not in OBSERVATION_DATA_SPECS[variable]:
+            raise ValueError(
+                f"Source '{source}' not available for variable '{variable}'"
+            )
+
         self.data_specs = OBSERVATION_DATA_SPECS[self.variable][self.source]
-        self.local_data_path = self.data_specs["local_path"]
+        # need to add path to git root
+        self.local_data_path = (
+            "/".join(os.getcwd().split("/")[:-1]) + "/" + self.data_specs["local_path"]
+        )
         self.cloud_data_path = self.data_specs["cloud_path"]
         self.source_var_name = self.data_specs["source_var_name"]
 
-        self.temp_dir = "raw_data"
-        os.makedirs(self.temp_dir)
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(self.local_data_path), exist_ok=True)
 
         self.ds_cleaned = None
         self.ds_raw = None
         self.var_attrs = None
-        self.temp_file_name = None
 
     def download_raw_data(self):
+        """Download raw data based on data specifications"""
+        logger.info(f"Starting download for {self.variable} from {self.source}")
 
-        if self.data_specs.get("download_url", False):
-            logger.info(f"downloading data from : {self.data_specs['download_url']}")
-
-            if self.data_specs.get("download_multiple", False):
-                start_year = self.data_specs["file_date_range"][0]
-                end_year = self.data_specs["file_date_range"][1]
-                for year in range(start_year, end_year):
-                    download_url = self.data_specs["download_url"].format(year)
-                    temp_file_name = f"{self.temp_dir}/{download_url.split('/')[-1]}"
-                    with requests.get(download_url, stream=True) as r:
-                        r.raise_for_status()
-                        with open(temp_file_name, "wb") as f:
-                            for chunk in r.iter_content(chunk_size=8192):
-                                f.write(chunk)
-
-                ds = xr.open_mfdataset(f"{self.temp_dir}/*", chunks={}).sel(
-                    time=slice(HIST_START_DATE, SSP_END_DATE)
-                )
-                ds = ds.resample(time="MS").mean()
+        with temporary_directory() as temp_dir:
+            if self.data_specs.get("download_url"):
+                self._download_from_url(temp_dir)
+            elif self.data_specs.get("gee_image_collection"):
+                self._download_from_gee()
+            elif self.data_specs.get("wget_file_list"):
+                self._download_from_wget_list(temp_dir)
             else:
-                self.temp_file_name = (
-                    f"{self.temp_dir}/{self.data_specs['download_url'].split('/')[-1]}"
+                raise ValueError(
+                    f"No download method for {self.variable}/{self.source}"
                 )
 
-                with requests.get(self.data_specs["download_url"], stream=True) as r:
-                    r.raise_for_status()
-                    with open(self.temp_file_name, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
+    def _download_from_url(self, temp_dir: str):
+        """Download data from URL(s)"""
+        if self.data_specs.get("download_multiple", False):
+            # Handle multiple file downloads
+            start_year = self.data_specs["file_date_range"][0]
+            end_year = self.data_specs["file_date_range"][1]
 
-                ds = xr.open_dataset(self.temp_file_name, chunks={}).sel(
-                    time=slice(HIST_START_DATE, SSP_END_DATE)
-                )
+            for year in range(start_year, end_year):
+                download_url = self.data_specs["download_url"].format(year)
+                temp_file_name = f"{temp_dir}/{download_url.split('/')[-1]}"
+                try:
+                    download_file(download_url, temp_file_name)
+                except Exception as e:
+                    logger.warning(f"Failed to download year {year}: {e}")
 
-            self.var_attrs = ds[self.source_var_name].attrs
-
-        elif self.data_specs.get("gee_image_collection", False):
-            logger.info(
-                f"downloading data from google earth engine image collection: {self.data_specs["gee_image_collection"]}"
+            ds = xr.open_mfdataset(f"{temp_dir}/*", chunks={}).sel(
+                time=slice(HIST_START_DATE, SSP_END_DATE)
             )
+            ds = ds.resample(time="MS").mean()
+        else:
+            # Single file download
+            temp_file_name = (
+                f"{temp_dir}/{self.data_specs['download_url'].split('/')[-1]}"
+            )
+            download_file(self.data_specs["download_url"], temp_file_name)
+
+            ds = xr.open_dataset(temp_file_name, chunks={}).sel(
+                time=slice(HIST_START_DATE, SSP_END_DATE)
+            )
+
+        self.var_attrs = ds[self.source_var_name].attrs
+        self.ds_raw = ds
+
+    def _download_from_gee(self):
+        """Download data from Google Earth Engine"""
+        logger.info(f"Downloading from GEE: {self.data_specs['gee_image_collection']}")
+
+        try:
             ee.Authenticate()
             ee.Initialize(project=GOOGLE_CLOUD_PROJECT)
 
@@ -94,64 +146,72 @@ class DownloadObservations:
             ds = geemap.ee_to_xarray(dataset.select(self.source_var_name))
 
             self.var_attrs = ds[self.source_var_name].attrs
+            self.ds_raw = ds
+        except Exception as e:
+            logger.error(f"GEE download failed: {e}")
+            raise
 
-        elif self.data_specs.get("wget_file_list", False):
-            logger.info(
-                f"downloading data from file paths in: {self.data_specs['wget_file_list']}"
-            )
-            os.system(
-                f'wget --load-cookies ~/.urs_cookies --save-cookies ~/.urs_cookies --keep-session-cookies  --content-disposition -i "{self.data_specs['wget_file_list']}" -P {self.temp_dir}'
-            )
-            files = glob.glob(f"{self.temp_dir}/*")
-            # tas files are one netcdf per year with no time dim. need to add time dims before combining
-            # if other wget options are added, will need to generalize this
-            ds_list = []
-            for file in files:
+    def _download_from_wget_list(self, temp_dir: str):
+        """Download data using wget file list"""
+        logger.info(f"Downloading from file list: {self.data_specs['wget_file_list']}")
+
+        result = os.system(
+            f"wget --load-cookies ~/.urs_cookies --save-cookies ~/.urs_cookies "
+            f'--keep-session-cookies --content-disposition -i "{self.data_specs["wget_file_list"]}" -P {temp_dir}'
+        )
+
+        if result != 0:
+            logger.error("Wget download failed")
+            raise RuntimeError("Wget download failed")
+
+        files = glob.glob(f"{temp_dir}/*")
+        ds_list = []
+
+        for file in files:
+            try:
+                # This logic is specific to your file naming convention
                 year = file.split(".")[1]
                 month = file.split(".")[2]
                 date = pd.to_datetime(f"{year}-{month}-01")
                 temp_ds = xr.open_dataset(file, decode_times=False, chunks={})
                 temp_ds = temp_ds.expand_dims({"time": [date]})
                 ds_list.append(temp_ds)
-            ds = xr.concat(ds_list, dim="time")
-            self.var_attrs = ds_list[0][self.source_var_name].attrs
+            except Exception as e:
+                logger.warning(f"Failed to process file {file}: {e}")
 
-        else:
-            raise ValueError(
-                f"No download method for variable: {self.variable} and source: {self.source}"
-            )
+        if not ds_list:
+            raise RuntimeError("No valid datasets from wget files")
 
+        ds = xr.concat(ds_list, dim="time")
+        self.var_attrs = ds_list[0][self.source_var_name].attrs
         self.ds_raw = ds
 
     def hadcrut5_anomaly_preprocess(self):
-        logger.info(
-            f"Downloading climatology data from {self.data_specs['climatology_url']}"
-        )
-        clim_file_path = (
-            f"{self.temp_dir}/{self.data_specs['climatology_url'].split('/')[-1]}"
-        )
+        """Preprocess HadCRUT5 anomaly data by adding climatology"""
+        logger.info("Processing HadCRUT5 anomaly data with climatology")
 
-        with requests.get(self.data_specs["climatology_url"], stream=True) as r:
-            r.raise_for_status()
-            with open(clim_file_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+        with temporary_directory() as temp_dir:
+            clim_file_path = (
+                f"{temp_dir}/{self.data_specs['climatology_url'].split('/')[-1]}"
+            )
+            download_file(self.data_specs["climatology_url"], clim_file_path)
 
-        ds = xr.open_dataset(clim_file_path, chunks={})
-        ds["time"] = np.arange(1, 13)
-        ds = ds.rename({"time": "month"})
-        ds = ds.rename({"lat": "latitude", "lon": "longitude"})
+            ds = xr.open_dataset(clim_file_path, chunks={})
+            ds["time"] = np.arange(1, 13)
+            ds = ds.rename({"time": "month", "lat": "latitude", "lon": "longitude"})
 
-        self.ds_raw = (
-            self.ds_raw[self.source_var_name].groupby("time.month")
-            + ds[self.data_specs["climatology_var_name"]]
-        ).to_dataset(name=self.source_var_name)
-        self.ds_raw[self.source_var_name].attrs["units"] = ds[
-            self.data_specs["climatology_var_name"]
-        ].attrs["units"]
+            self.ds_raw = (
+                self.ds_raw[self.source_var_name].groupby("time.month")
+                + ds[self.data_specs["climatology_var_name"]]
+            ).to_dataset(name=self.source_var_name)
+
+            self.ds_raw[self.source_var_name].attrs["units"] = ds[
+                self.data_specs["climatology_var_name"]
+            ].attrs["units"]
 
     def modis_od550aer_error_preprocess(self):
-        logger.info("creating error from land/water mask")
+        """Create error data from land/water mask"""
+        logger.info("Creating error from land/water mask")
         ds = self.ds_raw.isel(time=0).squeeze().drop_vars("time", errors="ignore")
 
         err_da = ds[self.source_var_name].where(ds[self.source_var_name] == 0, 1).T
@@ -167,10 +227,12 @@ class DownloadObservations:
         err_ds = err_ds.assign_coords(lon=(err_ds.lon % 360))
         err_ds = err_ds.sortby("lon")
 
-        # read od550aer values
-        local_var_path = OBSERVATION_DATA_SPECS[self.variable]["nasa_modis"][
-            "local_path"
-        ]
+        # Read od550aer values
+        local_var_path = (
+            "/".join(os.getcwd().split("/")[:-1])
+            + "/"
+            + OBSERVATION_DATA_SPECS[self.variable]["nasa_modis"]["local_path"]
+        )
         if os.path.exists(local_var_path):
             var_ds = xr.open_zarr(local_var_path, chunks={})
         else:
@@ -184,29 +246,27 @@ class DownloadObservations:
         ).to_dataset(name=self.source_var_name)
 
     def unit_conversion(self, ds):
+        """Apply unit conversions based on variable type"""
         if self.variable == "pr":
-            logger.info("converting pr units to kg m-2 s-1")
+            logger.info("Converting pr units to kg m-2 s-1")
             ds[self.variable] = ds[self.variable] / 86400
         if self.variable == "clt":
-            logger.info("converting clt units to percet 0-100")
-            ds[self.variable] = (
-                ds[self.variable] / 100
-            )  # values should range 0 - 100 (units %)
+            logger.info("Converting clt units to percent 0-100")
+            ds[self.variable] = ds[self.variable] / 100
         if self.variable == "tas":
-            logger.info("converting tas units to K")
+            logger.info("Converting tas units to K")
             ds[self.variable] = ds[self.variable] + 273.15
         if (self.variable == "od550aer") & ("error" not in self.source):
             logger.info("Scaling od550aer data by 0.001")
-            ds[self.variable] = (
-                ds[self.variable] / 1000
-            )  # unitless values but range is ~0-5
+            ds[self.variable] = ds[self.variable] / 1000
         return ds
 
     def standardize_data(self):
+        """Standardize the dataset format"""
         if self.ds_raw is None:
             self.download_raw_data()
 
-        logger.info("standardizing data")
+        logger.info("Standardizing data")
         ds = self.ds_raw[self.source_var_name].to_dataset(name=self.variable)
         ds = standardize_dims(ds)
         ds[self.variable].encoding = {}
@@ -223,54 +283,49 @@ class DownloadObservations:
         self.ds_cleaned = ds
 
     def save_data(self, save_to_cloud=False):
+        """Save processed data"""
         if self.ds_cleaned is None:
             self.standardize_data()
 
-        logger.info(f"saving data locally: {self.local_data_path}")
+        logger.info(f"Saving data locally: {self.local_data_path}")
         self.ds_cleaned.to_zarr(self.local_data_path)
 
         if save_to_cloud:
-            logger.info(f"uploading to cloud : {self.cloud_data_path}")
-            os.system(f"gsutil -m cp -r {self.local_data_path} {self.cloud_data_path}")
-
-        if os.path.exists(self.temp_dir):
-            logger.info("Deleting raw data files")
-            raw_files = glob.glob(f"{self.temp_dir}/*")
-            for file in raw_files:
-                os.remove(file)
-            os.rmdir(self.temp_dir)
+            logger.info(f"Uploading to cloud: {self.cloud_data_path}")
+            result = os.system(
+                f"gsutil -m cp -r {self.local_data_path} {self.cloud_data_path}"
+            )
+            if result != 0:
+                logger.warning("Cloud upload failed")
 
 
-def main(variable, source, save_to_cloud):
-    logger.info(f"Starting download for variable: {variable} from: {source}")
-    downloader = DownloadObservations(variable, source)
+def main():
+    parser = argparse.ArgumentParser(
+        description="Download and process observational climate data"
+    )
+    parser.add_argument(
+        "--variable", required=True, help="Climate variable to download"
+    )
+    parser.add_argument("--source", required=True, help="Data source")
+    parser.add_argument(
+        "--save_to_cloud", action="store_true", help="Upload to Google Cloud Storage"
+    )
+
+    args = parser.parse_args()
+
+    downloader = DownloadObservations(args.variable, args.source)
     downloader.download_raw_data()
-    if source == "HadCRUT5":
+
+    # Apply preprocessing based on source
+    if args.source == "HadCRUT5":
         downloader.hadcrut5_anomaly_preprocess()
-    if (source == "nasa_modis_error") & (variable == "od550aer"):
+    if args.source == "nasa_modis_error" and args.variable == "od550aer":
         downloader.modis_od550aer_error_preprocess()
+
     downloader.standardize_data()
-    downloader.save_data(save_to_cloud=save_to_cloud)
-    logger.info("Download complete")
+    downloader.save_data(save_to_cloud=args.save_to_cloud)
+    logger.info("Processing completed successfully")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Data processing for model benchmarking"
-    )
-    parser.add_argument(
-        "--variable",
-        help="Input value for the main function",
-    )
-    parser.add_argument(
-        "--source",
-        help="Input value for the main function",
-    )
-    parser.add_argument(
-        "--save_to_cloud",
-        action="store_true",
-        default=False,
-        help="Save data on google cloud if passed, if not passsed saved locally",
-    )
-    args = parser.parse_args()
-    main(variable=args.variable, source=args.source, save_to_cloud=args.save_to_cloud)
+    main()

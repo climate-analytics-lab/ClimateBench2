@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 import requests
 import xarray as xr
+import sys
+
+sys.path.append('..')
 
 from constants import (
     GOOGLE_CLOUD_PROJECT,

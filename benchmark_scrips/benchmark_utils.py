@@ -17,8 +17,8 @@ from pyesgf.search import SearchConnection
 sys.path.append("..")
 
 from constants import (
-    CMIP6_MODEL_INSTITUTIONS,
-    ENSEMBLE_MEMBERS,
+    # CMIP6_MODEL_INSTITUTIONS,
+    # ENSEMBLE_MEMBERS,
     OBSERVATION_DATA_PATHS,
     SSP_EXPERIMENT,
     VARIABLE_FREQUENCY_GROUP,
@@ -89,7 +89,7 @@ class DataFinder:
         self.start_year = start_year
         self.end_year = end_year
 
-        self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
+        # self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
         self.mip = "CMIP" if self.start_year < 2015 else "ScenarioMIP"
         # If the time range spans the two experiments
         if (self.end_year >= 2015) & (self.mip == "CMIP"):
@@ -101,9 +101,14 @@ class DataFinder:
         self.area_variable_name = "areacello" if self.variable == "tos" else "areacella"
         self.area_frequency_table = "Ofx" if self.variable == "tos" else "fx"
 
-        self.obs_data_path_local = OBSERVATION_DATA_PATHS[self.variable]["local"]
+        self.obs_data_path_local = (
+            "/".join(os.getcwd().split("/")[:-1])
+            + "/"
+            + OBSERVATION_DATA_PATHS[self.variable]["local"]
+        )
         self.obs_data_path_cloud = OBSERVATION_DATA_PATHS[self.variable]["cloud"]
         self.grid = None
+        self.ensemble_members = None
 
         self.model_ds = None
         self.fx_ds = None
@@ -129,7 +134,7 @@ class DataFinder:
         Returns:
             list[str]: list of local file paths
         """
-        local_data_path = f"{os.environ['HOME']}/climate_data/CMIP6/{mip}/{self.org}/{self.model}/{experiment}/{ensemble}/{frequency_table}/{variable}/*/*/*"
+        local_data_path = f"{os.environ['HOME']}/climate_data/CMIP6/{mip}/*/{self.model}/{experiment}/{ensemble}/{frequency_table}/{variable}/*/*/*"
         local_files = glob.glob(local_data_path)
         self.local_files = local_files
         return local_files
@@ -265,7 +270,7 @@ class DataFinder:
                 )
                 if not esgf_file_path:
                     raise ValueError(
-                        f"can't find data for {mip}, {self.org}, {self.model}, {experiment}, {ensemble}, {frequency_table}, {variable}"
+                        f"can't find data for {mip}, {self.model}, {experiment}, {ensemble}, {frequency_table}, {variable}"
                     )
                 else:
                     # read data from esgf
@@ -296,7 +301,11 @@ class DataFinder:
             xr.Dataset: Ensemble mean of climate model data
         """
         ensemble_ds_list = []
-        for ensemble in ENSEMBLE_MEMBERS:
+        if self.ensemble_members is None:
+            # insert find ensemble members here -- input params are mip, experiment, table id, variable, source id
+            ensemble_members = self.find_ensemble_members(experiment=experiment)
+            self.ensemble_members = ensemble_members
+        for ensemble in self.ensemble_members:
             ds = self.read_data(
                 mip=mip,
                 experiment=experiment,
@@ -362,10 +371,13 @@ class DataFinder:
         """
         try:
             logger.info("Reading cell area data")
+            if self.ensemble_members is None:
+                ensemble_members = self.find_ensemble_members(experiment="historical")
+                self.ensemble_members = ensemble_members
             fx_ds = self.read_data(
                 mip="CMIP",
                 experiment="historical",
-                ensemble=ENSEMBLE_MEMBERS[0],
+                ensemble=self.ensemble_members[0],
                 frequency_table=self.area_frequency_table,
                 variable=self.area_variable_name,
             )
@@ -406,6 +418,35 @@ class DataFinder:
         return obs_ds.sel(
             time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
         )
+
+    def find_ensemble_members(
+        self,
+        experiment: str,
+    ) -> list:
+        col = intake.open_esm_datastore(
+            "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
+        )
+        query = dict(
+            experiment_id=experiment,
+            table_id=self.variable_frequency_table,
+            variable_id=self.var,
+            source_id=self.model,
+        )
+        col_subset = col.search(require_all_on=["source_id"], **query)
+        col_subset_df = col_subset.df
+        # check for duplicates (grid, version)
+        # ensemble members are repeated, need to take ensemble member from most recent verion and gn if gn/gr avail
+        if len(col_subset_df["member_id"]) != len(col_subset_df["member_id"].unique()):
+            if len(col_subset_df["grid_id"].unique()) > 1:
+                col_subset_df = col_subset_df[col_subset_df["grid_label"] == "gn"]
+            else:
+                idx = (
+                    col_subset_df.groupby("member_id")["version"].transform("max")
+                    == col_subset_df["version"]
+                )
+                col_subset_df = col_subset_df[idx]
+
+        return col_subset_df["member_id"].tolist()
 
 
 # little helper functions
@@ -707,6 +748,7 @@ class SaveResults:
         self,
         model: str,
         variable: str,
+        ensemble_members: list,
         metric: str,
         adjustment: str,
         start_year: int,
@@ -728,6 +770,7 @@ class SaveResults:
         """
         self.variable = variable
         self.model = model
+        self.ensemble_members = ensemble_members
         self.metric = metric
         self.adjustment = adjustment
         self.start_year = start_year
@@ -773,7 +816,7 @@ class SaveResults:
             {
                 "model": [self.model],
                 "variable": [self.variable],
-                "ensemble members": ["_".join(ENSEMBLE_MEMBERS)],
+                "ensemble members": ["_".join(self.ensemble_members)],
                 "metric": [self.data_label],
                 "lat_min": [self.lat_min],
                 "lat_max": [self.lat_max],

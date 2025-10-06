@@ -36,6 +36,7 @@ def main(
     fx_ds = data_finder.load_cell_area_ds()
     logger.info("Reading observations")
     obs_ds = data_finder.load_obs_ds()
+    ensemble_members = data_finder.ensemble_members
 
     logger.info("Regridding observations")
     # regrid obs data to the model grid
@@ -60,6 +61,7 @@ def main(
     save_results = SaveResults(
         model=model,
         variable=variable,
+        ensemble_members=ensemble_members,
         metric=metric,
         adjustment=adjustment,
         start_year=start_year,

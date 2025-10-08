@@ -423,17 +423,14 @@ class DataFinder:
         self,
         experiment: str,
     ) -> list:
-        col = intake.open_esm_datastore(
-            "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
-        )
+        df = pd.read_csv("https://cmip6.storage.googleapis.com/pangeo-cmip6.csv")
         query = dict(
             experiment_id=experiment,
             table_id=self.variable_frequency_table,
             variable_id=self.var,
             source_id=self.model,
         )
-        col_subset = col.search(require_all_on=["source_id"], **query)
-        col_subset_df = col_subset.df
+        col_subset_df = df.loc[(df[list(query)] == pd.Series(query)).all(axis=1)]
         # check for duplicates (grid, version)
         # ensemble members are repeated, need to take ensemble member from most recent verion and gn if gn/gr avail
         if len(col_subset_df["member_id"]) != len(col_subset_df["member_id"].unique()):
@@ -446,6 +443,7 @@ class DataFinder:
                 )
                 col_subset_df = col_subset_df[idx]
 
+        col_subset_df = col_subset_df[col_subset_df["member_id"].str.contains("i1p1f1")]
         return col_subset_df["member_id"].tolist()
 
 

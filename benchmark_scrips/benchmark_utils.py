@@ -17,8 +17,6 @@ from pyesgf.search import SearchConnection
 sys.path.append("..")
 
 from constants import (
-    # CMIP6_MODEL_INSTITUTIONS,
-    # ENSEMBLE_MEMBERS,
     OBSERVATION_DATA_PATHS,
     SSP_EXPERIMENT,
     VARIABLE_FREQUENCY_GROUP,
@@ -89,7 +87,6 @@ class DataFinder:
         self.start_year = start_year
         self.end_year = end_year
 
-        # self.org = CMIP6_MODEL_INSTITUTIONS[self.model]
         self.mip = "CMIP" if self.start_year < 2015 else "ScenarioMIP"
         # If the time range spans the two experiments
         if (self.end_year >= 2015) & (self.mip == "CMIP"):
@@ -427,7 +424,7 @@ class DataFinder:
         query = dict(
             experiment_id=experiment,
             table_id=self.variable_frequency_table,
-            variable_id=self.var,
+            variable_id=self.variable,
             source_id=self.model,
         )
         col_subset_df = df.loc[(df[list(query)] == pd.Series(query)).all(axis=1)]

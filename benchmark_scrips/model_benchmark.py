@@ -88,7 +88,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--variable",
         help="Input value for the main function",
-        choices=["tas", "pr", "clt", "tos", "od550aer"],
+        choices=["tas", "pr", "clt", "tos", "od550aer", "rsut", "rsutcs", "rlut", "rlutcs"],
     )
     parser.add_argument(
         "--metric",

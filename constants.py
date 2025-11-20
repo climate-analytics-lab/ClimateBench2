@@ -4,6 +4,10 @@ VARIABLE_FREQUENCY_GROUP = {
     "clt": "Amon",
     "tos": "Omon",
     "od550aer": "AERmon",
+    "rsut": "Amon",
+    "rlut": "Amon",
+    "rsutcs": "Amon",
+    "rlutcs": "Amon",
 }
 HIST_START_DATE = "1960-01-01"
 HIST_END_DATE = "2014-12-31"
@@ -127,7 +131,74 @@ OBSERVATION_DATA_SPECS = {
             },
         },
     },
+    "rsut": {
+        "nasa_ceres": {
+            "cloud_path": "gs://climatebench/observations/rsut_nasa_ceres.zarr",
+            "local_path": "observations/rsut_nasa_ceres.zarr",
+            "raw_local_path": "observations/CERES_EBAF-TOA_Ed4.2.1_Subset_200003-202507.nc",
+            "source_var_name": "toa_sw_all_mon",
+            "long_name": "Top of The Atmosphere Shortwave Flux, All-Sky conditions, Monthly Means",
+            "standard_name": "toa_outgoing_shortwave_flux",
+            "units": "W m-2",
+        },
+    },
+    "rsutcs": {
+        "nasa_ceres": {
+            "cloud_path": "gs://climatebench/observations/rsutcs_nasa_ceres.zarr",
+            "local_path": "observations/rsutcs_nasa_ceres.zarr",
+            "raw_local_path": "observations/CERES_EBAF-TOA_Ed4.2.1_Subset_200003-202507.nc",
+            "source_var_name": "toa_sw_clr_c_mon",
+            "long_name": "Top of The Atmosphere Shortwave Flux, Clear-Sky (for cloud-free areas of region) conditions, Monthly Means",
+            "standard_name": "TOA Shortwave Flux - Clear-Sky (for cloud-free areas of region)",
+            "units": "W m-2",
+        },
+    },
+    "rlut": {
+        "nasa_ceres": {
+            "cloud_path": "gs://climatebench/observations/rlut_nasa_ceres.zarr",
+            "local_path": "observations/rlut_nasa_ceres.zarr",
+            "raw_local_path": "observations/CERES_EBAF-TOA_Ed4.2.1_Subset_200003-202507.nc",
+            "source_var_name": "toa_lw_all_mon",
+            "long_name": "Top of The Atmosphere Longwave Flux, All-Sky conditions, Monthly Means",
+            "standard_name": "toa_outgoing_longwave_flux",
+            "units": "W m-2",
+        },
+    },
+    "rlutcs": {
+        "nasa_ceres": {
+            "cloud_path": "gs://climatebench/observations/rlutcs_nasa_ceres.zarr",
+            "local_path": "observations/rlutcs_nasa_ceres.zarr",
+            "raw_local_path": "observations/CERES_EBAF-TOA_Ed4.2.1_Subset_200003-202507.nc",
+            "source_var_name": "toa_lw_clr_c_mon",
+            "long_name": "Top of The Atmosphere Longwave Flux, Clear-Sky (for cloud-free areas of region) conditions, Monthly Means",
+            "standard_name": "TOA Longwave Flux - Clear-Sky (for cloud-free areas of region)",
+            "units": "W m-2",
+        },
+    },
+    "to": { # what is CMIP ocean temp var name that is not thetao?
+        "ARGO": {
+            "cloud_path": "gs://climatebench/observations/to_argo.zarr",
+            "local_path": "observations/to_ARGO.zarr",
+            "download_url": "https://sio-argo.ucsd.edu/RG/RG_ArgoClim_Temperature_2019.nc.gz",
+            "climatology_url": "https://crudata.uea.ac.uk/cru/data/temperature/absolute_v5.nc",
+            "climatology_var_name": "ARGO_TEMPERATURE_MEAN",
+            "source_var_name": "ARGO_TEMPERATURE_ANOMALY",
+            "long_name": "ARGO TEMPERATURE ANOMALY defined by Jan 2004 - Dec 2018 (15.0 year) RG CLIMATOLOGY",
+            "standard_name": "air_temperature",
+            "units": "C",
+        },
+        # "HadCRUT5_error": {
+        #     "cloud_path": "gs://climatebench/observations/tas_HadCRUT5_error.zarr",
+        #     "local_path": "observations/tas_HadCRUT5_error.zarr",
+        #     "download_url": "https://www.metoffice.gov.uk/hadobs/hadcrut5/data/HadCRUT.5.0.2.0/non-infilled/HadCRUT.5.0.2.0.uncorrelated.nc",
+        #     "source_var_name": "tas_unc",
+        #     "long_name": "standard_uncertainty in blended air_temperature_anomaly over land with sea_water_temperature_anomaly",
+        #     "standard_name": "tas_unc",
+        #     "units": "K",
+        # },
+    },
 }
+
 # using nested dict incase we have multiple obs datasets for one var. This dict should use the main obs dataset.
 OBSERVATION_DATA_PATHS = {
     "tas": {
@@ -149,5 +220,21 @@ OBSERVATION_DATA_PATHS = {
     "od550aer": {
         "cloud": OBSERVATION_DATA_SPECS["od550aer"]["nasa_modis"]["cloud_path"],
         "local": OBSERVATION_DATA_SPECS["od550aer"]["nasa_modis"]["local_path"],
+    },
+    "rsut": {
+        "cloud": OBSERVATION_DATA_SPECS["rsut"]["nasa_ceres"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["rsut"]["nasa_ceres"]["local_path"],
+    },
+    "rsutcs": {
+        "cloud": OBSERVATION_DATA_SPECS["rsutcs"]["nasa_ceres"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["rsutcs"]["nasa_ceres"]["local_path"],
+    },
+    "rlut": {
+        "cloud": OBSERVATION_DATA_SPECS["rlut"]["nasa_ceres"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["rlut"]["nasa_ceres"]["local_path"],
+    },
+    "rlutcs": {
+        "cloud": OBSERVATION_DATA_SPECS["rlutcs"]["nasa_ceres"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["rlutcs"]["nasa_ceres"]["local_path"],
     },
 }

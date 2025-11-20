@@ -94,10 +94,22 @@ class DownloadObservations:
                 self._download_from_gee()
             elif self.data_specs.get("wget_file_list"):
                 self._download_from_wget_list(temp_dir)
+            elif self.data_specs.get("raw_local_path"):
+                self._read_manual_download()
             else:
                 raise ValueError(
                     f"No download method for {self.variable}/{self.source}"
                 )
+
+    def _read_manual_download(self):
+        local_path = (
+            "/".join(os.getcwd().split("/")[:-1])
+            + "/"
+            + self.data_specs["raw_local_path"]
+        )
+        ds = xr.open_dataset(local_path, chunks={})
+        self.var_attrs = ds[self.source_var_name].attrs
+        self.ds_raw = ds
 
     def _download_from_url(self, temp_dir: str):
         """Download data from URL(s)"""

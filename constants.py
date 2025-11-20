@@ -175,28 +175,6 @@ OBSERVATION_DATA_SPECS = {
             "units": "W m-2",
         },
     },
-    "to": { # what is CMIP ocean temp var name that is not thetao?
-        "ARGO": {
-            "cloud_path": "gs://climatebench/observations/to_argo.zarr",
-            "local_path": "observations/to_ARGO.zarr",
-            "download_url": "https://sio-argo.ucsd.edu/RG/RG_ArgoClim_Temperature_2019.nc.gz",
-            "climatology_url": "https://crudata.uea.ac.uk/cru/data/temperature/absolute_v5.nc",
-            "climatology_var_name": "ARGO_TEMPERATURE_MEAN",
-            "source_var_name": "ARGO_TEMPERATURE_ANOMALY",
-            "long_name": "ARGO TEMPERATURE ANOMALY defined by Jan 2004 - Dec 2018 (15.0 year) RG CLIMATOLOGY",
-            "standard_name": "air_temperature",
-            "units": "C",
-        },
-        # "HadCRUT5_error": {
-        #     "cloud_path": "gs://climatebench/observations/tas_HadCRUT5_error.zarr",
-        #     "local_path": "observations/tas_HadCRUT5_error.zarr",
-        #     "download_url": "https://www.metoffice.gov.uk/hadobs/hadcrut5/data/HadCRUT.5.0.2.0/non-infilled/HadCRUT.5.0.2.0.uncorrelated.nc",
-        #     "source_var_name": "tas_unc",
-        #     "long_name": "standard_uncertainty in blended air_temperature_anomaly over land with sea_water_temperature_anomaly",
-        #     "standard_name": "tas_unc",
-        #     "units": "K",
-        # },
-    },
 }
 
 # using nested dict incase we have multiple obs datasets for one var. This dict should use the main obs dataset.

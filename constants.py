@@ -8,6 +8,8 @@ VARIABLE_FREQUENCY_GROUP = {
     "rlut": "Amon",
     "rsutcs": "Amon",
     "rlutcs": "Amon",
+    "thetao": "Omon",
+    "so": "Omon",
 }
 HIST_START_DATE = "1960-01-01"
 HIST_END_DATE = "2014-12-31"
@@ -38,6 +40,28 @@ OBSERVATION_DATA_SPECS = {
             "standard_name": "tas_unc",
             "units": "K",
         },
+        "NASA_GISS": {
+            "cloud_path": "gs://climatebench/observations/tas_NASA_GISS.zarr",
+            "local_path": "observations/tas_NASA_GISS.zarr",
+            "download_url": "https://downloads.psl.noaa.gov/Datasets/gistemp/combined/250km/air.2x2.250.mon.anom.comb.nc",
+            "climatology_url": "https://downloads.psl.noaa.gov/Datasets/gistemp/combined/250km/air.2x2.250.mon.1991-2020.ltm.comb.nc",
+            "climatology_var_name": "air",
+            "source_var_name": "air",
+            "long_name": "Near-Surface Air Temperature",
+            "standard_name": "air_temperature",
+            "units": "K",
+        },
+        # "Berkeley_BEST": {
+        #     "cloud_path": "gs://climatebench/observations/tas_Berkeley_BEST.zarr",
+        #     "local_path": "observations/tas_Berkeley_BEST.zarr",
+        #     "download_url": "https://berkeley-earth-temperature.s3.us-west-1.amazonaws.com/Global/Gridded/Land_and_Ocean_LatLong1.nc",
+        #     "climatology_url": "https://berkeley-earth-temperature.s3.us-west-1.amazonaws.com/Global/Gridded/Land_and_Ocean_LatLong1.nc",
+        #     "climatology_var_name": "climatology",
+        #     "source_var_name": "temperature",
+        #     "long_name": "Near-Surface Air Temperature",
+        #     "standard_name": "air_temperature",
+        #     "units": "K",
+        # },
     },
     "pr": {
         "noaa_gpcp": {
@@ -175,6 +199,26 @@ OBSERVATION_DATA_SPECS = {
             "units": "W m-2",
         },
     },
+    "thetao": {
+        "argo": {
+            "cloud_path": "gs://climatebench/observations/ohc_argo.zarr",
+            "local_path": "observations/ohc_argo.zarr",
+            "source_var_name": "",
+            "long_name": "",
+            "standard_name": "",
+            "units": "",
+        },
+    },
+    "so": {
+        "argo": {
+            "cloud_path": "gs://climatebench/observations/ohc_argo.zarr",
+            "local_path": "observations/ohc_argo.zarr",
+            "source_var_name": "",
+            "long_name": "",
+            "standard_name": "",
+            "units": "",
+        },
+    },
 }
 
 # using nested dict incase we have multiple obs datasets for one var. This dict should use the main obs dataset.
@@ -214,5 +258,13 @@ OBSERVATION_DATA_PATHS = {
     "rlutcs": {
         "cloud": OBSERVATION_DATA_SPECS["rlutcs"]["nasa_ceres"]["cloud_path"],
         "local": OBSERVATION_DATA_SPECS["rlutcs"]["nasa_ceres"]["local_path"],
+    },
+    "thetao": {
+        "cloud": OBSERVATION_DATA_SPECS["thetao"]["argo"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["thetao"]["argo"]["local_path"],
+    },
+    "so": {
+        "cloud": OBSERVATION_DATA_SPECS["so"]["argo"]["cloud_path"],
+        "local": OBSERVATION_DATA_SPECS["so"]["argo"]["local_path"],
     },
 }

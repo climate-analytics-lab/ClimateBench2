@@ -3,6 +3,7 @@ import logging
 import dask.array as da
 import numpy as np
 import pandas as pd
+import requests
 import xarray as xr
 
 logger = logging.getLogger(__name__)
@@ -52,8 +53,15 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
 
     # fix time
     if "time" in ds.dims:
+        # try:
         ds["time"] = pd.to_datetime(ds["time"].dt.strftime("%Y-%m-01"))
         ds = ds.sortby("time")  # make sure its in the right order before slicing
+        # except AttributeError:
+        #     # berkeley BEST dataset time in format year.month fraction (i.e. 2024.958333 == 2024/12)
+        #     years = ds["time"].astype(int)
+        #     months = (ds['time'] - years)*12 + 0.5
+        #     dates = pd.to_datetime(pd.DataFrame({'year': years, 'month': months, 'day': [1]*years.size}))
+        #     ds = ds.assign_coords({'time':dates})
 
     # only if rectilinear grid (tos is curvelinear grid)
     if (len(ds["lat"].dims) == 1) and (len(ds["lon"].dims) == 1):
@@ -118,3 +126,19 @@ def build_zarr_store(var_name: str, dims_dict: dict, attributes: dict, store_pat
     ds.to_zarr(
         store_path, compute=False, mode="w", consolidated=True
     )  # save template, will write each model to its region slice
+
+
+def download_file(url: str, output_path: str) -> None:
+    """Download a file with basic error handling"""
+    logger.info(f"Downloading {url}")
+    try:
+        with requests.get(url, stream=True, timeout=300) as response:
+            response.raise_for_status()
+            with open(output_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+        logger.info(f"Download completed: {output_path}")
+    except Exception as e:
+        logger.error(f"Download failed: {e}")
+        raise

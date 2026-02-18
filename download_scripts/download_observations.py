@@ -6,14 +6,11 @@ import shutil
 import sys
 import tempfile
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Any, Dict, Optional
 
 import ee
 import geemap
 import numpy as np
 import pandas as pd
-import requests
 import xarray as xr
 
 sys.path.append("..")
@@ -24,10 +21,11 @@ from constants import (
     OBSERVATION_DATA_SPECS,
     SSP_END_DATE,
 )
-from utils import standardize_dims
+from utils import download_file, standardize_dims
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
 
 @contextmanager
 def temporary_directory():
@@ -37,22 +35,6 @@ def temporary_directory():
         yield temp_dir
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def download_file(url: str, output_path: str) -> None:
-    """Download a file with basic error handling"""
-    logger.info(f"Downloading {url}")
-    try:
-        with requests.get(url, stream=True, timeout=300) as response:
-            response.raise_for_status()
-            with open(output_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-        logger.info(f"Download completed: {output_path}")
-    except Exception as e:
-        logger.error(f"Download failed: {e}")
-        raise
 
 
 class DownloadObservations:
@@ -89,17 +71,18 @@ class DownloadObservations:
 
         with temporary_directory() as temp_dir:
             if self.data_specs.get("download_url"):
-                self._download_from_url(temp_dir)
+                ds = self._download_from_url(temp_dir)
             elif self.data_specs.get("gee_image_collection"):
-                self._download_from_gee()
+                ds = self._download_from_gee()
             elif self.data_specs.get("wget_file_list"):
-                self._download_from_wget_list(temp_dir)
+                ds = self._download_from_wget_list(temp_dir)
             elif self.data_specs.get("raw_local_path"):
-                self._read_manual_download()
+                ds = self._read_manual_download()
             else:
                 raise ValueError(
                     f"No download method for {self.variable}/{self.source}"
                 )
+        self.ds_raw = standardize_dims(ds)
 
     def _read_manual_download(self):
         local_path = (
@@ -109,7 +92,7 @@ class DownloadObservations:
         )
         ds = xr.open_dataset(local_path, chunks={})
         self.var_attrs = ds[self.source_var_name].attrs
-        self.ds_raw = ds
+        return ds
 
     def _download_from_url(self, temp_dir: str):
         """Download data from URL(s)"""
@@ -135,6 +118,7 @@ class DownloadObservations:
             temp_file_name = (
                 f"{temp_dir}/{self.data_specs['download_url'].split('/')[-1]}"
             )
+
             download_file(self.data_specs["download_url"], temp_file_name)
 
             ds = xr.open_dataset(temp_file_name, chunks={}).sel(
@@ -142,7 +126,7 @@ class DownloadObservations:
             )
 
         self.var_attrs = ds[self.source_var_name].attrs
-        self.ds_raw = ds
+        return ds
 
     def _download_from_gee(self):
         """Download data from Google Earth Engine"""
@@ -157,7 +141,7 @@ class DownloadObservations:
             ds = geemap.ee_to_xarray(dataset.select(self.source_var_name))
 
             self.var_attrs = ds[self.source_var_name].attrs
-            self.ds_raw = ds
+            return ds
         except Exception as e:
             logger.error(f"GEE download failed: {e}")
             raise
@@ -195,11 +179,11 @@ class DownloadObservations:
 
         ds = xr.concat(ds_list, dim="time")
         self.var_attrs = ds_list[0][self.source_var_name].attrs
-        self.ds_raw = ds
+        return ds
 
-    def hadcrut5_anomaly_preprocess(self):
-        """Preprocess HadCRUT5 anomaly data by adding climatology"""
-        logger.info("Processing HadCRUT5 anomaly data with climatology")
+    def anomaly_preprocess(self):
+        """Preprocess anomaly data by adding climatology"""
+        logger.info("Processing anomaly data with climatology")
 
         with temporary_directory() as temp_dir:
             clim_file_path = (
@@ -209,12 +193,18 @@ class DownloadObservations:
 
             ds = xr.open_dataset(clim_file_path, chunks={})
             ds["time"] = np.arange(1, 13)
-            ds = ds.rename({"time": "month", "lat": "latitude", "lon": "longitude"})
+            # rename spatial dims? should match the raw data
+            ds = ds.rename({"time": "month"})
+            ds = standardize_dims(ds)
 
             self.ds_raw = (
-                self.ds_raw[self.source_var_name].groupby("time.month")
-                + ds[self.data_specs["climatology_var_name"]]
-            ).to_dataset(name=self.source_var_name)
+                (
+                    self.ds_raw[self.source_var_name].groupby("time.month")
+                    + ds[self.data_specs["climatology_var_name"]]
+                )
+                .to_dataset(name=self.source_var_name)
+                .drop_vars("month")
+            )
 
             self.ds_raw[self.source_var_name].attrs["units"] = ds[
                 self.data_specs["climatology_var_name"]
@@ -328,8 +318,9 @@ def main():
     downloader.download_raw_data()
 
     # Apply preprocessing based on source
-    if args.source == "HadCRUT5":
-        downloader.hadcrut5_anomaly_preprocess()
+    if "climatology_url" in downloader.data_specs:  # args.source == "HadCRUT5":
+        print("anomaly processing")
+        downloader.anomaly_preprocess()
     if args.source == "nasa_modis_error" and args.variable == "od550aer":
         downloader.modis_od550aer_error_preprocess()
 

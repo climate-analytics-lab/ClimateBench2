@@ -6,7 +6,6 @@ import shutil
 import sys
 from csv import writer
 
-import dask.array as da
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -16,12 +15,8 @@ from pyesgf.search import SearchConnection
 
 sys.path.append("..")
 
-from constants import (
-    OBSERVATION_DATA_PATHS,
-    SSP_EXPERIMENT,
-    VARIABLE_FREQUENCY_GROUP,
-)
-from utils import standardize_dims
+from constants import OBSERVATION_DATA_PATHS, SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP
+from utils import download_file, standardize_dims
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +32,15 @@ def search_gcs(filters: dict, drop_older_versions: bool) -> pd.DataFrame:
     Returns:
         pd.DataFrame: datasets matching filters on google cloud
     """
-    df = pd.read_csv("https://cmip6.storage.googleapis.com/pangeo-cmip6.csv")
+    # download because it is slow to read from GCS. should save locally for future runs
+    cmip6_catalogue = "pangeo-cmip6.csv"
+    if os.path.exists(cmip6_catalogue):
+        df = pd.read_csv(cmip6_catalogue)
+    else:
+        download_file(
+            "https://cmip6.storage.googleapis.com/pangeo-cmip6.csv", cmip6_catalogue
+        )
+
     for column, value in filters.items():
         df = df[df[column] == value]
 
@@ -90,13 +93,19 @@ class DataFinder:
         self.mip = "CMIP" if self.start_year < 2015 else "ScenarioMIP"
         # If the time range spans the two experiments
         if (self.end_year >= 2015) & (self.mip == "CMIP"):
-            self.secondary_mip = "ScenarioMIP"
-        else:
-            self.secondary_mip = None
+            logger.warning(
+                "Historical simulation data ends in 2014. End year will be set to 2014."
+            )
+            self.end_year = 2014
 
         self.variable_frequency_table = VARIABLE_FREQUENCY_GROUP[self.variable]
-        self.area_variable_name = "areacello" if self.variable == "tos" else "areacella"
-        self.area_frequency_table = "Ofx" if self.variable == "tos" else "fx"
+        self.area_variable_name = (
+            "areacello" if self.variable_frequency_table == "Omon" else "areacella"
+        )
+        self.area_frequency_table = (
+            "Ofx" if self.variable_frequency_table == "Omon" else "fx"
+        )
+        self.grid = "gr" if self.variable_frequency_table == "Omon" else "gn"
 
         self.obs_data_path_local = (
             "/".join(os.getcwd().split("/")[:-1])
@@ -104,7 +113,6 @@ class DataFinder:
             + OBSERVATION_DATA_PATHS[self.variable]["local"]
         )
         self.obs_data_path_cloud = OBSERVATION_DATA_PATHS[self.variable]["cloud"]
-        self.grid = None
         self.ensemble_members = None
 
         self.model_ds = None
@@ -164,9 +172,8 @@ class DataFinder:
             "member_id": ensemble,
             "activity_id": mip,
             "experiment_id": experiment,
+            "grid_label": self.grid,
         }
-        if self.grid:
-            search_keys["grid_label"] = self.grid
 
         gcs_files = search_gcs(filters=search_keys, drop_older_versions=True)
 
@@ -176,14 +183,6 @@ class DataFinder:
             search_keys.pop("experiment_id")
 
             gcs_files = search_gcs(filters=search_keys, drop_older_versions=True)
-
-        if self.grid is None:
-            if "gn" in gcs_files["grid_label"].unique():
-                self.grid = "gn"
-            else:
-                self.grid = gcs_files["grid_label"].values[0]
-
-        gcs_files = gcs_files[gcs_files["grid_label"] == self.grid]
 
         return gcs_files["zstore"].values[0]
 
@@ -299,7 +298,6 @@ class DataFinder:
         """
         ensemble_ds_list = []
         if self.ensemble_members is None:
-            # insert find ensemble members here -- input params are mip, experiment, table id, variable, source id
             ensemble_members = self.find_ensemble_members(experiment=experiment)
             self.ensemble_members = ensemble_members
         for ensemble in self.ensemble_members:
@@ -331,29 +329,17 @@ class DataFinder:
         Returns:
             xr.Dataset: Analysis ready climate model data. Ensemble mean combination of historical and projected datasets.
         """
-        experiment = "historical" if self.mip == "CMIP" else SSP_EXPERIMENT
+        if self.mip == "CMIP":
+            experiment = "historical"
+            time_slice = slice(f"{self.start_year}-01-01", "2014-12-31")
+        else:
+            experiment = SSP_EXPERIMENT
+            time_slice = slice("2015-01-01", f"{self.end_year}-12-31")
+
         model_ds = self.load_ensemble_mean(
             mip=self.mip, experiment=experiment, ensemble_mean=ensemble_mean
-        )
-        if self.secondary_mip:
-            # historical and projection meet at 2015. Some models overlap in 2015 so setting hard bounds to avoid downstream errors.
-            model_ds = model_ds.sel(
-                time=slice(f"{self.start_year}-01-01", "2014-12-31")
-            )
-            second_model_ens_mean = self.load_ensemble_mean(
-                mip=self.secondary_mip,
-                experiment=SSP_EXPERIMENT,
-                ensemble_mean=ensemble_mean,
-            )
-            model_ds = xr.concat(
-                [model_ds, second_model_ens_mean],
-                dim="time",
-                coords="minimal",
-                compat="override",
-            )
-        model_ds = model_ds.sel(
-            time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")
-        )
+        ).sel(time=time_slice)
+
         self.model_ds = model_ds
         return self.model_ds
 
@@ -420,25 +406,31 @@ class DataFinder:
         self,
         experiment: str,
     ) -> list:
-        df = pd.read_csv("https://cmip6.storage.googleapis.com/pangeo-cmip6.csv")
+        # download because it is slow to read from GCS. should save locally for future runs
+        cmip6_catalogue = "pangeo-cmip6.csv"
+        if os.path.exists(cmip6_catalogue):
+            df = pd.read_csv(cmip6_catalogue)
+        else:
+            download_file(
+                "https://cmip6.storage.googleapis.com/pangeo-cmip6.csv", cmip6_catalogue
+            )
+
         query = dict(
             experiment_id=experiment,
             table_id=self.variable_frequency_table,
             variable_id=self.variable,
             source_id=self.model,
+            grid_label=self.grid,
         )
         col_subset_df = df.loc[(df[list(query)] == pd.Series(query)).all(axis=1)]
-        # check for duplicates (grid, version)
-        # ensemble members are repeated, need to take ensemble member from most recent verion and gn if gn/gr avail
+        # check for duplicates
+        # ensemble members are repeated, need to take ensemble member from most recent verion
         if len(col_subset_df["member_id"]) != len(col_subset_df["member_id"].unique()):
-            if len(col_subset_df["grid_id"].unique()) > 1:
-                col_subset_df = col_subset_df[col_subset_df["grid_label"] == "gn"]
-            else:
-                idx = (
-                    col_subset_df.groupby("member_id")["version"].transform("max")
-                    == col_subset_df["version"]
-                )
-                col_subset_df = col_subset_df[idx]
+            idx = (
+                col_subset_df.groupby("member_id")["version"].transform("max")
+                == col_subset_df["version"]
+            )
+            col_subset_df = col_subset_df[idx]
 
         col_subset_df = col_subset_df[col_subset_df["member_id"].str.contains("i1p1f1")]
         return col_subset_df["member_id"].tolist()

@@ -34,12 +34,11 @@ def search_gcs(filters: dict, drop_older_versions: bool) -> pd.DataFrame:
     """
     # download because it is slow to read from GCS. should save locally for future runs
     cmip6_catalogue = "pangeo-cmip6.csv"
-    if os.path.exists(cmip6_catalogue):
-        df = pd.read_csv(cmip6_catalogue)
-    else:
+    if not os.path.exists(cmip6_catalogue):
         download_file(
             "https://cmip6.storage.googleapis.com/pangeo-cmip6.csv", cmip6_catalogue
         )
+    df = pd.read_csv(cmip6_catalogue)
 
     for column, value in filters.items():
         df = df[df[column] == value]
@@ -408,12 +407,11 @@ class DataFinder:
     ) -> list:
         # download because it is slow to read from GCS. should save locally for future runs
         cmip6_catalogue = "pangeo-cmip6.csv"
-        if os.path.exists(cmip6_catalogue):
-            df = pd.read_csv(cmip6_catalogue)
-        else:
+        if not os.path.exists(cmip6_catalogue):
             download_file(
                 "https://cmip6.storage.googleapis.com/pangeo-cmip6.csv", cmip6_catalogue
             )
+        df = pd.read_csv(cmip6_catalogue)
 
         query = dict(
             experiment_id=experiment,

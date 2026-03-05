@@ -15,7 +15,7 @@ from pyesgf.search import SearchConnection
 
 sys.path.append("..")
 
-from constants import OBSERVATION_DATA_PATHS, SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP
+from constants import SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP
 from utils import download_file, standardize_dims
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,9 @@ class DataFinder:
     The class can also find the model cell area data based on variable passed. If it can't be found, a proxy is created.
     """
 
-    def __init__(self, model: str, variable: str, start_year: int, end_year: int):
+    def __init__(
+        self, model: str, variable: str, source: str, start_year: int, end_year: int
+    ):
         """Initialize DataFinder class.
 
         Args:
@@ -87,6 +89,7 @@ class DataFinder:
         """
         self.model = model
         self.variable = variable
+        self.source = source
         self.start_year = start_year
         self.end_year = end_year
 
@@ -108,11 +111,11 @@ class DataFinder:
         self.grid = "gr" if self.variable_frequency_table == "Omon" else "gn"
 
         self.obs_data_path_local = (
-            "/".join(os.getcwd().split("/")[:-1])
-            + "/"
-            + OBSERVATION_DATA_PATHS[self.variable]["local"]
+            +f"../observations/{self.variable}_{self.source}.zarr"
         )
-        self.obs_data_path_cloud = OBSERVATION_DATA_PATHS[self.variable]["cloud"]
+        self.obs_data_path_cloud = (
+            f"gs://climatebench/observations/{self.variable}_{self.source}.zarr"
+        )
         self.ensemble_members = None
 
         self.model_ds = None

@@ -53,8 +53,13 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
 
     # fix time
     if "time" in ds.dims:
-        # try:
-        ds["time"] = pd.to_datetime(ds["time"].dt.strftime("%Y-%m-01"))
+        try:
+            ds["time"] = pd.to_datetime(ds["time"].dt.strftime("%Y-%m-01"))
+        except (ValueError, pd.errors.OutOfBoundsDatetime):
+            logger.warning(
+                "Could not convert time to pandas datetime (out-of-bounds years); "
+                "keeping original time coordinates"
+            )
         ds = ds.sortby("time")  # make sure its in the right order before slicing
         # except AttributeError:
         #     # berkeley BEST dataset time in format year.month fraction (i.e. 2024.958333 == 2024/12)

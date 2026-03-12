@@ -6,6 +6,9 @@ import pandas as pd
 import requests
 import xarray as xr
 
+import os
+import time
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,14 +57,16 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
     # fix time
     if "time" in ds.dims:
         # try:
-        ds["time"] = pd.to_datetime(ds["time"].dt.strftime("%Y-%m-01"))
+        ds["time"] = pd.to_datetime(ds["time"].dt.floor("D"))
+
+        time_diff = np.median(np.diff(ds.time.values))
+        is_monthly = time_diff > np.timedelta64(20, "D")
+        if is_monthly:
+            # Force all to the 1st of the month
+            ds["time"] = ds.time.dt.floor("D") - pd.to_timedelta(
+                ds.time.dt.day - 1, unit="D"
+            )
         ds = ds.sortby("time")  # make sure its in the right order before slicing
-        # except AttributeError:
-        #     # berkeley BEST dataset time in format year.month fraction (i.e. 2024.958333 == 2024/12)
-        #     years = ds["time"].astype(int)
-        #     months = (ds['time'] - years)*12 + 0.5
-        #     dates = pd.to_datetime(pd.DataFrame({'year': years, 'month': months, 'day': [1]*years.size}))
-        #     ds = ds.assign_coords({'time':dates})
 
     # only if rectilinear grid (tos is curvelinear grid)
     if (len(ds["lat"].dims) == 1) and (len(ds["lon"].dims) == 1):
@@ -128,17 +133,50 @@ def build_zarr_store(var_name: str, dims_dict: dict, attributes: dict, store_pat
     )  # save template, will write each model to its region slice
 
 
-def download_file(url: str, output_path: str) -> None:
-    """Download a file with basic error handling"""
-    logger.info(f"Downloading {url}")
-    try:
-        with requests.get(url, stream=True, timeout=300) as response:
-            response.raise_for_status()
-            with open(output_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-        logger.info(f"Download completed: {output_path}")
-    except Exception as e:
-        logger.error(f"Download failed: {e}")
-        raise
+def download_file(
+    url: str, output_path: str, max_retries: int = 5, headers: dict = {}
+) -> None:
+    """Download a file with the ability to resume after a Connection broken error."""
+    for attempt in range(max_retries):
+        resume_byte = 0
+        mode = "wb"
+
+        # Check if we already have a partial file
+        if os.path.exists(output_path):
+            resume_byte = os.path.getsize(output_path)
+            mode = "ab"  # Append binary mode
+            logger.info(f"Resuming download from byte {resume_byte}")
+
+        # headers = {}
+        if resume_byte > 0:
+            headers["Range"] = f"bytes={resume_byte}-"
+
+        try:
+            # Setting stream=True is vital for large .nc files
+            with requests.get(url, headers=headers, stream=True, timeout=30) as r:
+                # 416 means the range is unsatisfied (often means file is already done)
+                if r.status_code == 416:
+                    logger.info("File already fully downloaded.")
+                    return
+
+                r.raise_for_status()
+
+                with open(output_path, mode) as f:
+                    for chunk in r.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
+                        if chunk:
+                            f.write(chunk)
+
+            logger.info(f"Download completed: {output_path}")
+            return  # Exit loop if successful
+
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ChunkedEncodingError,
+        ) as e:
+            logger.warning(
+                f"Connection lost on attempt {attempt + 1}: {e}. Retrying..."
+            )
+            time.sleep(2)  # Short pause before retrying
+            continue
+
+    raise Exception(f"Failed to download after {max_retries} attempts.")

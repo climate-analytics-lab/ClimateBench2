@@ -30,7 +30,7 @@ sys.path.append("..")
 from utils import standardize_dims
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, force=True)
 
 
 def load_land_fraction(data_finder):
@@ -44,13 +44,12 @@ def load_land_fraction(data_finder):
     Returns:
         xr.DataArray of land fraction (0-100), or None if unavailable.
     """
-    if data_finder.ensemble_members is None:
-        data_finder.find_ensemble_members(experiment="historical")
+    ensemble_ids = data_finder.find_ensemble_members(experiment="historical")
     try:
         sftlf_ds = data_finder.read_data(
             mip="CMIP",
             experiment="historical",
-            ensemble=data_finder.ensemble_members[0],
+            ensemble=ensemble_ids[0],
             frequency_table="fx",
             variable="sftlf",
         )

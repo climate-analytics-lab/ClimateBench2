@@ -201,6 +201,7 @@ def main(
         end_year=end_year,
         lat_max=lat_max,
         lat_min=lat_min,
+        source=source,
     )
     # if overwrite paramter is set, delete files in the save path
     if overwrite:

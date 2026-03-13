@@ -15,7 +15,7 @@ from pyesgf.search import SearchConnection
 
 sys.path.append("..")
 
-from constants import SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP
+from constants import SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP, OBSERVATION_DATA_SOURCES
 from utils import download_file, standardize_dims
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,12 @@ class DataFinder:
     """
 
     def __init__(
-        self, model: str, variable: str, source: str, start_year: int, end_year: int
+        self,
+        model: str,
+        variable: str,
+        start_year: int,
+        end_year: int,
+        source: str = None,
     ):
         """Initialize DataFinder class.
 
@@ -86,6 +91,7 @@ class DataFinder:
             variable (str): Short name of climate variable
             start_year (int): Start of time period for model and observational data
             end_year (int): End of time period for model and observational data
+            source (str): Observation data source. optional if just want model data.
         """
         self.model = model
         self.variable = variable
@@ -109,13 +115,13 @@ class DataFinder:
             "Ofx" if self.variable_frequency_table == "Omon" else "fx"
         )
         self.grid = "gr" if self.variable_frequency_table == "Omon" else "gn"
-
-        self.obs_data_path_local = (
-            +f"../observations/{self.variable}_{self.source}.zarr"
-        )
-        self.obs_data_path_cloud = (
-            f"gs://climatebench/observations/{self.variable}_{self.source}.zarr"
-        )
+        if self.source:
+            self.obs_data_path_local = (
+                +f"../observations/{self.variable}_{self.source}.zarr"
+            )
+            self.obs_data_path_cloud = (
+                f"gs://climatebench/observations/{self.variable}_{self.source}.zarr"
+            )
         self.ensemble_members = None
 
         self.model_ds = None
@@ -413,6 +419,10 @@ class DataFinder:
         Returns:
             xr.Dataset: Observational dataset
         """
+        if not self.source:
+            raise ValueError(
+                f"No observational data source passed. Options are {OBSERVATION_DATA_SOURCES[self.variable]}"
+            )
         if os.path.isdir(self.obs_data_path_local):
             logger.info(
                 f"reading observations from local store: {self.obs_data_path_local}"
@@ -768,6 +778,7 @@ class SaveResults:
         end_year: int,
         lat_min: int = -90,
         lat_max: int = 90,
+        source: str = None,
     ):
         """Initialize SaveResults class, sets local and cloud paths
 
@@ -780,6 +791,7 @@ class SaveResults:
             end_year (int): end of time period for calculated metric
             lat_min (int): spatial bound for calculated metric
             lat_max (int): spatial bound for calculated metric
+            source (str): observational data source
         """
         self.variable = variable
         self.model = model
@@ -790,6 +802,7 @@ class SaveResults:
         self.end_year = end_year
         self.lat_min = lat_min
         self.lat_max = lat_max
+        self.source = source
 
         self.data_label = (
             self.metric
@@ -829,6 +842,7 @@ class SaveResults:
             {
                 "model": [self.model],
                 "variable": [self.variable],
+                "obs_source": [self.source],
                 "ensemble members": ["_".join(self.ensemble_members)],
                 "metric": [self.data_label],
                 "lat_min": [self.lat_min],

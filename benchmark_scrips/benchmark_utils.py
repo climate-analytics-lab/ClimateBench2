@@ -117,7 +117,7 @@ class DataFinder:
         self.grid = "gr" if self.variable_frequency_table == "Omon" else "gn"
         if self.source:
             self.obs_data_path_local = (
-                +f"../observations/{self.variable}_{self.source}.zarr"
+                f"../observations/{self.variable}_{self.source}.zarr"
             )
             self.obs_data_path_cloud = (
                 f"gs://climatebench/observations/{self.variable}_{self.source}.zarr"
@@ -321,7 +321,7 @@ class DataFinder:
                 ["lat_bnds", "lon_bnds", "time_bnds", "height", "wavelength"],
                 errors="ignore",
             )
-            ds = standardize_dims(ds)
+            ds = standardize_dims(ds, reset_coorinates=True, convert_cftime=True)
             ds = ds.expand_dims({"ensemble": [ensemble]})
             ensemble_ds_list.append(ds)
         model_ens_ds = xr.concat(
@@ -427,12 +427,16 @@ class DataFinder:
             logger.info(
                 f"reading observations from local store: {self.obs_data_path_local}"
             )
-            obs_ds = standardize_dims(xr.open_zarr(self.obs_data_path_local))
+            obs_ds = standardize_dims(
+                xr.open_zarr(self.obs_data_path_local), convert_cftime=True
+            )
         else:
             logger.info(
                 f"reading observations from cloud store: {self.obs_data_path_cloud}"
             )
-            obs_ds = standardize_dims(xr.open_zarr(self.obs_data_path_cloud))
+            obs_ds = standardize_dims(
+                xr.open_zarr(self.obs_data_path_cloud), convert_cftime=True
+            )
 
         return obs_ds.sel(
             time=slice(f"{self.start_year}-01-01", f"{self.end_year}-12-31")

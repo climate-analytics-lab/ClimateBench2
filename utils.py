@@ -56,15 +56,19 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
 
     # fix time
     if "time" in ds.dims:
-        # try:
-        ds["time"] = pd.to_datetime(ds["time"].dt.floor("D"))
-
-        time_diff = np.median(np.diff(ds.time.values))
-        is_monthly = time_diff > np.timedelta64(20, "D")
-        if is_monthly:
-            # Force all to the 1st of the month
-            ds["time"] = ds.time.dt.floor("D") - pd.to_timedelta(
-                ds.time.dt.day - 1, unit="D"
+        try:
+            ds["time"] = pd.to_datetime(ds["time"].dt.floor("D"))
+            time_diff = np.median(np.diff(ds.time.values))
+            is_monthly = time_diff > np.timedelta64(20, "D")
+            if is_monthly:
+                # Force all to the 1st of the month
+                ds["time"] = ds.time.dt.floor("D") - pd.to_timedelta(
+                    ds.time.dt.day - 1, unit="D"
+                )
+        except (ValueError, pd.errors.OutOfBoundsDatetime):
+            logger.warning(
+                "Could not convert time to pandas datetime (out-of-bounds years); "
+                "keeping original time coordinates"
             )
         ds = ds.sortby("time")  # make sure its in the right order before slicing
 

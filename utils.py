@@ -12,12 +12,20 @@ import time
 logger = logging.getLogger(__name__)
 
 
-def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Dataset:
+def standardize_dims(
+    ds: xr.Dataset,
+    reset_coorinates: bool = False,
+    convert_cftime: bool = False,
+) -> xr.Dataset:
     """Fixes common problems with xarray datasets
 
     Args:
         ds (xr.Dataset): Dataset with spatial and temporal dimensions
         reset_coordinates (bool): Reset coordinates to regular grid. Default is False.
+        convert_cftime (bool): Convert cftime datetime coordinates to numpy datetime64.
+            Useful when the dataset uses a non-standard calendar (e.g. 360-day, noleap).
+            Dates that fall outside the numpy datetime64 range will raise a ValueError.
+            Default is False.
 
     Returns:
         xr.Dataset: Normalized dataset
@@ -56,6 +64,11 @@ def standardize_dims(ds: xr.Dataset, reset_coorinates: bool = False) -> xr.Datas
 
     # fix time
     if "time" in ds.dims:
+        if convert_cftime:
+            try:
+                ds = ds.convert_calendar("standard", use_cftime=False)
+            except Exception as e:
+                logger.warning(f"Could not convert cftime to datetime: {e}")
         try:
             ds["time"] = pd.to_datetime(ds["time"].dt.floor("D"))
             time_diff = np.median(np.diff(ds.time.values))

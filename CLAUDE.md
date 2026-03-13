@@ -41,6 +41,11 @@ python ecs_benchmark.py --model UKESM1-0-LL --n_years 150 --save_to_cloud
 cd benchmark_scrips
 python energy_balance_benchmark.py --model CanESM5
 python energy_balance_benchmark.py --model CanESM5 --min_years 100
+**Land-ocean warming contrast (Tier I):**
+```bash
+cd benchmark_scrips
+python land_ocean_warming_benchmark.py --model CanESM5
+python land_ocean_warming_benchmark.py --model CanESM5 --n_years 150 --equilibrium_years 50
 ```
 
 **Bulk benchmark run:**
@@ -76,6 +81,7 @@ python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/paleo_scr
 - [benchmark_scrips/model_benchmark.py](benchmark_scrips/model_benchmark.py) — CLI entry point orchestrating the three classes; handles `ohc` (ocean heat content) as a special derived variable requiring both `thetao` and `so`
 - [benchmark_scrips/ecs_benchmark.py](benchmark_scrips/ecs_benchmark.py) — Tier I ECS diagnosis via Gregory regression on `abrupt-4xCO2`; loads `tas`, `rsdt`, `rsut`, `rlut` from piControl (baseline) and abrupt-4xCO2 (first 150 yr), performs linear regression of TOA net flux vs global-mean temperature, outputs ECS/lambda/forcing to `results/ecs/ecs_results.csv`
 - [benchmark_scrips/energy_balance_benchmark.py](benchmark_scrips/energy_balance_benchmark.py) — Tier I energy balance closure test on piControl; computes TOA net flux drift and checks against 0.1 W/m²/decade threshold, validates component fluxes against ICONEval/CERES-EBAF observational bounds from `reference_bounds.yaml`, outputs to `results/energy_balance/energy_balance_results.csv`
+- [benchmark_scrips/land_ocean_warming_benchmark.py](benchmark_scrips/land_ocean_warming_benchmark.py) — Tier I land-ocean warming contrast from `abrupt-4xCO2`; loads `tas` and `sftlf` (land fraction mask), computes warming ratio from equilibrium response (last 50 yr), pass/fail against expected range 1.2–1.6, outputs to `results/land_ocean_warming/land_ocean_warming_results.csv`
 
 ### Variable Reference
 
@@ -122,3 +128,4 @@ Default SSP scenario is `ssp245`, set in `constants.py`. Historical runs cover 1
 |-----------|--------|-------------|-----------|--------|
 | ECS (Gregory regression) | `ecs_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `rsdt`, `rsut`, `rlut` | `results/ecs/ecs_results.csv` |
 | Energy balance closure | `energy_balance_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut` | `results/energy_balance/energy_balance_results.csv` |
+| Land-ocean warming contrast | `land_ocean_warming_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `sftlf` | `results/land_ocean_warming/land_ocean_warming_results.csv` |

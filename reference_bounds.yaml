@@ -15,12 +15,12 @@ tas:
 rlut:
   units: W m-2
   global_mean: [226.4, 246.3]
-  sources: [CERES-EBAF, ERA5, MERRA2]
+  sources: [CERES-EBAF, ESACCI-CLOUD, ISCCP-FH, ERA5]
 
 rsut:
   units: W m-2
   global_mean: [91.1, 128.8]
-  sources: [CERES-EBAF, ERA5, MERRA2]
+  sources: [CERES-EBAF, ESACCI-CLOUD, ISCCP-FH]
 
 rsdt:
   units: W m-2
@@ -30,7 +30,7 @@ rsdt:
 clt:
   units: "%"
   global_mean: [58.7, 74.9]
-  sources: [ESACCI-CLOUD, CLARA-AVHRR, MODIS, ERA5]
+  sources: [ESACCI-CLOUD, CLARA-AVHRR, MODIS, ERA5, PATMOS-x]
 
 pr:
   units: mm day-1
@@ -40,12 +40,12 @@ pr:
 lwcre:
   units: W m-2
   global_mean: [23.6, 30.5]
-  sources: [CERES-EBAF]
+  sources: [CERES-EBAF, ESACCI-CLOUD, ISCCP-FH]
 
 swcre:
   units: W m-2
   global_mean: [-73.5, -40.6]
-  sources: [CERES-EBAF]
+  sources: [CERES-EBAF, ESACCI-CLOUD, ISCCP-FH]
 
 # TOA net flux (rsdt - rsut - rlut) for a balanced climate should be
 # near zero. In piControl, drift should be < 0.1 W/m2/decade.

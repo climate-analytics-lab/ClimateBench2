@@ -29,6 +29,13 @@ python model_benchmark.py --model CanESM5 --variable tas --metric zonal_mean_rms
 Metric options: `zonal_mean_rmse`, `zonal_mean_mae`, `spatial_rmse`, `spatial_mae`, `crps`
 Adjustment options: `bias_adjustment`, `anomaly` (or none)
 
+**ECS diagnosis (Tier I — Gregory regression):**
+```bash
+cd benchmark_scrips
+python ecs_benchmark.py --model CanESM5
+python ecs_benchmark.py --model UKESM1-0-LL --n_years 150 --save_to_cloud
+```
+
 **Bulk benchmark run:**
 ```bash
 cd benchmark_scrips
@@ -60,6 +67,7 @@ python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/paleo_scr
   - `MetricCalculation` — computes RMSE, MAE, CRPS with optional zonal mean, bias adjustment, or anomaly preprocessing using xskillscore
   - `SaveResults` — writes results CSV locally or to GCS
 - [benchmark_scrips/model_benchmark.py](benchmark_scrips/model_benchmark.py) — CLI entry point orchestrating the three classes; handles `ohc` (ocean heat content) as a special derived variable requiring both `thetao` and `so`
+- [benchmark_scrips/ecs_benchmark.py](benchmark_scrips/ecs_benchmark.py) — Tier I ECS diagnosis via Gregory regression on `abrupt-4xCO2`; loads `tas`, `rsdt`, `rsut`, `rlut` from piControl (baseline) and abrupt-4xCO2 (first 150 yr), performs linear regression of TOA net flux vs global-mean temperature, outputs ECS/lambda/forcing to `results/ecs/ecs_results.csv`
 
 ### Variable Reference
 
@@ -70,6 +78,7 @@ python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/paleo_scr
 | `tos` | Sea surface temperature | Omon | NOAA OISST |
 | `clt` | Cloud area fraction | Amon | NASA MODIS (GEE) |
 | `od550aer` | Aerosol optical depth | AERmon | NASA MODIS (GEE) |
+| `rsdt` | Incoming TOA SW flux | Amon | — (model only) |
 | `rsut`/`rlut` | TOA SW/LW flux (all-sky) | Amon | NASA CERES |
 | `rsutcs`/`rlutcs` | TOA SW/LW flux (clear-sky) | Amon | NASA CERES |
 | `thetao` | Ocean potential temperature | Omon | Argo |
@@ -94,3 +103,13 @@ earthengine authenticate
 ### SSP Experiment
 
 Default SSP scenario is `ssp245`, set in `constants.py`. Historical runs cover 1960–2014; SSP covers 2015–2024.
+
+### Non-SSP Experiments (piControl, abrupt-4xCO2, etc.)
+
+`DataFinder.load_experiment_ds(experiment, n_years=None)` loads data for any single CMIP6 experiment without the historical+SSP concatenation logic. Used by Tier I benchmarks that require piControl or idealized forcing experiments. `standardize_dims()` gracefully handles out-of-bounds time coordinates common in long control runs.
+
+### Tier I Benchmarks
+
+| Benchmark | Script | Experiments | Variables | Output |
+|-----------|--------|-------------|-----------|--------|
+| ECS (Gregory regression) | `ecs_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `rsdt`, `rsut`, `rlut` | `results/ecs/ecs_results.csv` |

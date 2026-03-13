@@ -4,6 +4,7 @@ VARIABLE_FREQUENCY_GROUP = {
     "clt": "Amon",
     "tos": "Omon",
     "od550aer": "AERmon",
+    "rsdt": "Amon",
     "rsut": "Amon",
     "rlut": "Amon",
     "rsutcs": "Amon",

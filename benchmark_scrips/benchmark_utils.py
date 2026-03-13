@@ -107,12 +107,16 @@ class DataFinder:
         )
         self.grid = "gr" if self.variable_frequency_table == "Omon" else "gn"
 
-        self.obs_data_path_local = (
-            "/".join(os.getcwd().split("/")[:-1])
-            + "/"
-            + OBSERVATION_DATA_PATHS[self.variable]["local"]
-        )
-        self.obs_data_path_cloud = OBSERVATION_DATA_PATHS[self.variable]["cloud"]
+        if self.variable in OBSERVATION_DATA_PATHS:
+            self.obs_data_path_local = (
+                "/".join(os.getcwd().split("/")[:-1])
+                + "/"
+                + OBSERVATION_DATA_PATHS[self.variable]["local"]
+            )
+            self.obs_data_path_cloud = OBSERVATION_DATA_PATHS[self.variable]["cloud"]
+        else:
+            self.obs_data_path_local = None
+            self.obs_data_path_cloud = None
         self.ensemble_members = None
 
         self.model_ds = None
@@ -342,6 +346,29 @@ class DataFinder:
 
         self.model_ds = model_ds
         return self.model_ds
+
+    def load_experiment_ds(
+        self, experiment: str, n_years: int = None, ensemble_mean: bool = True
+    ) -> xr.Dataset:
+        """Load data for a single CMIP6 experiment (e.g., piControl, abrupt-4xCO2).
+
+        Args:
+            experiment (str): CMIP6 experiment name (e.g., "piControl", "abrupt-4xCO2")
+            n_years (int, optional): Number of years from start to load. None for all.
+            ensemble_mean (bool): Return ensemble mean if True.
+
+        Returns:
+            xr.Dataset: Model data for the specified experiment.
+        """
+        ds = self.load_ensemble_mean(
+            mip="CMIP", experiment=experiment, ensemble_mean=ensemble_mean
+        )
+        if n_years is not None:
+            # Select first n_years by counting monthly time steps
+            n_timesteps = n_years * 12
+            if len(ds.time) > n_timesteps:
+                ds = ds.isel(time=slice(0, n_timesteps))
+        return ds
 
     def load_cell_area_ds(self) -> xr.DataArray:
         """Reads model cell area data. fx if atmospheric variable, Ofx if ocean variable. If data not found, prints warning and returns none. Can use cos(lat) as proxy for cell area. Passed through standardizer function to make sure dims are named correctly.

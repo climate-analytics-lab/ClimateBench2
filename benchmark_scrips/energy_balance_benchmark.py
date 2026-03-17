@@ -197,7 +197,6 @@ def main(
             "mean_rsut_Wm2": [round(mean_rsut, 2)],
             "mean_rlut_Wm2": [round(mean_rlut, 2)],
             "pass_drift": [passes],
-            "rsdt_in_bounds": [bounds_checks.get("rsdt", "")],
             "rsut_in_bounds": [bounds_checks.get("rsut", "")],
             "rlut_in_bounds": [bounds_checks.get("rlut", "")],
             "n_years": [n_common],

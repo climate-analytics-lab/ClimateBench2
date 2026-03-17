@@ -78,7 +78,7 @@ def standardize_dims(
                 ds["time"] = ds.time.dt.floor("D") - pd.to_timedelta(
                     ds.time.dt.day - 1, unit="D"
                 )
-        except (ValueError, pd.errors.OutOfBoundsDatetime):
+        except (ValueError, TypeError, pd.errors.OutOfBoundsDatetime):
             logger.warning(
                 "Could not convert time to pandas datetime (out-of-bounds years); "
                 "keeping original time coordinates"

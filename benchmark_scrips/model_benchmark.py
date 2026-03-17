@@ -16,6 +16,7 @@ logger.setLevel(logging.INFO)
 def main(
     model: str,
     variable: str,
+    source: str,
     metric: str,
     adjustment: str,
     lat_min: int = -90,
@@ -27,7 +28,7 @@ def main(
     overwrite: bool = False,
 ):
     logger.info(
-        f"Processing model: {model}, variable: {variable}, metric: {metric}, adjustment: {adjustment}"
+        f"Processing model: {model}, variable: {variable}, metric: {metric}, adjustment: {adjustment}, observation data source: {source}"
     )
     ensemble_mean = False if "crps" in metric else True
 
@@ -36,10 +37,18 @@ def main(
 
     if variable == "ohc":
         data_finder = DataFinder(
-            model=model, variable="thetao", start_year=start_year, end_year=end_year
+            model=model,
+            variable="thetao",
+            source=source,
+            start_year=start_year,
+            end_year=end_year,
         )
         data_finder_so = DataFinder(
-            model=model, variable="so", start_year=start_year, end_year=end_year
+            model=model,
+            variable="so",
+            source=source,
+            start_year=start_year,
+            end_year=end_year,
         )
         logger.info("Reading model data")
 
@@ -139,7 +148,11 @@ def main(
     else:
 
         data_finder = DataFinder(
-            model=model, variable=variable, start_year=start_year, end_year=end_year
+            model=model,
+            variable=variable,
+            source=source,
+            start_year=start_year,
+            end_year=end_year,
         )
 
         logger.info("Reading model data")
@@ -188,6 +201,7 @@ def main(
         end_year=end_year,
         lat_max=lat_max,
         lat_min=lat_min,
+        source=source,
     )
     # if overwrite paramter is set, delete files in the save path
     if overwrite:
@@ -224,6 +238,12 @@ if __name__ == "__main__":
             "rlutcs",
             "ohc",
         ],
+    )
+    parser.add_argument(
+        "--source",
+        required=True,
+        type=str,
+        help="Observational data source. See constants for list of sources for each variable",
     )
     parser.add_argument(
         "--metric",
@@ -290,9 +310,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # add check that source is appropriate for variable.
+
     main(
         model=args.model,
         variable=args.variable,
+        source=args.source,
         metric=args.metric,
         adjustment=args.adjustment,
         lat_min=args.lat_min,

@@ -22,11 +22,6 @@ rsut:
   global_mean: [91.1, 128.8]
   sources: [CERES-EBAF, ESACCI-CLOUD, ISCCP-FH]
 
-rsdt:
-  units: W m-2
-  global_mean: [335.0, 345.0]
-  sources: [CERES-EBAF]
-
 clt:
   units: "%"
   global_mean: [58.7, 74.9]

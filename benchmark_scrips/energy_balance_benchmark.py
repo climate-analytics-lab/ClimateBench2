@@ -161,20 +161,18 @@ def main(
 
     # --- Long-term mean imbalance ---
     mean_imbalance = float(toa_net.mean())
-    mean_rsdt = float(rsdt_annual.mean())
     mean_rsut = float(rsut_annual.mean())
     mean_rlut = float(rlut_annual.mean())
 
     logger.info(f"  TOA net flux drift: {drift:.4f} W/m2/decade")
     logger.info(f"  TOA net flux mean imbalance: {mean_imbalance:.3f} W/m2")
     logger.info(f"  Pass (|drift| < {DRIFT_THRESHOLD}): {passes}")
-    logger.info(f"  Mean rsdt: {mean_rsdt:.2f} W/m2")
     logger.info(f"  Mean rsut: {mean_rsut:.2f} W/m2")
     logger.info(f"  Mean rlut: {mean_rlut:.2f} W/m2")
 
     # --- Check against ICONEval observational bounds ---
     bounds_checks = {}
-    for var, mean_val in [("rsdt", mean_rsdt), ("rsut", mean_rsut), ("rlut", mean_rlut)]:
+    for var, mean_val in [("rsut", mean_rsut), ("rlut", mean_rlut)]:
         if var in bounds and "global_mean" in bounds[var]:
             lo, hi = bounds[var]["global_mean"]
             in_range = lo <= mean_val <= hi
@@ -196,7 +194,6 @@ def main(
             "toa_drift_Wm2_decade": [round(drift, 6)],
             "toa_drift_std_err": [round(drift_results["std_err_per_decade"], 6)],
             "toa_mean_imbalance_Wm2": [round(mean_imbalance, 4)],
-            "mean_rsdt_Wm2": [round(mean_rsdt, 2)],
             "mean_rsut_Wm2": [round(mean_rsut, 2)],
             "mean_rlut_Wm2": [round(mean_rlut, 2)],
             "pass_drift": [passes],

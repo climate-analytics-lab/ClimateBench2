@@ -114,7 +114,7 @@ class DataFinder:
         self.area_frequency_table = (
             "Ofx" if self.variable_frequency_table == "Omon" else "fx"
         )
-        self.grid = "gr" if self.variable_frequency_table == "Omon" else "gn"
+        self.grid = "gn"  # resolved to "gr" on first catalog lookup if available
         if self.source:
             self.obs_data_path_local = (
                 f"../observations/{self.variable}_{self.source}.zarr"
@@ -127,6 +127,39 @@ class DataFinder:
         self.model_ds = None
         self.fx_ds = None
         self.obs_ds = None
+
+    def _resolve_grid(self, experiment: str) -> None:
+        """For Omon variables, prefer 'gr' but fall back to 'gn' if unavailable.
+
+        Checks the pangeo-cmip6 catalogue and updates self.grid in place.
+        No-op for non-Omon tables (gn is already set).
+        """
+        if self.variable_frequency_table != "Omon":
+            return
+        cmip6_catalogue = "pangeo-cmip6.csv"
+        if os.path.exists(cmip6_catalogue):
+            df = pd.read_csv(cmip6_catalogue)
+        else:
+            download_file(
+                "https://cmip6.storage.googleapis.com/pangeo-cmip6.csv",
+                cmip6_catalogue,
+            )
+            df = pd.read_csv(cmip6_catalogue)
+        base_query = dict(
+            source_id=self.model,
+            table_id=self.variable_frequency_table,
+            variable_id=self.variable,
+            experiment_id=experiment,
+        )
+        subset = df.loc[(df[list(base_query)] == pd.Series(base_query)).all(axis=1)]
+        if "gr" in subset["grid_label"].values:
+            self.grid = "gr"
+            logger.info(f"  Grid resolved to 'gr' for {self.model} {self.variable}")
+        else:
+            self.grid = "gn"
+            logger.info(
+                f"  No 'gr' data found; falling back to 'gn' for {self.model} {self.variable}"
+            )
 
     def check_local_files(
         self,
@@ -174,6 +207,7 @@ class DataFinder:
         Returns:
             str: cloud storage file path
         """
+        self._resolve_grid(experiment)
         search_keys = {
             "source_id": self.model,
             "table_id": frequency_table,
@@ -446,6 +480,7 @@ class DataFinder:
         self,
         experiment: str,
     ) -> list:
+        self._resolve_grid(experiment)
         # download because it is slow to read from GCS. should save locally for future runs
         cmip6_catalogue = "pangeo-cmip6.csv"
         if os.path.exists(cmip6_catalogue):

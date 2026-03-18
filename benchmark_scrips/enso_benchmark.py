@@ -231,6 +231,10 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
         dict with tropical_tas_composite, maritime_pr_composite,
               tas_sign_ok, pr_sign_ok.
     """
+    # Round time dims to day
+    nino34['time'] = nino34.time.dt.floor("D")
+    tas_ds['time'] = tas_ds.time.dt.floor("D")
+    pr_ds['time'] = pr_ds.time.dt.floor("D")
     # Align time axes
     common_time = np.intersect1d(
         nino34.time.values,
@@ -245,9 +249,9 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
             "pr_sign_ok": False,
         }
 
-    nino34_c = nino34.sel(time=common_time)
-    tas = tas_ds["tas"].sel(time=common_time)
-    pr = pr_ds["pr"].sel(time=common_time)
+    nino34_c = nino34.sel(time=common_time,method='nearest')
+    tas = tas_ds["tas"].sel(time=common_time,method='nearest')
+    pr = pr_ds["pr"].sel(time=common_time,method='nearest')
 
     # Monthly anomalies for tas and pr
     tas_anom = tas.groupby("time.month") - tas.groupby("time.month").mean("time")
@@ -257,7 +261,6 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
     warm_mask = nino34_c > threshold
     n_warm = int(warm_mask.sum())
     logger.info(f"  Warm ENSO months (Niño-3.4 > {threshold} K): {n_warm}")
-
     if n_warm < 6:
         logger.warning("  Too few warm ENSO months for a reliable composite.")
 

@@ -48,6 +48,13 @@ python land_ocean_warming_benchmark.py --model CanESM5
 python land_ocean_warming_benchmark.py --model CanESM5 --n_years 150 --equilibrium_years 50
 ```
 
+**Arctic amplification (Tier I):**
+```bash
+cd benchmark_scrips
+python arctic_amplification_benchmark.py --model CanESM5
+python arctic_amplification_benchmark.py --model CanESM5 --n_years 150 --equilibrium_years 50
+```
+
 **Bulk benchmark run:**
 ```bash
 cd benchmark_scrips
@@ -129,3 +136,4 @@ Default SSP scenario is `ssp245`, set in `constants.py`. Historical runs cover 1
 | ECS (Gregory regression) | `ecs_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `rsdt`, `rsut`, `rlut` | `results/ecs/ecs_results.csv` |
 | Energy balance closure | `energy_balance_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut` | `results/energy_balance/energy_balance_results.csv` |
 | Land-ocean warming contrast | `land_ocean_warming_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `sftlf` | `results/land_ocean_warming/land_ocean_warming_results.csv` |
+| Arctic amplification | `arctic_amplification_benchmark.py` | piControl, abrupt-4xCO2 | `tas` | `results/arctic_amplification/arctic_amplification_results.csv` |

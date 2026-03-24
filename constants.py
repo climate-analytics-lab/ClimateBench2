@@ -9,6 +9,12 @@ VARIABLE_FREQUENCY_GROUP = {
     "rlut": "Amon",
     "rsutcs": "Amon",
     "rlutcs": "Amon",
+    "hfss": "Amon",
+    "hfls": "Amon",
+    "rlds": "Amon",
+    "rlus": "Amon",
+    "rsds": "Amon",
+    "rsus": "Amon",
     "thetao": "Omon",
     "so": "Omon",
 }

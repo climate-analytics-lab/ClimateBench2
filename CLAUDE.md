@@ -62,6 +62,13 @@ python bjerknes_benchmark.py --model CanESM5
 python bjerknes_benchmark.py --model CanESM5 --min_years 200
 ```
 
+**Meridional heat transport partitioning (Tier I):**
+```bash
+cd benchmark_scrips
+python meridional_heat_transport_benchmark.py --model CanESM5
+python meridional_heat_transport_benchmark.py --model CanESM5 --min_years 200
+```
+
 **Bulk benchmark run:**
 ```bash
 cd benchmark_scrips
@@ -145,3 +152,4 @@ Default SSP scenario is `ssp245`, set in `constants.py`. Historical runs cover 1
 | Land-ocean warming contrast | `land_ocean_warming_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `sftlf` | `results/land_ocean_warming/land_ocean_warming_results.csv` |
 | Arctic amplification | `arctic_amplification_benchmark.py` | piControl, abrupt-4xCO2 | `tas` | `results/arctic_amplification/arctic_amplification_results.csv` |
 | Bjerknes compensation | `bjerknes_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/bjerknes_compensation/bjerknes_results.csv` |
+| Meridional heat transport | `meridional_heat_transport_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/meridional_heat_transport/meridional_heat_transport_results.csv` |

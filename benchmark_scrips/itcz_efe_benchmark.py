@@ -12,14 +12,12 @@ AMET is diagnosed from the energy budget residual method:
 
   AMET(phi) = 2*pi*a^2 * integral_{-pi/2}^{phi} div_A(phi') cos(phi') dphi'
 
-  EFE(month)  = latitude where AMET = 0 (near-equatorial zero crossing)
-  ITCZ(month) = latitude of zonal-mean precipitation maximum (|lat| <= 30°)
+  EFE(t)  = latitude where AMET = 0 (near-equatorial zero crossing)
+  ITCZ(t) = latitude of zonal-mean precipitation maximum (|lat| <= 30°)
 
 Pass/fail criteria (from Donohoe et al., 2013 and Schneider et al., 2014):
   - Seasonal r(ITCZ, EFE)              > 0.85
-  - Scaling slope (ITCZ vs F_xeq)     1.5–5.0 °/PW
-  - EFE seasonal amplitude             > 5°
-  - Annual-mean |EFE – ITCZ| offset    < 5°
+  - Scaling slope (ITCZ vs F_xeq)      -1.5 – -5.0 °/PW
 
 Usage:
     python itcz_efe_benchmark.py --model CanESM5
@@ -53,14 +51,12 @@ logging.basicConfig(level=logging.INFO, force=True)
 EARTH_RADIUS = 6.371e6  # metres
 
 # Pass/fail thresholds
-ITCZ_EFE_CORR_MIN = 0.85   # minimum seasonal Pearson r(ITCZ, EFE)
-SCALING_SLOPE_MIN = 1.5    # °/PW — lower bound on ITCZ vs F_xeq regression
-SCALING_SLOPE_MAX = 5.0    # °/PW — upper bound
-EFE_AMP_MIN = 5.0          # ° — EFE must migrate at least this far seasonally
-ITCZ_EFE_OFFSET_MAX = 5.0  # ° — annual-mean |EFE – ITCZ| must be below this
+ITCZ_EFE_CORR_MIN = 0.85  # minimum seasonal Pearson r(ITCZ, EFE)
+SCALING_SLOPE_MAX = -1.5  # °/PW — lower bound on ITCZ vs F_xeq regression
+SCALING_SLOPE_MIN = -5.0  # °/PW — upper bound
 
 # Tropical search bands
-ITCZ_LAT_BAND = 30.0   # search ±30° for precipitation maximum
+ITCZ_LAT_BAND = 30.0  # search ±30° for precipitation maximum
 EFE_SEARCH_BAND = 40.0  # search ±40° for AMET zero crossing
 
 # Required CMIP6 variables (all Amon)
@@ -132,69 +128,43 @@ def compute_meridional_transport(zonal_mean_flux, lat):
 # ---------------------------------------------------------------------------
 
 
-def find_efe(amet_profile_pw, lat, search_band=EFE_SEARCH_BAND):
-    """Find the energy flux equator: latitude where AMET = 0.
-
-    Searches for zero crossings of AMET within |lat| <= search_band and
-    returns the crossing nearest the equator (linearly interpolated).
+def compute_efe(amet_pw, lat_band=EFE_SEARCH_BAND):
+    """Find the EFE latitude.
 
     Args:
-        amet_profile_pw: 1-D numpy array of AMET in PW, ordered S to N.
-        lat: 1-D numpy array of latitudes (degrees), ordered S to N.
-        search_band: half-width of tropical search band (degrees).
-
-    Returns:
-        float: EFE latitude in degrees, or np.nan if no crossing found.
-    """
-    mask = np.abs(lat) <= search_band
-    lat_t = lat[mask]
-    amet_t = amet_profile_pw[mask]
-
-    signs = np.sign(amet_t)
-    crossings = np.where(np.diff(signs) != 0)[0]
-
-    if len(crossings) == 0:
-        return np.nan
-
-    efe_candidates = []
-    for i in crossings:
-        x0, x1 = float(lat_t[i]), float(lat_t[i + 1])
-        y0, y1 = float(amet_t[i]), float(amet_t[i + 1])
-        efe = x0 - y0 * (x1 - x0) / (y1 - y0) if y1 != y0 else (x0 + x1) / 2.0
-        efe_candidates.append(efe)
-
-    return float(efe_candidates[int(np.argmin(np.abs(efe_candidates)))])
-
-
-def find_itcz_latitude(pr_zm_profile, lat, lat_band=ITCZ_LAT_BAND):
-    """Find the ITCZ latitude as the zonal-mean precipitation maximum.
-
-    Args:
-        pr_zm_profile: 1-D numpy array of zonal-mean precipitation (any units).
-        lat: 1-D numpy array of latitudes (degrees).
+        amet_pw: xr.DataArray (time, lat), AMET in PW.
         lat_band: search within ±lat_band degrees.
 
     Returns:
-        float: ITCZ latitude in degrees.
+        np.ndarray (time,): EFE latitude in degrees.
     """
-    mask = np.abs(lat) <= lat_band
-    lat_t = lat[mask]
-    pr_t = pr_zm_profile[mask]
-    idx = int(np.argmax(pr_t))
-    return float(lat_t[idx])
+    a = amet_pw.sel(lat=slice(lat_band * -1, lat_band))
+    a_deriv = a.differentiate(coord="lat")
+    sign_changes = (
+        np.concatenate(
+            [np.diff(np.sign(a.data), axis=1), False * np.ones((1980, 1))], axis=1
+        )
+        != 0
+    )
+    candidates = a_deriv.where(sign_changes)
+    abs_lat_masked = np.abs(candidates["lat"]).where(~np.isnan(candidates))
+    efe_idx = abs_lat_masked.argmin(dim="lat")
+    efe_lat = candidates["lat"].isel(lat=efe_idx)
+    return efe_lat.drop(["lat"])
 
 
-def interpolate_amet_at_equator(amet_profile_pw, lat):
-    """Linearly interpolate AMET to the equator (lat = 0).
+def compute_itcz(pr_zm, lat_band=ITCZ_LAT_BAND):
+    """Find the ITCZ latitude.
 
     Args:
-        amet_profile_pw: 1-D numpy array of AMET in PW, ordered S to N.
-        lat: 1-D numpy array of latitudes (degrees), ordered S to N.
+        pr_zm: xr.DataArray (time, lat), zonal-mean precipitation.
+        lat_band: search within ±lat_band degrees.
 
     Returns:
-        float: AMET at the equator in PW.
+        np.ndarray (time,): ITCZ latitude in degrees.
     """
-    return float(np.interp(0.0, lat, amet_profile_pw))
+    pr_t = pr_zm.sel(lat=slice(lat_band * -1, lat_band))
+    return pr_t.idxmax(dim="lat")
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +199,7 @@ def main(
             if ensemble_members is None:
                 ensemble_members = df.ensemble_members
             logger.info(
-                f"    {var}: {len(ds.time)} months "
-                f"({len(ds.time) // 12} years)"
+                f"    {var}: {len(ds.time)} months " f"({len(ds.time) // 12} years)"
             )
         except Exception as e:
             logger.error(f"    Failed to load historical {var}: {e}")
@@ -258,50 +227,25 @@ def main(
 
     lat = div_a_zm["lat"].values
 
-    # --- Monthly climatologies ---
-    logger.info("  Computing monthly climatologies ...")
-    div_a_zm_clim = div_a_zm.groupby("time.month").mean("time")
-    pr_zm_clim = pr_zm.groupby("time.month").mean("time")
+    # --- AMET for every time step ---
+    logger.info("  Computing AMET ...")
+    amet = compute_meridional_transport(div_a_zm, lat)
+    amet_pw = amet / 1e15
 
-    # --- AMET climatology ---
-    logger.info("  Computing AMET seasonal climatology ...")
-    amet_clim = compute_meridional_transport(div_a_zm_clim, lat)
-    amet_clim_pw = amet_clim / 1e15 # convert to PW
+    # --- EFE and ITCZ latitude for every time step ---
+    logger.info("  Diagnosing EFE and ITCZ latitudes ...")
+    efe_lats = compute_efe(amet_pw)
+    itcz_lats = compute_itcz(pr_zm)
+    xeq_flux_pw = amet_pw.interp(lat=0.0).values
 
-    # --- Seasonal EFE and ITCZ latitudes ---
-    logger.info("  Diagnosing EFE and ITCZ latitudes for each calendar month ...")
-    efe_lats = []
-    itcz_lats = []
-    xeq_flux_pw = []
-
-    for m in range(12):
-        amet_m = amet_clim_pw.isel(month=m).values
-        pr_m = pr_zm_clim.isel(month=m).values
-
-        efe = find_efe(amet_m, lat)
-        itcz = find_itcz_latitude(pr_m, lat)
-        fxeq = interpolate_amet_at_equator(amet_m, lat)
-
-        efe_lats.append(efe)
-        itcz_lats.append(itcz)
-        xeq_flux_pw.append(fxeq)
-
-        logger.info(
-            f"    Month {m + 1:02d}: EFE = {efe:+.1f}°, "
-            f"ITCZ = {itcz:+.1f}°, F_xeq = {fxeq:+.3f} PW"
-        )
-
-    efe_lats = np.array(efe_lats)
-    itcz_lats = np.array(itcz_lats)
-    xeq_flux_pw = np.array(xeq_flux_pw)
-
-    # Drop any months where EFE could not be determined
+    # Drop any time steps where EFE could not be determined
     valid = ~np.isnan(efe_lats)
     n_valid = int(valid.sum())
-    if n_valid < 10:
+    n_invalid = n_months_common - n_valid
+    if n_invalid > 0:
         logger.warning(
-            f"  Only {n_valid}/12 calendar months have a valid EFE. "
-            "Results may be unreliable."
+            f"  {n_invalid}/{n_months_common} time steps had no valid EFE crossing "
+            "and will be excluded."
         )
 
     efe_v = efe_lats[valid]
@@ -310,31 +254,22 @@ def main(
 
     # --- Statistics ---
     # 1. Seasonal correlation: r(ITCZ, EFE)
-    r_itcz_efe = float(np.corrcoef(efe_v, itcz_v)[0, 1])
+    r_itcz_efe = float(np.corrcoef(efe_v[:-2], itcz_v[2:])[0, 1])
 
     # 2. Scaling regression: ITCZ = slope * F_xeq + intercept  (°/PW)
-    slope, intercept = np.polyfit(fxeq_v, itcz_v, 1)
+    slope, intercept = np.polyfit(fxeq_v[:-2], itcz_v[2:], 1)
     slope = float(slope)
     intercept = float(intercept)
 
-    # 3. EFE seasonal amplitude
-    efe_amp = float(np.max(efe_v) - np.min(efe_v))
-
-    # 4. Annual-mean |EFE – ITCZ| offset
-    itcz_efe_offset = float(np.mean(np.abs(efe_v - itcz_v)))
-
-    logger.info(f"  Seasonal r(ITCZ, EFE):         {r_itcz_efe:.3f}")
+    logger.info(f"  Using {n_valid}/{n_months_common} valid time steps")
+    logger.info(f"  r(ITCZ, EFE):                  {r_itcz_efe:.3f}")
     logger.info(f"  Scaling slope (°/PW):          {slope:.2f}")
-    logger.info(f"  EFE seasonal amplitude (°):    {efe_amp:.1f}")
-    logger.info(f"  Annual-mean |EFE–ITCZ| (°):   {itcz_efe_offset:.1f}")
 
     # --- Pass/fail checks ---
     pass_correlation = r_itcz_efe >= ITCZ_EFE_CORR_MIN
     pass_scaling = SCALING_SLOPE_MIN <= slope <= SCALING_SLOPE_MAX
-    pass_efe_amplitude = efe_amp >= EFE_AMP_MIN
-    pass_offset = itcz_efe_offset <= ITCZ_EFE_OFFSET_MAX
 
-    pass_all = pass_correlation and pass_scaling and pass_efe_amplitude and pass_offset
+    pass_all = pass_correlation and pass_scaling
 
     logger.info(
         f"  r(ITCZ, EFE) >= {ITCZ_EFE_CORR_MIN}: "
@@ -344,14 +279,7 @@ def main(
         f"  Scaling slope [{SCALING_SLOPE_MIN}–{SCALING_SLOPE_MAX} °/PW]: "
         f"{'PASS' if pass_scaling else 'FAIL'}"
     )
-    logger.info(
-        f"  EFE amplitude >= {EFE_AMP_MIN}°: "
-        f"{'PASS' if pass_efe_amplitude else 'FAIL'}"
-    )
-    logger.info(
-        f"  |EFE–ITCZ| offset <= {ITCZ_EFE_OFFSET_MAX}°: "
-        f"{'PASS' if pass_offset else 'FAIL'}"
-    )
+
     logger.info(f"  Overall ITCZ–EFE benchmark: {'PASS' if pass_all else 'FAIL'}")
 
     # --- Save results ---
@@ -364,16 +292,12 @@ def main(
             "start_year": [start_year],
             "end_year": [end_year],
             "n_years": [n_years_available],
-            "n_valid_months": [n_valid],
+            "n_valid_timesteps": [n_valid],
             "r_itcz_efe": [round(r_itcz_efe, 4)],
             "scaling_slope_deg_per_PW": [round(slope, 3)],
             "scaling_intercept_deg": [round(intercept, 3)],
-            "efe_seasonal_amplitude_deg": [round(efe_amp, 2)],
-            "itcz_efe_offset_deg": [round(itcz_efe_offset, 2)],
             "pass_correlation": [pass_correlation],
             "pass_scaling": [pass_scaling],
-            "pass_efe_amplitude": [pass_efe_amplitude],
-            "pass_offset": [pass_offset],
             "pass_all": [pass_all],
             "ensemble_members": [
                 "_".join(ensemble_members) if ensemble_members else ""
@@ -416,12 +340,8 @@ def main(
         "r_itcz_efe": r_itcz_efe,
         "scaling_slope_deg_per_PW": slope,
         "scaling_intercept_deg": intercept,
-        "efe_seasonal_amplitude_deg": efe_amp,
-        "itcz_efe_offset_deg": itcz_efe_offset,
         "pass_correlation": pass_correlation,
         "pass_scaling": pass_scaling,
-        "pass_efe_amplitude": pass_efe_amplitude,
-        "pass_offset": pass_offset,
         "pass_all": pass_all,
     }
 

@@ -18,7 +18,6 @@ import argparse
 import logging
 import os
 import sys
-from csv import writer
 
 import numpy as np
 import pandas as pd
@@ -28,34 +27,10 @@ from benchmark_utils import DataFinder
 
 sys.path.append("..")
 
+from utils import compute_weighted_annual_mean, save_results_csv
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-
-def compute_global_annual_mean(ds, variable, weights):
-    """Compute area-weighted global-mean annual-mean time series.
-
-    Uses cos(lat) weights for area weighting and groups every 12 months
-    for annual means (avoids reliance on time coordinate values).
-
-    Args:
-        ds: xr.Dataset containing the variable
-        variable: variable name string
-        weights: latitude-based cos(lat) weights
-
-    Returns:
-        numpy array of annual-mean global-mean values
-    """
-    da = ds[variable]
-    global_mean = da.weighted(weights).mean(dim=["lat", "lon"])
-
-    # Annual mean: group every 12 months (robust to non-standard calendars)
-    n_months = len(global_mean)
-    n_years = n_months // 12
-    global_mean = global_mean.isel(time=slice(0, n_years * 12))
-    annual_mean = global_mean.values.reshape(n_years, 12).mean(axis=1)
-
-    return annual_mean
 
 
 def gregory_regression(delta_t, net_flux):
@@ -177,10 +152,10 @@ def main(
     )
 
     # abrupt-4xCO2 annual means
-    tas_annual = compute_global_annual_mean(abrupt4x_data["tas"], "tas", weights)
-    rsdt_annual = compute_global_annual_mean(abrupt4x_data["rsdt"], "rsdt", weights)
-    rsut_annual = compute_global_annual_mean(abrupt4x_data["rsut"], "rsut", weights)
-    rlut_annual = compute_global_annual_mean(abrupt4x_data["rlut"], "rlut", weights)
+    tas_annual = compute_weighted_annual_mean(abrupt4x_data["tas"], "tas", weights)
+    rsdt_annual = compute_weighted_annual_mean(abrupt4x_data["rsdt"], "rsdt", weights)
+    rsut_annual = compute_weighted_annual_mean(abrupt4x_data["rsut"], "rsut", weights)
+    rlut_annual = compute_weighted_annual_mean(abrupt4x_data["rlut"], "rlut", weights)
 
     # Anomalies relative to piControl
     delta_t = tas_annual - pi_tas_mean
@@ -215,36 +190,7 @@ def main(
         }
     )
 
-    if save_to_cloud:
-        from google.cloud import storage as gcs_storage
-
-        storage_client = gcs_storage.Client(project="JCM and Benchmarking")
-        bucket = storage_client.bucket("climatebench")
-        gcs_path = "results/ecs/ecs_results.csv"
-        blob = gcs_storage.Blob(bucket=bucket, name=gcs_path)
-
-        if blob.exists(storage_client):
-            import io
-
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-        logger.info(f"Results saved to cloud: gs://climatebench/{gcs_path}")
-    else:
-        if overwrite or not os.path.isfile(results_file):
-            os.makedirs(results_dir, exist_ok=True)
-            result_df.to_csv(results_file, index=False)
-        else:
-            with open(results_file, "a") as f:
-                writer_object = writer(f)
-                writer_object.writerow(result_df.values.flatten().tolist())
-        logger.info(f"Results saved locally: {results_file}")
+    save_results_csv(result_df, results_file, save_to_cloud, overwrite)
 
     return results
 

@@ -34,7 +34,6 @@ import argparse
 import logging
 import os
 import sys
-from csv import writer
 
 import numpy as np
 import pandas as pd
@@ -44,11 +43,15 @@ from benchmark_utils import DataFinder
 
 sys.path.append("..")
 
+from utils import (
+    compute_meridional_transport,
+    compute_sfc_net,
+    compute_toa_net,
+    save_results_csv,
+)
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, force=True)
-
-# --- Constants ---
-EARTH_RADIUS = 6.371e6  # metres
 
 # Pass/fail thresholds
 ITCZ_EFE_CORR_MIN = 0.85  # minimum seasonal Pearson r(ITCZ, EFE)
@@ -63,64 +66,6 @@ EFE_SEARCH_BAND = 40.0  # search ±40° for AMET zero crossing
 ENERGY_VARS = ["rsdt", "rsut", "rlut", "rsds", "rsus", "rlds", "rlus", "hfss", "hfls"]
 PRECIP_VARS = ["pr"]
 ALL_VARS = ENERGY_VARS + PRECIP_VARS
-
-
-# ---------------------------------------------------------------------------
-# Flux diagnostics
-# ---------------------------------------------------------------------------
-
-
-def compute_toa_net(data):
-    """TOA net downward flux (W/m2): rsdt - rsut - rlut."""
-    return data["rsdt"]["rsdt"] - data["rsut"]["rsut"] - data["rlut"]["rlut"]
-
-
-def compute_sfc_net(data):
-    """Surface net flux into ocean (W/m2).
-
-    F_sfc = (rsds - rsus) + (rlds - rlus) - hfss - hfls
-
-    Sign convention: hfss and hfls are positive upward in CMIP6, so
-    subtracting them gives the net downward flux into the surface/ocean.
-    """
-    return (
-        (data["rsds"]["rsds"] - data["rsus"]["rsus"])
-        + (data["rlds"]["rlds"] - data["rlus"]["rlus"])
-        - data["hfss"]["hfss"]
-        - data["hfls"]["hfls"]
-    )
-
-
-# ---------------------------------------------------------------------------
-# Meridional energy transport
-# ---------------------------------------------------------------------------
-
-
-def compute_meridional_transport(zonal_mean_flux, lat):
-    """AMET by cumulative integration from the S pole.
-
-    Works for any leading dimensions (time, month, etc.):
-
-        AMET(phi) = 2*pi*a^2 * integral_{-pi/2}^{phi} F(phi') cos(phi') dphi'
-
-    Args:
-        zonal_mean_flux: xr.DataArray with at least a 'lat' dim, in W/m2.
-        lat: latitude coordinate in degrees.
-
-    Returns:
-        xr.DataArray of meridional energy transport (W) with same dims as input.
-    """
-    lat_rad = np.deg2rad(lat)
-
-    dlat = np.abs(np.diff(lat_rad))
-    dlat = np.append(dlat, dlat[-1])
-    dlat = xr.DataArray(dlat, dims=["lat"], coords={"lat": lat})
-
-    cos_lat = np.cos(lat_rad)
-    cos_lat = xr.DataArray(cos_lat, dims=["lat"], coords={"lat": lat})
-
-    integrand = zonal_mean_flux * cos_lat * dlat * 2 * np.pi * EARTH_RADIUS**2
-    return integrand.cumsum(dim="lat")
 
 
 # ---------------------------------------------------------------------------
@@ -305,36 +250,7 @@ def main(
         }
     )
 
-    if save_to_cloud:
-        from google.cloud import storage as gcs_storage
-
-        storage_client = gcs_storage.Client(project="JCM and Benchmarking")
-        bucket = storage_client.bucket("climatebench")
-        gcs_path = "results/itcz_efe/itcz_efe_results.csv"
-        blob = gcs_storage.Blob(bucket=bucket, name=gcs_path)
-
-        if blob.exists(storage_client):
-            import io
-
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-        logger.info(f"  Results saved to cloud: gs://climatebench/{gcs_path}")
-    else:
-        if overwrite or not os.path.isfile(results_file):
-            os.makedirs(results_dir, exist_ok=True)
-            result_df.to_csv(results_file, index=False)
-        else:
-            with open(results_file, "a") as f:
-                writer_object = writer(f)
-                writer_object.writerow(result_df.values.flatten().tolist())
-        logger.info(f"  Results saved locally: {results_file}")
+    save_results_csv(result_df, results_file, save_to_cloud, overwrite)
 
     return {
         "r_itcz_efe": r_itcz_efe,

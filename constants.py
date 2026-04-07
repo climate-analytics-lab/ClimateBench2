@@ -45,3 +45,5 @@ OBSERVATION_DATA_SOURCES = {
     "tasmin": ["HadGHCND"],
     "tcwv": ["ERA5", "RSS"],
 }
+
+EARTH_RADIUS = 6.371e6  # metres

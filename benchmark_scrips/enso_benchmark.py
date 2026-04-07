@@ -28,7 +28,6 @@ import argparse
 import logging
 import os
 import sys
-from csv import writer
 
 import numpy as np
 import pandas as pd
@@ -38,6 +37,8 @@ from scipy import signal
 from benchmark_utils import DataFinder
 
 sys.path.append("..")
+
+from utils import save_results_csv
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, force=True)
@@ -232,9 +233,9 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
               tas_sign_ok, pr_sign_ok.
     """
     # Round time dims to day
-    nino34['time'] = nino34.time.dt.floor("D")
-    tas_ds['time'] = tas_ds.time.dt.floor("D")
-    pr_ds['time'] = pr_ds.time.dt.floor("D")
+    nino34["time"] = nino34.time.dt.floor("D")
+    tas_ds["time"] = tas_ds.time.dt.floor("D")
+    pr_ds["time"] = pr_ds.time.dt.floor("D")
     # Align time axes
     common_time = np.intersect1d(
         nino34.time.values,
@@ -249,9 +250,9 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
             "pr_sign_ok": False,
         }
 
-    nino34_c = nino34.sel(time=common_time,method='nearest')
-    tas = tas_ds["tas"].sel(time=common_time,method='nearest')
-    pr = pr_ds["pr"].sel(time=common_time,method='nearest')
+    nino34_c = nino34.sel(time=common_time, method="nearest")
+    tas = tas_ds["tas"].sel(time=common_time, method="nearest")
+    pr = pr_ds["pr"].sel(time=common_time, method="nearest")
 
     # Monthly anomalies for tas and pr
     tas_anom = tas.groupby("time.month") - tas.groupby("time.month").mean("time")
@@ -392,36 +393,7 @@ def main(
         }
     )
 
-    if save_to_cloud:
-        from google.cloud import storage as gcs_storage
-
-        storage_client = gcs_storage.Client(project="JCM and Benchmarking")
-        bucket = storage_client.bucket("climatebench")
-        gcs_path = "results/enso/enso_results.csv"
-        blob = gcs_storage.Blob(bucket=bucket, name=gcs_path)
-
-        if blob.exists(storage_client):
-            import io
-
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-        logger.info(f"  Results saved to cloud: gs://climatebench/{gcs_path}")
-    else:
-        if overwrite or not os.path.isfile(results_file):
-            os.makedirs(results_dir, exist_ok=True)
-            result_df.to_csv(results_file, index=False)
-        else:
-            with open(results_file, "a") as f:
-                writer_object = writer(f)
-                writer_object.writerow(result_df.values.flatten().tolist())
-        logger.info(f"  Results saved locally: {results_file}")
+    save_results_csv(result_df, results_file, save_to_cloud, overwrite)
 
     return {
         "amplitude": amplitude,

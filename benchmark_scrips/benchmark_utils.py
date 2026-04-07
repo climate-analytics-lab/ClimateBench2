@@ -15,7 +15,7 @@ from pyesgf.search import SearchConnection
 
 sys.path.append("..")
 
-from constants import SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP, OBSERVATION_DATA_SOURCES
+from constants import OBSERVATION_DATA_SOURCES, SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP
 from utils import download_file, standardize_dims
 
 logger = logging.getLogger(__name__)

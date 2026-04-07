@@ -203,6 +203,16 @@ def download_file(
     raise Exception(f"Failed to download after {max_retries} attempts.")
 
 
+def anomaly(ds):
+    ds_anom = ds.groupby("time.month") - ds.groupby("time.month").mean("time")
+    return ds_anom.drop("month")
+
+
+def bias_adjustment(model, obs):
+    adjustment = model.mean(dim="time") - obs.mean(dim="time")
+    return model - adjustment
+
+
 def compute_weighted_annual_mean(ds, variable, weights, lat_min=None, lat_max=None):
     """Compute area-weighted regional-mean annual-mean time series.
 

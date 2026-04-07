@@ -159,7 +159,7 @@ def main(
     omet_decadal = decadal_filter(omet_anom)
 
     # Drop NaN edges from rolling mean
-    valid = amet_decadal.notnull() & omet_decadal.notnull()
+    valid = (amet_decadal.notnull() & omet_decadal.notnull()).compute()
     amet_filt = amet_decadal.where(valid, drop=True)
     omet_filt = omet_decadal.where(valid, drop=True)
 
@@ -182,7 +182,7 @@ def main(
     amet_djf_decadal = decadal_filter(amet_djf_anom, window=DECADAL_WINDOW // 4)
     omet_djf_decadal = decadal_filter(omet_djf_anom, window=DECADAL_WINDOW // 4)
 
-    valid_djf = amet_djf_decadal.notnull() & omet_djf_decadal.notnull()
+    valid_djf = (amet_djf_decadal.notnull() & omet_djf_decadal.notnull()).compute()
     amet_djf_filt = amet_djf_decadal.where(valid_djf, drop=True)
     omet_djf_filt = omet_djf_decadal.where(valid_djf, drop=True)
 

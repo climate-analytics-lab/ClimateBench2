@@ -32,7 +32,7 @@ sys.path.append("..")
 from utils import compute_weighted_annual_mean, save_results_csv
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, force=True)
 
 # Drift threshold from issue spec
 DRIFT_THRESHOLD = 0.1  # W/m2/decade

@@ -29,7 +29,6 @@ import argparse
 import logging
 import os
 import sys
-from csv import writer
 
 import numpy as np
 import pandas as pd
@@ -39,12 +38,17 @@ from benchmark_utils import DataFinder
 
 sys.path.append("..")
 
+from utils import (
+    compute_meridional_transport,
+    compute_sfc_net,
+    compute_toa_net,
+    save_results_csv,
+)
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, force=True)
 
 # --- Constants ---
-EARTH_RADIUS = 6.371e6  # metres
-
 # Expected ranges (PW) from Marshall et al., 2007 / Trenberth and Caron, 2001
 OMET_PEAK_MIN = 1.5  # PW
 OMET_PEAK_MAX = 2.0  # PW
@@ -60,71 +64,6 @@ AMET_PEAK_LAT_MAX = 50.0  # degrees
 TOA_VARS = ["rsdt", "rsut", "rlut"]
 SFC_VARS = ["rsds", "rsus", "rlds", "rlus", "hfss", "hfls"]
 ALL_VARS = TOA_VARS + SFC_VARS
-
-
-# ---------------------------------------------------------------------------
-# Flux diagnostics
-# ---------------------------------------------------------------------------
-
-
-def compute_toa_net(data):
-    """TOA net downward flux (W/m2): rsdt - rsut - rlut."""
-    return data["rsdt"]["rsdt"] - data["rsut"]["rsut"] - data["rlut"]["rlut"]
-
-
-def compute_sfc_net(data):
-    """Surface net flux into ocean (W/m2).
-
-    F_sfc = (rsds - rsus) + (rlds - rlus) - hfss - hfls
-
-    Sign convention: hfss and hfls are positive upward in CMIP6, so
-    subtracting them gives the net downward flux into the surface/ocean.
-    """
-    return (
-        (data["rsds"]["rsds"] - data["rsus"]["rsus"])
-        + (data["rlds"]["rlds"] - data["rlus"]["rlus"])
-        - data["hfss"]["hfss"]
-        - data["hfls"]["hfls"]
-    )
-
-
-# ---------------------------------------------------------------------------
-# Meridional energy transport
-# ---------------------------------------------------------------------------
-
-
-def compute_meridional_transport(zonal_mean_flux, lat):
-    """Meridional energy transport by cumulative integration from the S pole.
-
-    The transport at latitude phi is the integral of the flux divergence
-    over all area south of phi:
-
-        MET(phi) = 2*pi*a^2 * integral_{-pi/2}^{phi} F(phi') cos(phi') dphi'
-
-    Args:
-        zonal_mean_flux: xr.DataArray with dims (time, lat), in W/m2.
-        lat: latitude coordinate in degrees.
-
-    Returns:
-        xr.DataArray of meridional energy transport (W) with dims (time, lat).
-    """
-    lat_rad = np.deg2rad(lat)
-
-    # dlat for each latitude band
-    dlat = np.abs(np.diff(lat_rad))
-    dlat = np.append(dlat, dlat[-1])
-    dlat = xr.DataArray(dlat, dims=["lat"], coords={"lat": lat})
-
-    cos_lat = np.cos(lat_rad)
-    cos_lat = xr.DataArray(cos_lat, dims=["lat"], coords={"lat": lat})
-
-    # Integrand: F * cos(lat) * dlat * 2*pi*a^2
-    integrand = zonal_mean_flux * cos_lat * dlat * 2 * np.pi * EARTH_RADIUS**2
-
-    # Cumulative sum from south to north
-    transport = integrand.cumsum(dim="lat")
-
-    return transport
 
 
 def find_nh_peak(transport_profile, lat_min, lat_max):
@@ -156,9 +95,7 @@ def main(
     save_to_cloud: bool = False,
     overwrite: bool = False,
 ):
-    logger.info(
-        f"Running meridional heat transport benchmark for {model} (piControl)"
-    )
+    logger.info(f"Running meridional heat transport benchmark for {model} (piControl)")
 
     # --- Load all 9 variables from piControl ---
     picontrol_data = {}
@@ -173,8 +110,7 @@ def main(
             if ensemble_members is None:
                 ensemble_members = df.ensemble_members
             logger.info(
-                f"    {var}: {len(ds.time)} months "
-                f"({len(ds.time) // 12} years)"
+                f"    {var}: {len(ds.time)} months " f"({len(ds.time) // 12} years)"
             )
         except Exception as e:
             logger.error(f"    Failed to load piControl {var}: {e}")
@@ -192,9 +128,7 @@ def main(
     # Trim all datasets to common length
     n_months_common = n_years_available * 12
     for var in ALL_VARS:
-        picontrol_data[var] = picontrol_data[var].isel(
-            time=slice(0, n_months_common)
-        )
+        picontrol_data[var] = picontrol_data[var].isel(time=slice(0, n_months_common))
 
     # --- Compute flux fields ---
     logger.info("  Computing TOA and surface net flux fields ...")
@@ -272,15 +206,11 @@ def main(
         f"  Crossover (ocean equatorward of atmos): "
         f"{'PASS' if pass_crossover else 'FAIL'}"
     )
-    logger.info(
-        f"  Overall MHT benchmark: {'PASS' if pass_all else 'FAIL'}"
-    )
+    logger.info(f"  Overall MHT benchmark: {'PASS' if pass_all else 'FAIL'}")
 
     # --- Save results ---
     results_dir = "../results/meridional_heat_transport/"
-    results_file = os.path.join(
-        results_dir, "meridional_heat_transport_results.csv"
-    )
+    results_file = os.path.join(results_dir, "meridional_heat_transport_results.csv")
 
     result_df = pd.DataFrame(
         {
@@ -302,39 +232,7 @@ def main(
         }
     )
 
-    if save_to_cloud:
-        from google.cloud import storage as gcs_storage
-
-        storage_client = gcs_storage.Client(project="JCM and Benchmarking")
-        bucket = storage_client.bucket("climatebench")
-        gcs_path = (
-            "results/meridional_heat_transport/"
-            "meridional_heat_transport_results.csv"
-        )
-        blob = gcs_storage.Blob(bucket=bucket, name=gcs_path)
-
-        if blob.exists(storage_client):
-            import io
-
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-        logger.info(f"  Results saved to cloud: gs://climatebench/{gcs_path}")
-    else:
-        if overwrite or not os.path.isfile(results_file):
-            os.makedirs(results_dir, exist_ok=True)
-            result_df.to_csv(results_file, index=False)
-        else:
-            with open(results_file, "a") as f:
-                writer_object = writer(f)
-                writer_object.writerow(result_df.values.flatten().tolist())
-        logger.info(f"  Results saved locally: {results_file}")
+    save_results_csv(result_df, results_file, save_to_cloud, overwrite)
 
     return {
         "omet_peak_PW": omet_peak_pw,

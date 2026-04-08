@@ -28,7 +28,6 @@ import argparse
 import logging
 import os
 import sys
-from csv import writer
 
 import numpy as np
 import pandas as pd
@@ -38,6 +37,8 @@ from scipy import signal
 from benchmark_utils import DataFinder
 
 sys.path.append("..")
+
+from utils import save_results_csv, is_curvilinear, area_mean
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, force=True)
@@ -59,18 +60,6 @@ MARITIME_CONTINENT_LAT = (-10, 10)
 MARITIME_CONTINENT_LON = (90, 150)
 
 
-def _is_curvilinear(da):
-    """Return True if lat/lon are 2D coordinates rather than 1D dimension coords."""
-    return "lat" not in da.dims
-
-
-def _spatial_dims(da):
-    """Return the names of the horizontal spatial dimensions."""
-    if _is_curvilinear(da):
-        return list(da["lat"].dims)  # e.g. ["j", "i"]
-    return ["lat", "lon"]
-
-
 def _sel_region(da, lat_bounds, lon_bounds=None):
     """Subset a DataArray to a lat/lon box.
 
@@ -80,7 +69,7 @@ def _sel_region(da, lat_bounds, lon_bounds=None):
     Assumes 0–360 longitude convention.
     """
     lat_min, lat_max = lat_bounds
-    if _is_curvilinear(da):
+    if is_curvilinear(da):
         mask = (da["lat"] >= lat_min) & (da["lat"] <= lat_max)
         if lon_bounds is not None:
             lon_min, lon_max = lon_bounds
@@ -91,16 +80,6 @@ def _sel_region(da, lat_bounds, lon_bounds=None):
         if lon_bounds is not None:
             da = da.sel(lon=slice(*lon_bounds))
         return da
-
-
-def _area_mean(da):
-    """Cosine-latitude-weighted spatial mean.
-
-    Works for both rectilinear (averages over lat/lon dims) and curvilinear
-    grids (averages over j/i or equivalent dims, skipping NaN-masked points).
-    """
-    weights = np.cos(np.deg2rad(da["lat"]))
-    return da.weighted(weights).mean(dim=_spatial_dims(da))
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +110,7 @@ def compute_nino34(ds):
         tos = tos - 273.15
 
     region = _sel_region(tos, NINO34_LAT, NINO34_LON)
-    ts = _area_mean(region)
+    ts = area_mean(region)
 
     # Monthly anomaly
     anomaly = ts.groupby("time.month") - ts.groupby("time.month").mean("time")
@@ -232,9 +211,9 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
               tas_sign_ok, pr_sign_ok.
     """
     # Round time dims to day
-    nino34['time'] = nino34.time.dt.floor("D")
-    tas_ds['time'] = tas_ds.time.dt.floor("D")
-    pr_ds['time'] = pr_ds.time.dt.floor("D")
+    nino34["time"] = nino34.time.dt.floor("D")
+    tas_ds["time"] = tas_ds.time.dt.floor("D")
+    pr_ds["time"] = pr_ds.time.dt.floor("D")
     # Align time axes
     common_time = np.intersect1d(
         nino34.time.values,
@@ -249,9 +228,9 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
             "pr_sign_ok": False,
         }
 
-    nino34_c = nino34.sel(time=common_time,method='nearest')
-    tas = tas_ds["tas"].sel(time=common_time,method='nearest')
-    pr = pr_ds["pr"].sel(time=common_time,method='nearest')
+    nino34_c = nino34.sel(time=common_time, method="nearest")
+    tas = tas_ds["tas"].sel(time=common_time, method="nearest")
+    pr = pr_ds["pr"].sel(time=common_time, method="nearest")
 
     # Monthly anomalies for tas and pr
     tas_anom = tas.groupby("time.month") - tas.groupby("time.month").mean("time")
@@ -266,12 +245,12 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
 
     # Tropical-mean tas composite
     tas_tropical = _sel_region(tas_anom, TROPICAL_LAT)
-    tas_trop_ts = _area_mean(tas_tropical)
+    tas_trop_ts = area_mean(tas_tropical)
     tropical_tas_composite = float(tas_trop_ts.where(warm_mask).mean())
 
     # Maritime Continent pr composite
     pr_mc = _sel_region(pr_anom, MARITIME_CONTINENT_LAT, MARITIME_CONTINENT_LON)
-    pr_mc_ts = _area_mean(pr_mc)
+    pr_mc_ts = area_mean(pr_mc)
     maritime_pr_composite = float(pr_mc_ts.where(warm_mask).mean())
 
     return {
@@ -392,36 +371,7 @@ def main(
         }
     )
 
-    if save_to_cloud:
-        from google.cloud import storage as gcs_storage
-
-        storage_client = gcs_storage.Client(project="JCM and Benchmarking")
-        bucket = storage_client.bucket("climatebench")
-        gcs_path = "results/enso/enso_results.csv"
-        blob = gcs_storage.Blob(bucket=bucket, name=gcs_path)
-
-        if blob.exists(storage_client):
-            import io
-
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-        logger.info(f"  Results saved to cloud: gs://climatebench/{gcs_path}")
-    else:
-        if overwrite or not os.path.isfile(results_file):
-            os.makedirs(results_dir, exist_ok=True)
-            result_df.to_csv(results_file, index=False)
-        else:
-            with open(results_file, "a") as f:
-                writer_object = writer(f)
-                writer_object.writerow(result_df.values.flatten().tolist())
-        logger.info(f"  Results saved locally: {results_file}")
+    save_results_csv(result_df, results_file, save_to_cloud, overwrite)
 
     return {
         "amplitude": amplitude,

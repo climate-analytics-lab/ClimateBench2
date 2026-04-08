@@ -1,13 +1,16 @@
+import io
 import logging
+import os
+import time
+from csv import writer
 
 import dask.array as da
 import numpy as np
 import pandas as pd
 import requests
 import xarray as xr
-
-import os
-import time
+from constants import EARTH_RADIUS
+from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +89,7 @@ def standardize_dims(
         ds = ds.sortby("time")  # make sure its in the right order before slicing
 
     # only if rectilinear grid (tos is curvelinear grid)
-    if (len(ds["lat"].dims) == 1) and (len(ds["lon"].dims) == 1):
+    if not is_curvilinear(ds):
         # Shift longitudes
         ds = ds.assign_coords(lon=(ds.lon % 360))
         ds = ds.sortby("lon")
@@ -104,22 +107,23 @@ def standardize_dims(
             ds = ds.assign_coords({"lat": lats, "lon": lons})
 
     else:
-        # check that lat is increaseing
+        # check that lat is increasing
+        j_dim, i_dim = spatial_dims(ds)
         sample_idx = 1
-        test_lats = ds["lat"].isel(i=sample_idx)
+        test_lats = ds["lat"].isel({i_dim: sample_idx})
         if test_lats[0] > test_lats[-1]:
-            ds = ds.assign_coords(j=ds["j"][::-1])
-            ds = ds.sortby("j")
-        test_lons = ds["lon"].isel(j=sample_idx)
+            ds = ds.assign_coords({j_dim: ds[j_dim][::-1]})
+            ds = ds.sortby(j_dim)
+        test_lons = ds["lon"].isel({j_dim: sample_idx})
 
         # and that lon is 0 - 360
         ds["lon"] = ds["lon"] % 360
         if test_lons["lon"][0] != 0:
             # for sorting purposes
-            ds = ds.assign_coords(i=test_lons["lon"].values)
-            ds = ds.sortby("i")
+            ds = ds.assign_coords({i_dim: test_lons["lon"].values})
+            ds = ds.sortby(i_dim)
             # reset to int array
-            ds = ds.assign_coords(i=np.arange(len(test_lons["lon"].values)))
+            ds = ds.assign_coords({i_dim: np.arange(len(test_lons["lon"].values))})
 
     return ds
 
@@ -197,3 +201,154 @@ def download_file(
             continue
 
     raise Exception(f"Failed to download after {max_retries} attempts.")
+
+
+def anomaly(ds):
+    ds_anom = ds.groupby("time.month") - ds.groupby("time.month").mean("time")
+    return ds_anom.drop("month")
+
+
+def bias_adjustment(model, obs):
+    adjustment = model.mean(dim="time") - obs.mean(dim="time")
+    return model - adjustment
+
+
+def compute_weighted_annual_mean(ds, variable, weights, lat_min=None, lat_max=None):
+    """Compute area-weighted regional-mean annual-mean time series.
+
+    Args:
+        ds: xr.Dataset containing the variable
+        variable: variable name string
+        weights: cos(lat) weights (full grid)
+        lat_min: southern latitude bound (None for global)
+        lat_max: northern latitude bound (None for global)
+
+    Returns:
+        numpy array of annual-mean regional-mean values
+    """
+    da = ds[variable]
+
+    if lat_min is not None or lat_max is not None:
+        lat = ds["lat"]
+        mask = True
+        if lat_min is not None:
+            mask = mask & (lat >= lat_min)
+        if lat_max is not None:
+            mask = mask & (lat <= lat_max)
+        da = da.where(mask, drop=True)
+        w = weights.where(mask, drop=True)
+    else:
+        w = weights
+
+    regional_mean = da.weighted(w).mean(dim=["lat", "lon"])
+    n_months = len(regional_mean)
+    n_years = n_months // 12
+    regional_mean = regional_mean.isel(time=slice(0, n_years * 12))
+    annual_mean = regional_mean.values.reshape(n_years, 12).mean(axis=1)
+
+    return annual_mean
+
+
+def compute_toa_net(data):
+    """TOA net downward flux (W/m2): rsdt - rsut - rlut."""
+    return data["rsdt"]["rsdt"] - data["rsut"]["rsut"] - data["rlut"]["rlut"]
+
+
+def compute_sfc_net(data):
+    """Surface net flux into ocean (W/m2).
+
+    F_sfc = (rsds - rsus) + (rlds - rlus) - hfss - hfls
+
+    Sign convention: hfss and hfls are positive upward in CMIP6, so
+    subtracting them gives the net downward flux into the surface/ocean.
+    """
+    return (
+        (data["rsds"]["rsds"] - data["rsus"]["rsus"])
+        + (data["rlds"]["rlds"] - data["rlus"]["rlus"])
+        - data["hfss"]["hfss"]
+        - data["hfls"]["hfls"]
+    )
+
+
+def compute_meridional_transport(zonal_mean_flux, lat):
+    """Meridional energy transport by cumulative integration from the S pole.
+
+    MET(phi) = 2*pi*a^2 * integral_{-pi/2}^{phi} F(phi') cos(phi') dphi'
+
+    Args:
+        zonal_mean_flux: xr.DataArray with at least a 'lat' dim, in W/m2.
+        lat: latitude coordinate in degrees.
+
+    Returns:
+        xr.DataArray of meridional energy transport (W).
+    """
+    lat_rad = np.deg2rad(lat)
+
+    dlat = np.abs(np.diff(lat_rad))
+    dlat = np.append(dlat, dlat[-1])
+    dlat = xr.DataArray(dlat, dims=["lat"], coords={"lat": lat})
+
+    cos_lat = np.cos(lat_rad)
+    cos_lat = xr.DataArray(cos_lat, dims=["lat"], coords={"lat": lat})
+
+    integrand = zonal_mean_flux * cos_lat * dlat * 2 * np.pi * EARTH_RADIUS**2
+    return integrand.cumsum(dim="lat")
+
+
+def save_results_csv(result_df, results_file, save_to_cloud, overwrite):
+    """Save a results DataFrame to CSV locally or to GCS bucket "climatebench".
+
+    Args:
+        result_df: pandas DataFrame with one row of results
+        results_file: local path (e.g. "../results/ecs/ecs_results.csv")
+        save_to_cloud: if True save to GCS; False saves locally
+        overwrite: if True overwrite existing local file instead of appending
+    """
+    if save_to_cloud:
+        gcs_path = results_file[3:]  # strip "../" -> "results/benchmark/file.csv"
+        storage_client = storage.Client(project="JCM and Benchmarking")
+        bucket = storage_client.bucket("climatebench")
+        blob = storage.Blob(bucket=bucket, name=gcs_path)
+        if blob.exists(storage_client):
+            existing_data = blob.download_as_text()
+            output = io.StringIO(existing_data)
+            output.seek(0, io.SEEK_END)
+            writer_object = writer(output)
+            writer_object.writerow(result_df.values.flatten().tolist())
+            output.seek(0)
+            blob.upload_from_string(output.getvalue(), content_type="text/csv")
+        else:
+            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
+        logger.info(f"Results saved to cloud: gs://climatebench/{gcs_path}")
+    else:
+        results_dir = os.path.dirname(results_file)
+        if overwrite or not os.path.isfile(results_file):
+            os.makedirs(results_dir, exist_ok=True)
+            result_df.to_csv(results_file, index=False)
+        else:
+            with open(results_file, "a") as f:
+                writer_object = writer(f)
+                writer_object.writerow(result_df.values.flatten().tolist())
+        logger.info(f"Results saved locally: {results_file}")
+
+
+def is_curvilinear(da):
+    """Return True if lat/lon are 2D coordinates rather than 1D dimension coords."""
+    return "lat" not in da.dims
+
+
+def spatial_dims(da):
+    """Return the names of the horizontal spatial dimensions."""
+    if is_curvilinear(da):
+        return list(da["lat"].dims)  # e.g. ["j", "i"]
+    return ["lat", "lon"]
+
+
+def area_mean(da):
+    """Cosine-latitude-weighted spatial mean.
+
+    Works for both rectilinear (averages over lat/lon dims) and curvilinear
+    grids (averages over j/i or equivalent dims, skipping NaN-masked points).
+    """
+    weights = np.cos(np.deg2rad(da["lat"]))
+    return da.weighted(weights).mean(dim=spatial_dims(da))

@@ -15,8 +15,8 @@ from pyesgf.search import SearchConnection
 
 sys.path.append("..")
 
-from constants import SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP, OBSERVATION_DATA_SOURCES
-from utils import download_file, standardize_dims
+from constants import OBSERVATION_DATA_SOURCES, SSP_EXPERIMENT, VARIABLE_FREQUENCY_GROUP
+from utils import download_file, standardize_dims, anomaly, bias_adjustment
 
 logger = logging.getLogger(__name__)
 
@@ -509,17 +509,6 @@ class DataFinder:
 
         col_subset_df = col_subset_df[col_subset_df["member_id"].str.contains("i1p1f1")]
         return col_subset_df["member_id"].tolist()
-
-
-# little helper functions
-def anomaly(ds):
-    ds_anom = ds.groupby("time.month") - ds.groupby("time.month").mean("time")
-    return ds_anom.drop("month")
-
-
-def bias_adjustment(model, obs):
-    adjustment = model.mean(dim="time") - obs.mean(dim="time")
-    return model - adjustment
 
 
 class MetricCalculation:

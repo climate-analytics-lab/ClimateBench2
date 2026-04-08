@@ -38,7 +38,7 @@ from benchmark_utils import DataFinder
 
 sys.path.append("..")
 
-from utils import save_results_csv
+from utils import save_results_csv, is_curvilinear, area_mean
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, force=True)
@@ -60,18 +60,6 @@ MARITIME_CONTINENT_LAT = (-10, 10)
 MARITIME_CONTINENT_LON = (90, 150)
 
 
-def _is_curvilinear(da):
-    """Return True if lat/lon are 2D coordinates rather than 1D dimension coords."""
-    return "lat" not in da.dims
-
-
-def _spatial_dims(da):
-    """Return the names of the horizontal spatial dimensions."""
-    if _is_curvilinear(da):
-        return list(da["lat"].dims)  # e.g. ["j", "i"]
-    return ["lat", "lon"]
-
-
 def _sel_region(da, lat_bounds, lon_bounds=None):
     """Subset a DataArray to a lat/lon box.
 
@@ -81,7 +69,7 @@ def _sel_region(da, lat_bounds, lon_bounds=None):
     Assumes 0–360 longitude convention.
     """
     lat_min, lat_max = lat_bounds
-    if _is_curvilinear(da):
+    if is_curvilinear(da):
         mask = (da["lat"] >= lat_min) & (da["lat"] <= lat_max)
         if lon_bounds is not None:
             lon_min, lon_max = lon_bounds
@@ -92,16 +80,6 @@ def _sel_region(da, lat_bounds, lon_bounds=None):
         if lon_bounds is not None:
             da = da.sel(lon=slice(*lon_bounds))
         return da
-
-
-def _area_mean(da):
-    """Cosine-latitude-weighted spatial mean.
-
-    Works for both rectilinear (averages over lat/lon dims) and curvilinear
-    grids (averages over j/i or equivalent dims, skipping NaN-masked points).
-    """
-    weights = np.cos(np.deg2rad(da["lat"]))
-    return da.weighted(weights).mean(dim=_spatial_dims(da))
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +110,7 @@ def compute_nino34(ds):
         tos = tos - 273.15
 
     region = _sel_region(tos, NINO34_LAT, NINO34_LON)
-    ts = _area_mean(region)
+    ts = area_mean(region)
 
     # Monthly anomaly
     anomaly = ts.groupby("time.month") - ts.groupby("time.month").mean("time")
@@ -267,12 +245,12 @@ def check_teleconnections(nino34, tas_ds, pr_ds, threshold=WARM_ENSO_THRESHOLD):
 
     # Tropical-mean tas composite
     tas_tropical = _sel_region(tas_anom, TROPICAL_LAT)
-    tas_trop_ts = _area_mean(tas_tropical)
+    tas_trop_ts = area_mean(tas_tropical)
     tropical_tas_composite = float(tas_trop_ts.where(warm_mask).mean())
 
     # Maritime Continent pr composite
     pr_mc = _sel_region(pr_anom, MARITIME_CONTINENT_LAT, MARITIME_CONTINENT_LON)
-    pr_mc_ts = _area_mean(pr_mc)
+    pr_mc_ts = area_mean(pr_mc)
     maritime_pr_composite = float(pr_mc_ts.where(warm_mask).mean())
 
     return {

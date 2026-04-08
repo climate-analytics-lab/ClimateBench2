@@ -9,9 +9,8 @@ import numpy as np
 import pandas as pd
 import requests
 import xarray as xr
-from google.cloud import storage
-
 from constants import EARTH_RADIUS
+from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +89,7 @@ def standardize_dims(
         ds = ds.sortby("time")  # make sure its in the right order before slicing
 
     # only if rectilinear grid (tos is curvelinear grid)
-    if (len(ds["lat"].dims) == 1) and (len(ds["lon"].dims) == 1):
+    if not is_curvilinear(ds):
         # Shift longitudes
         ds = ds.assign_coords(lon=(ds.lon % 360))
         ds = ds.sortby("lon")
@@ -108,22 +107,23 @@ def standardize_dims(
             ds = ds.assign_coords({"lat": lats, "lon": lons})
 
     else:
-        # check that lat is increaseing
+        # check that lat is increasing
+        j_dim, i_dim = spatial_dims(ds)
         sample_idx = 1
-        test_lats = ds["lat"].isel(i=sample_idx)
+        test_lats = ds["lat"].isel({i_dim: sample_idx})
         if test_lats[0] > test_lats[-1]:
-            ds = ds.assign_coords(j=ds["j"][::-1])
-            ds = ds.sortby("j")
-        test_lons = ds["lon"].isel(j=sample_idx)
+            ds = ds.assign_coords({j_dim: ds[j_dim][::-1]})
+            ds = ds.sortby(j_dim)
+        test_lons = ds["lon"].isel({j_dim: sample_idx})
 
         # and that lon is 0 - 360
         ds["lon"] = ds["lon"] % 360
         if test_lons["lon"][0] != 0:
             # for sorting purposes
-            ds = ds.assign_coords(i=test_lons["lon"].values)
-            ds = ds.sortby("i")
+            ds = ds.assign_coords({i_dim: test_lons["lon"].values})
+            ds = ds.sortby(i_dim)
             # reset to int array
-            ds = ds.assign_coords(i=np.arange(len(test_lons["lon"].values)))
+            ds = ds.assign_coords({i_dim: np.arange(len(test_lons["lon"].values))})
 
     return ds
 
@@ -330,3 +330,25 @@ def save_results_csv(result_df, results_file, save_to_cloud, overwrite):
                 writer_object = writer(f)
                 writer_object.writerow(result_df.values.flatten().tolist())
         logger.info(f"Results saved locally: {results_file}")
+
+
+def is_curvilinear(da):
+    """Return True if lat/lon are 2D coordinates rather than 1D dimension coords."""
+    return "lat" not in da.dims
+
+
+def spatial_dims(da):
+    """Return the names of the horizontal spatial dimensions."""
+    if is_curvilinear(da):
+        return list(da["lat"].dims)  # e.g. ["j", "i"]
+    return ["lat", "lon"]
+
+
+def area_mean(da):
+    """Cosine-latitude-weighted spatial mean.
+
+    Works for both rectilinear (averages over lat/lon dims) and curvilinear
+    grids (averages over j/i or equivalent dims, skipping NaN-masked points).
+    """
+    weights = np.cos(np.deg2rad(da["lat"]))
+    return da.weighted(weights).mean(dim=spatial_dims(da))

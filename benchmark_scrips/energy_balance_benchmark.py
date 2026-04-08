@@ -22,13 +22,13 @@ import sys
 
 import numpy as np
 import pandas as pd
-import yaml
 from scipy import stats
 
 from benchmark_utils import DataFinder
 
 sys.path.append("..")
 
+from constants import REFERENCE_BOUNDS
 from utils import compute_weighted_annual_mean, save_results_csv
 
 logger = logging.getLogger(__name__)
@@ -36,21 +36,6 @@ logging.basicConfig(level=logging.INFO, force=True)
 
 # Drift threshold from issue spec
 DRIFT_THRESHOLD = 0.1  # W/m2/decade
-
-
-def load_reference_bounds():
-    """Load observational reference bounds from reference_bounds.yaml.
-
-    Returns:
-        dict of variable bounds, or empty dict if file not found.
-    """
-    bounds_path = os.path.join(os.path.dirname(__file__), "..", "reference_bounds.yaml")
-    if os.path.exists(bounds_path):
-        with open(bounds_path) as f:
-            return yaml.safe_load(f)
-    else:
-        logger.warning("reference_bounds.yaml not found, skipping bounds checks")
-        return {}
 
 
 def compute_drift(annual_values):
@@ -83,7 +68,7 @@ def main(
     logger.info(f"Running energy balance closure test for {model} (piControl)")
 
     # --- Load reference bounds ---
-    bounds = load_reference_bounds()
+    bounds = REFERENCE_BOUNDS
 
     # --- Load piControl data for rsdt, rsut, rlut ---
     variables = ["rsdt", "rsut", "rlut"]

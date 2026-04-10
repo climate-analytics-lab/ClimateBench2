@@ -387,7 +387,11 @@ class DataFinder:
         return self.model_ds
 
     def load_experiment_ds(
-        self, experiment: str, n_years: int = None, ensemble_mean: bool = True
+        self,
+        experiment: str,
+        n_years: int = None,
+        ensemble_mean: bool = True,
+        mip: str = "CMIP",
     ) -> xr.Dataset:
         """Load data for a single CMIP6 experiment (e.g., piControl, abrupt-4xCO2).
 
@@ -395,12 +399,13 @@ class DataFinder:
             experiment (str): CMIP6 experiment name (e.g., "piControl", "abrupt-4xCO2")
             n_years (int, optional): Number of years from start to load. None for all.
             ensemble_mean (bool): Return ensemble mean if True.
+            mip (str): CMIP6 activity_id (default "CMIP"). Use "DAMIP" for hist-aer etc.
 
         Returns:
             xr.Dataset: Model data for the specified experiment.
         """
         ds = self.load_ensemble_mean(
-            mip="CMIP", experiment=experiment, ensemble_mean=ensemble_mean
+            mip=mip, experiment=experiment, ensemble_mean=ensemble_mean
         )
         if n_years is not None:
             # Select first n_years by counting monthly time steps

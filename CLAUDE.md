@@ -62,6 +62,13 @@ python bjerknes_benchmark.py --model CanESM5
 python bjerknes_benchmark.py --model CanESM5 --min_years 200
 ```
 
+**Aerosol forcing — hist-aer pass/fail (Tier I):**
+```bash
+cd benchmark_scrips
+python aerosol_forcing_benchmark.py --model CanESM5
+python aerosol_forcing_benchmark.py --model UKESM1-0-LL --end_period_years 30
+```
+
 **Bulk benchmark run:**
 ```bash
 cd benchmark_scrips
@@ -145,3 +152,4 @@ Default SSP scenario is `ssp245`, set in `constants.py`. Historical runs cover 1
 | Land-ocean warming contrast | `land_ocean_warming_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `sftlf` | `results/land_ocean_warming/land_ocean_warming_results.csv` |
 | Arctic amplification | `arctic_amplification_benchmark.py` | piControl, abrupt-4xCO2 | `tas` | `results/arctic_amplification/arctic_amplification_results.csv` |
 | Bjerknes compensation | `bjerknes_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/bjerknes_compensation/bjerknes_results.csv` |
+| Aerosol forcing (hist-aer) | `aerosol_forcing_benchmark.py` | piControl, hist-aer (DAMIP) | `tas`, `rsdt`, `rsut`, `rlut` | `results/aerosol_forcing/aerosol_forcing_results.csv` |

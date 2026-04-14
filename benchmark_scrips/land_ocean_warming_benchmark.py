@@ -18,7 +18,6 @@ import argparse
 import logging
 import os
 import sys
-from csv import writer
 
 import numpy as np
 import pandas as pd
@@ -27,7 +26,7 @@ import xarray as xr
 from benchmark_utils import DataFinder
 
 sys.path.append("..")
-from utils import standardize_dims
+from utils import save_results_csv, standardize_dims
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, force=True)
@@ -54,7 +53,9 @@ def load_land_fraction(data_finder):
             variable="sftlf",
         )
         sftlf = standardize_dims(sftlf_ds)["sftlf"]
-        logger.info(f"  sftlf loaded: land fraction range [{float(sftlf.min()):.1f}, {float(sftlf.max()):.1f}]")
+        logger.info(
+            f"  sftlf loaded: land fraction range [{float(sftlf.min()):.1f}, {float(sftlf.max()):.1f}]"
+        )
         return sftlf
     except Exception as e:
         logger.warning(f"  Could not load sftlf: {e}")
@@ -164,7 +165,9 @@ def main(
 
     # --- Compute ratio ---
     if ocean_warming <= 0:
-        logger.error(f"Ocean warming is non-positive ({ocean_warming:.2f} K). Cannot compute ratio.")
+        logger.error(
+            f"Ocean warming is non-positive ({ocean_warming:.2f} K). Cannot compute ratio."
+        )
         ratio = np.nan
     else:
         ratio = land_warming / ocean_warming
@@ -199,36 +202,7 @@ def main(
         }
     )
 
-    if save_to_cloud:
-        from google.cloud import storage as gcs_storage
-
-        storage_client = gcs_storage.Client(project="JCM and Benchmarking")
-        bucket = storage_client.bucket("climatebench")
-        gcs_path = "results/land_ocean_warming/land_ocean_warming_results.csv"
-        blob = gcs_storage.Blob(bucket=bucket, name=gcs_path)
-
-        if blob.exists(storage_client):
-            import io
-
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-        logger.info(f"Results saved to cloud: gs://climatebench/{gcs_path}")
-    else:
-        if overwrite or not os.path.isfile(results_file):
-            os.makedirs(results_dir, exist_ok=True)
-            result_df.to_csv(results_file, index=False)
-        else:
-            with open(results_file, "a") as f:
-                writer_object = writer(f)
-                writer_object.writerow(result_df.values.flatten().tolist())
-        logger.info(f"Results saved locally: {results_file}")
+    save_results_csv(result_df, results_file, save_to_cloud, overwrite)
 
     return {
         "land_warming": land_warming,

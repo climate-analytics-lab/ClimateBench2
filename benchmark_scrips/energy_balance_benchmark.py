@@ -19,59 +19,23 @@ import argparse
 import logging
 import os
 import sys
-from csv import writer
 
 import numpy as np
 import pandas as pd
-import yaml
 from scipy import stats
 
 from benchmark_utils import DataFinder
 
 sys.path.append("..")
 
+from constants import REFERENCE_BOUNDS
+from utils import compute_weighted_annual_mean, save_results_csv
+
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, force=True)
 
 # Drift threshold from issue spec
 DRIFT_THRESHOLD = 0.1  # W/m2/decade
-
-
-def load_reference_bounds():
-    """Load observational reference bounds from reference_bounds.yaml.
-
-    Returns:
-        dict of variable bounds, or empty dict if file not found.
-    """
-    bounds_path = os.path.join(os.path.dirname(__file__), "..", "reference_bounds.yaml")
-    if os.path.exists(bounds_path):
-        with open(bounds_path) as f:
-            return yaml.safe_load(f)
-    else:
-        logger.warning("reference_bounds.yaml not found, skipping bounds checks")
-        return {}
-
-
-def compute_global_annual_mean(ds, variable, weights):
-    """Compute area-weighted global-mean annual-mean time series.
-
-    Args:
-        ds: xr.Dataset containing the variable
-        variable: variable name string
-        weights: cos(lat) weights
-
-    Returns:
-        numpy array of annual-mean global-mean values
-    """
-    da = ds[variable]
-    global_mean = da.weighted(weights).mean(dim=["lat", "lon"])
-
-    n_months = len(global_mean)
-    n_years = n_months // 12
-    global_mean = global_mean.isel(time=slice(0, n_years * 12))
-    annual_mean = global_mean.values.reshape(n_years, 12).mean(axis=1)
-
-    return annual_mean
 
 
 def compute_drift(annual_values):
@@ -84,9 +48,7 @@ def compute_drift(annual_values):
         dict with drift_per_decade, intercept, r_squared, p_value
     """
     years = np.arange(len(annual_values))
-    slope, intercept, r_value, p_value, std_err = stats.linregress(
-        years, annual_values
-    )
+    slope, intercept, r_value, p_value, std_err = stats.linregress(years, annual_values)
 
     return {
         "drift_per_decade": slope * 10,  # per year -> per decade
@@ -106,7 +68,7 @@ def main(
     logger.info(f"Running energy balance closure test for {model} (piControl)")
 
     # --- Load reference bounds ---
-    bounds = load_reference_bounds()
+    bounds = REFERENCE_BOUNDS
 
     # --- Load piControl data for rsdt, rsut, rlut ---
     variables = ["rsdt", "rsut", "rlut"]
@@ -126,9 +88,7 @@ def main(
             raise
 
     # Check we have enough data
-    n_years_available = min(
-        len(picontrol_data[v].time) // 12 for v in variables
-    )
+    n_years_available = min(len(picontrol_data[v].time) // 12 for v in variables)
     if n_years_available < min_years:
         logger.warning(
             f"Only {n_years_available} years available, "
@@ -139,9 +99,9 @@ def main(
     lat = picontrol_data["rsdt"]["lat"]
     weights = np.cos(np.deg2rad(lat))
 
-    rsdt_annual = compute_global_annual_mean(picontrol_data["rsdt"], "rsdt", weights)
-    rsut_annual = compute_global_annual_mean(picontrol_data["rsut"], "rsut", weights)
-    rlut_annual = compute_global_annual_mean(picontrol_data["rlut"], "rlut", weights)
+    rsdt_annual = compute_weighted_annual_mean(picontrol_data["rsdt"], "rsdt", weights)
+    rsut_annual = compute_weighted_annual_mean(picontrol_data["rsut"], "rsut", weights)
+    rlut_annual = compute_weighted_annual_mean(picontrol_data["rlut"], "rlut", weights)
 
     # Trim to common length
     n_common = min(len(rsdt_annual), len(rsut_annual), len(rlut_annual))
@@ -207,36 +167,7 @@ def main(
         }
     )
 
-    if save_to_cloud:
-        from google.cloud import storage as gcs_storage
-
-        storage_client = gcs_storage.Client(project="JCM and Benchmarking")
-        bucket = storage_client.bucket("climatebench")
-        gcs_path = "results/energy_balance/energy_balance_results.csv"
-        blob = gcs_storage.Blob(bucket=bucket, name=gcs_path)
-
-        if blob.exists(storage_client):
-            import io
-
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-        logger.info(f"Results saved to cloud: gs://climatebench/{gcs_path}")
-    else:
-        if overwrite or not os.path.isfile(results_file):
-            os.makedirs(results_dir, exist_ok=True)
-            result_df.to_csv(results_file, index=False)
-        else:
-            with open(results_file, "a") as f:
-                writer_object = writer(f)
-                writer_object.writerow(result_df.values.flatten().tolist())
-        logger.info(f"Results saved locally: {results_file}")
+    save_results_csv(result_df, results_file, save_to_cloud, overwrite)
 
     return {
         "drift_per_decade": drift,

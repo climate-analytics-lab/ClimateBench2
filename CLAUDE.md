@@ -67,6 +67,18 @@ python bjerknes_benchmark.py --model CanESM5 --min_years 200
 cd benchmark_scrips
 python aerosol_forcing_benchmark.py --model CanESM5
 python aerosol_forcing_benchmark.py --model UKESM1-0-LL --end_period_years 30
+**Meridional heat transport partitioning (Tier I):**
+```bash
+cd benchmark_scrips
+python meridional_heat_transport_benchmark.py --model CanESM5
+python meridional_heat_transport_benchmark.py --model CanESM5 --min_years 200
+```
+
+**Covariance consistency (Tier I):**
+```bash
+cd benchmark_scrips
+python covariance_benchmark.py --model CanESM5
+python covariance_benchmark.py --model CanESM5 --n_years 200
 ```
 
 **Bulk benchmark run:**
@@ -113,6 +125,7 @@ python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/paleo_scr
 | `tos` | Sea surface temperature | Omon | NOAA OISST |
 | `clt` | Cloud area fraction | Amon | NASA MODIS (GEE) |
 | `od550aer` | Aerosol optical depth | AERmon | NASA MODIS (GEE) |
+| `prw` | Precipitable water (column water vapour) | Amon | — |
 | `rsdt` | Incoming TOA SW flux | Amon | — (model only) |
 | `rsut`/`rlut` | TOA SW/LW flux (all-sky) | Amon | NASA CERES |
 | `rsutcs`/`rlutcs` | TOA SW/LW flux (clear-sky) | Amon | NASA CERES |
@@ -153,3 +166,5 @@ Default SSP scenario is `ssp245`, set in `constants.py`. Historical runs cover 1
 | Arctic amplification | `arctic_amplification_benchmark.py` | piControl, abrupt-4xCO2 | `tas` | `results/arctic_amplification/arctic_amplification_results.csv` |
 | Bjerknes compensation | `bjerknes_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/bjerknes_compensation/bjerknes_results.csv` |
 | Aerosol forcing (hist-aer) | `aerosol_forcing_benchmark.py` | piControl, hist-aer (DAMIP) | `tas`, `rsdt`, `rsut`, `rlut` | `results/aerosol_forcing/aerosol_forcing_results.csv` |
+| Meridional heat transport | `meridional_heat_transport_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/meridional_heat_transport/meridional_heat_transport_results.csv` |
+| Covariance consistency | `covariance_benchmark.py` | piControl | `tas`, `prw`, `rlutcs`, `pr`, `hfls`, `hfss`, `rsds`, `rsus`, `rlds`, `rlus` | `results/covariance_consistency/covariance_results.csv` |

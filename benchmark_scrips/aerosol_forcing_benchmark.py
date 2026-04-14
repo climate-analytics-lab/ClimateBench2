@@ -30,7 +30,6 @@ import argparse
 import logging
 import os
 import sys
-from csv import writer
 
 import numpy as np
 import pandas as pd
@@ -39,6 +38,7 @@ from scipy import stats
 from benchmark_utils import DataFinder
 
 sys.path.append("..")
+from utils import compute_weighted_annual_mean, save_results_csv
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -46,28 +46,6 @@ logging.basicConfig(level=logging.INFO)
 # Pass/fail bounds on net aerosol ERF (W/m^2), from Forster et al. 2021.
 ERF_MIN = -2.0
 ERF_MAX = -0.5
-
-
-def compute_global_annual_mean(ds, variable, weights):
-    """Area-weighted global-mean annual-mean time series.
-
-    Args:
-        ds: xr.Dataset containing the variable.
-        variable: variable name string.
-        weights: cos(lat) weights.
-
-    Returns:
-        numpy array of annual-mean global-mean values.
-    """
-    da = ds[variable]
-    global_mean = da.weighted(weights).mean(dim=["lat", "lon"])
-
-    n_months = len(global_mean)
-    n_years = n_months // 12
-    global_mean = global_mean.isel(time=slice(0, n_years * 12))
-    annual_mean = global_mean.values.reshape(n_years, 12).mean(axis=1)
-
-    return annual_mean
 
 
 def gregory_erf_estimate(delta_t, delta_n):
@@ -196,10 +174,10 @@ def main(
     )
 
     # --- hist-aer global-mean annual-mean series ---
-    tas_annual = compute_global_annual_mean(histaer_data["tas"], "tas", weights)
-    rsdt_annual = compute_global_annual_mean(histaer_data["rsdt"], "rsdt", weights)
-    rsut_annual = compute_global_annual_mean(histaer_data["rsut"], "rsut", weights)
-    rlut_annual = compute_global_annual_mean(histaer_data["rlut"], "rlut", weights)
+    tas_annual = compute_weighted_annual_mean(histaer_data["tas"], "tas", weights)
+    rsdt_annual = compute_weighted_annual_mean(histaer_data["rsdt"], "rsdt", weights)
+    rsut_annual = compute_weighted_annual_mean(histaer_data["rsut"], "rsut", weights)
+    rlut_annual = compute_weighted_annual_mean(histaer_data["rlut"], "rlut", weights)
 
     n_common = min(
         len(tas_annual), len(rsdt_annual), len(rsut_annual), len(rlut_annual)
@@ -308,36 +286,7 @@ def main(
         }
     )
 
-    if save_to_cloud:
-        from google.cloud import storage as gcs_storage
-
-        storage_client = gcs_storage.Client(project="JCM and Benchmarking")
-        bucket = storage_client.bucket("climatebench")
-        gcs_path = "results/aerosol_forcing/aerosol_forcing_results.csv"
-        blob = gcs_storage.Blob(bucket=bucket, name=gcs_path)
-
-        if blob.exists(storage_client):
-            import io
-
-            existing_data = blob.download_as_text()
-            output = io.StringIO(existing_data)
-            output.seek(0, io.SEEK_END)
-            writer_object = writer(output)
-            writer_object.writerow(result_df.values.flatten().tolist())
-            output.seek(0)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-        else:
-            result_df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-        logger.info(f"Results saved to cloud: gs://climatebench/{gcs_path}")
-    else:
-        if overwrite or not os.path.isfile(results_file):
-            os.makedirs(results_dir, exist_ok=True)
-            result_df.to_csv(results_file, index=False)
-        else:
-            with open(results_file, "a") as f:
-                writer_object = writer(f)
-                writer_object.writerow(result_df.values.flatten().tolist())
-        logger.info(f"Results saved locally: {results_file}")
+    save_results_csv(result_df, results_file, save_to_cloud, overwrite)
 
     return {
         "delta_T_end_K": delta_t_end,

@@ -1,21 +1,17 @@
 """Tier I: Aerosol forcing pass/fail check (hist-aer).
 
-Diagnoses the net aerosol effective radiative forcing (ERF) and the
-global-mean surface temperature response from the DAMIP ``hist-aer``
-simulation. Two ERF estimates are reported:
+Diagnoses the net aerosol effective radiative forcing (ERF) using the
+lambda-corrected end-of-period estimate (Forster et al. 2021, AR6 Ch. 7):
 
-1. Gregory-style intercept of regressing global-mean TOA net flux
-   anomaly on global-mean surface temperature anomaly across the full
-   hist-aer record. Self-contained but noisy.
-2. Lambda-corrected end-of-period estimate
-   ``ERF = N_end - lambda_ecs * dT_end`` where ``lambda_ecs`` is read
-   from ``results/ecs/ecs_results.csv`` if available. This is the
-   approach used in Forster et al. (2021, AR6 Ch. 7).
+    ERF = delta_N_end - lambda * delta_T_end
 
-Pass/fail criteria (from issue spec):
+where lambda is computed directly from an abrupt-4xCO2 Gregory regression
+(N vs delta_T), and delta_N_end / delta_T_end are the end-of-period
+global-mean TOA flux and temperature anomalies from hist-aer vs piControl.
+
+Pass/fail criteria (Forster et al. 2021):
     - End-of-period mean tas response is a net cooling (dT_end < 0)
-    - Reported ERF (lambda-corrected if available, else Gregory) is in
-      the range [-2.0, -0.5] W/m^2
+    - ERF is in the range [-2.0, -0.5] W/m^2
 
 Usage:
     python aerosol_forcing_benchmark.py --model CanESM5
@@ -24,6 +20,7 @@ Usage:
 References:
     Gillett et al., 2016 (DAMIP protocol)
     Forster et al., 2021 (IPCC AR6 WG1, Chapter 7)
+    Gregory et al., 2004, doi:10.1029/2003GL018747
 """
 
 import argparse
@@ -33,12 +30,11 @@ import sys
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 from benchmark_utils import DataFinder
 
 sys.path.append("..")
-from utils import compute_weighted_annual_mean, save_results_csv
+from utils import compute_weighted_annual_mean, gregory_regression, save_results_csv
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -48,60 +44,10 @@ ERF_MIN = -2.0
 ERF_MAX = -0.5
 
 
-def gregory_erf_estimate(delta_t, delta_n):
-    """Estimate aerosol ERF as the intercept of N = ERF + lambda * T.
-
-    Args:
-        delta_t: annual-mean global-mean tas anomaly (K) vs piControl.
-        delta_n: annual-mean global-mean TOA net flux anomaly (W/m^2)
-            vs piControl.
-
-    Returns:
-        dict with erf, lambda_feedback, r_squared, p_value, intercept_std_err.
-    """
-    slope, intercept, r_value, p_value, std_err = stats.linregress(delta_t, delta_n)
-    return {
-        "erf": intercept,
-        "lambda_feedback": slope,
-        "r_squared": r_value**2,
-        "p_value": p_value,
-        "slope_std_err": std_err,
-    }
-
-
-def read_lambda_from_ecs_results(model: str):
-    """Best-effort lookup of lambda for this model from ecs_results.csv.
-
-    Returns lambda (W/m^2/K, negative for stable climate) or None if the
-    file or row is not present.
-    """
-    ecs_path = os.path.join(
-        os.path.dirname(__file__), "..", "results", "ecs", "ecs_results.csv"
-    )
-    if not os.path.isfile(ecs_path):
-        logger.warning(
-            "ecs_results.csv not found at %s; skipping lambda-corrected ERF",
-            ecs_path,
-        )
-        return None
-    try:
-        df = pd.read_csv(ecs_path)
-    except Exception as e:
-        logger.warning("Could not read ecs_results.csv (%s); skipping", e)
-        return None
-    rows = df[df["model"] == model]
-    if rows.empty:
-        logger.warning(
-            "No ECS row found for model %s; skipping lambda-corrected ERF", model
-        )
-        return None
-    # Use the most recent row if duplicates exist
-    return float(rows.iloc[-1]["lambda_Wm2K"])
-
-
 def main(
     model: str,
     end_period_years: int = 30,
+    n_years_ecs: int = 150,
     save_to_cloud: bool = False,
     overwrite: bool = False,
 ):
@@ -128,6 +74,24 @@ def main(
             logger.error(f"  Failed to load piControl {var}: {e}")
             raise
 
+    # --- Load abrupt-4xCO2 for lambda estimation ---
+    logger.info(f"Loading abrupt-4xCO2 data ({n_years_ecs} yr) for lambda")
+    abrupt4x_data = {}
+    for var in variables:
+        df_4x = DataFinder(model=model, variable=var, start_year=1850, end_year=2000)
+        try:
+            ds = df_4x.load_experiment_ds(
+                experiment="abrupt-4xCO2", n_years=n_years_ecs, ensemble_mean=True
+            )
+            abrupt4x_data[var] = ds
+            logger.info(
+                f"  abrupt-4xCO2 {var}: {len(ds.time)} months "
+                f"({len(ds.time) // 12} years)"
+            )
+        except Exception as e:
+            logger.error(f"  Failed to load abrupt-4xCO2 {var}: {e}")
+            raise
+
     # --- Load hist-aer (DAMIP) ---
     logger.info("Loading hist-aer data")
     histaer_data = {}
@@ -149,7 +113,7 @@ def main(
             logger.error(f"  Failed to load hist-aer {var}: {e}")
             raise
 
-    # --- Area weights ---
+    # --- Area weights (from hist-aer grid) ---
     lat = histaer_data["tas"]["lat"]
     weights = np.cos(np.deg2rad(lat))
 
@@ -164,13 +128,27 @@ def main(
         )
 
     pi_tas_mean = _pi_mean("tas")
-    pi_rsdt_mean = _pi_mean("rsdt")
-    pi_rsut_mean = _pi_mean("rsut")
-    pi_rlut_mean = _pi_mean("rlut")
-    pi_net_flux_mean = pi_rsdt_mean - pi_rsut_mean - pi_rlut_mean
+    pi_net_flux_mean = _pi_mean("rsdt") - _pi_mean("rsut") - _pi_mean("rlut")
     logger.info(
         f"  piControl baseline: T={pi_tas_mean:.2f} K, "
         f"N={pi_net_flux_mean:.3f} W/m2"
+    )
+
+    # --- Lambda from abrupt-4xCO2 Gregory regression ---
+    tas_4x = compute_weighted_annual_mean(abrupt4x_data["tas"], "tas", weights)
+    rsdt_4x = compute_weighted_annual_mean(abrupt4x_data["rsdt"], "rsdt", weights)
+    rsut_4x = compute_weighted_annual_mean(abrupt4x_data["rsut"], "rsut", weights)
+    rlut_4x = compute_weighted_annual_mean(abrupt4x_data["rlut"], "rlut", weights)
+    n_4x = min(len(tas_4x), len(rsdt_4x), len(rsut_4x), len(rlut_4x))
+    delta_t_4x = tas_4x[:n_4x] - pi_tas_mean
+    delta_n_4x = (rsdt_4x[:n_4x] - rsut_4x[:n_4x] - rlut_4x[:n_4x]) - pi_net_flux_mean
+
+    greg_4x = gregory_regression(delta_t_4x, delta_n_4x)
+    lambda_ecs = greg_4x["lambda_feedback"]   # W/m²/K, negative for a stable climate
+    lambda_r2 = greg_4x["r_squared"]
+    logger.info(
+        f"  abrupt-4xCO2 Gregory: lambda={lambda_ecs:.3f} W/m2/K "
+        f"(r²={lambda_r2:.3f}, n={n_4x} yr)"
     )
 
     # --- hist-aer global-mean annual-mean series ---
@@ -179,16 +157,9 @@ def main(
     rsut_annual = compute_weighted_annual_mean(histaer_data["rsut"], "rsut", weights)
     rlut_annual = compute_weighted_annual_mean(histaer_data["rlut"], "rlut", weights)
 
-    n_common = min(
-        len(tas_annual), len(rsdt_annual), len(rsut_annual), len(rlut_annual)
-    )
-    tas_annual = tas_annual[:n_common]
-    rsdt_annual = rsdt_annual[:n_common]
-    rsut_annual = rsut_annual[:n_common]
-    rlut_annual = rlut_annual[:n_common]
-
-    delta_t = tas_annual - pi_tas_mean
-    delta_n = (rsdt_annual - rsut_annual - rlut_annual) - pi_net_flux_mean
+    n_common = min(len(tas_annual), len(rsdt_annual), len(rsut_annual), len(rlut_annual))
+    delta_t = tas_annual[:n_common] - pi_tas_mean
+    delta_n = (rsdt_annual[:n_common] - rsut_annual[:n_common] - rlut_annual[:n_common]) - pi_net_flux_mean
 
     n_years_picontrol = min(len(picontrol_data[v].time) // 12 for v in variables)
     logger.info(
@@ -197,16 +168,14 @@ def main(
     )
 
     # --- End-of-period mean response ---
-    if end_period_years > n_common:
+    end_window = min(end_period_years, n_common)
+    if end_window < end_period_years:
         logger.warning(
             "Requested end window (%d yr) exceeds available record (%d yr); "
             "using full record",
             end_period_years,
             n_common,
         )
-        end_window = n_common
-    else:
-        end_window = end_period_years
     delta_t_end = float(delta_t[-end_window:].mean())
     delta_n_end = float(delta_n[-end_window:].mean())
     logger.info(
@@ -214,38 +183,13 @@ def main(
         f"dN={delta_n_end:.3f} W/m2"
     )
 
-    # --- Gregory-style ERF from full hist-aer record ---
-    gregory = gregory_erf_estimate(delta_t, delta_n)
-    erf_gregory = gregory["erf"]
-    lambda_gregory = gregory["lambda_feedback"]
-    logger.info(
-        f"  Gregory ERF intercept: {erf_gregory:.3f} W/m2 "
-        f"(lambda={lambda_gregory:.3f} W/m2/K, R^2={gregory['r_squared']:.3f})"
-    )
-
-    # --- Lambda-corrected ERF from end-of-period mean ---
-    lambda_ecs = read_lambda_from_ecs_results(model)
-    if lambda_ecs is not None:
-        erf_lambda_corrected = delta_n_end - lambda_ecs * delta_t_end
-        logger.info(
-            f"  Lambda-corrected ERF: {erf_lambda_corrected:.3f} W/m2 "
-            f"(lambda_ecs={lambda_ecs:.3f} W/m2/K)"
-        )
-    else:
-        erf_lambda_corrected = float("nan")
-
-    # Reported ERF: prefer lambda-corrected if available
-    if lambda_ecs is not None and np.isfinite(erf_lambda_corrected):
-        erf_reported = erf_lambda_corrected
-        erf_source = "lambda_corrected"
-    else:
-        erf_reported = erf_gregory
-        erf_source = "gregory"
-    logger.info(f"  Reported ERF ({erf_source}): {erf_reported:.3f} W/m2")
+    # --- Lambda-corrected ERF (Forster et al. 2021) ---
+    erf = delta_n_end - lambda_ecs * delta_t_end
+    logger.info(f"  Lambda-corrected ERF: {erf:.3f} W/m2")
 
     # --- Pass/fail ---
     pass_cooling = bool(delta_t_end < 0)
-    pass_erf_range = bool(ERF_MIN <= erf_reported <= ERF_MAX)
+    pass_erf_range = bool(ERF_MIN <= erf <= ERF_MAX)
     passes = pass_cooling and pass_erf_range
     logger.info(
         f"  pass_cooling={pass_cooling}, pass_erf_range={pass_erf_range} "
@@ -261,24 +205,15 @@ def main(
             "model": [model],
             "delta_T_end_K": [round(delta_t_end, 4)],
             "delta_N_end_Wm2": [round(delta_n_end, 4)],
-            "erf_gregory_Wm2": [round(erf_gregory, 4)],
-            "lambda_gregory_Wm2K": [round(lambda_gregory, 4)],
-            "erf_gregory_r2": [round(gregory["r_squared"], 4)],
-            "lambda_ecs_used_Wm2K": [
-                round(lambda_ecs, 4) if lambda_ecs is not None else ""
-            ],
-            "erf_lambda_corrected_Wm2": [
-                round(erf_lambda_corrected, 4)
-                if np.isfinite(erf_lambda_corrected)
-                else ""
-            ],
-            "erf_reported_Wm2": [round(erf_reported, 4)],
-            "erf_source": [erf_source],
+            "lambda_abrupt4x_Wm2K": [round(lambda_ecs, 4)],
+            "lambda_r2": [round(lambda_r2, 4)],
+            "erf_lambda_corrected_Wm2": [round(erf, 4)],
             "pass_cooling": [pass_cooling],
             "pass_erf_range": [pass_erf_range],
             "passes": [passes],
             "n_years_hist_aer": [n_common],
             "end_window_years": [end_window],
+            "n_years_ecs": [n_4x],
             "n_years_picontrol": [n_years_picontrol],
             "ensemble_members": [
                 "_".join(ensemble_members) if ensemble_members else ""
@@ -291,10 +226,8 @@ def main(
     return {
         "delta_T_end_K": delta_t_end,
         "delta_N_end_Wm2": delta_n_end,
-        "erf_gregory_Wm2": erf_gregory,
-        "erf_lambda_corrected_Wm2": erf_lambda_corrected,
-        "erf_reported_Wm2": erf_reported,
-        "erf_source": erf_source,
+        "lambda_abrupt4x_Wm2K": lambda_ecs,
+        "erf_lambda_corrected_Wm2": erf,
         "pass_cooling": pass_cooling,
         "pass_erf_range": pass_erf_range,
         "passes": passes,
@@ -317,6 +250,12 @@ if __name__ == "__main__":
         help="Length of end-of-period averaging window in years (default: 30)",
     )
     parser.add_argument(
+        "--n_years_ecs",
+        default=150,
+        type=int,
+        help="Years of abrupt-4xCO2 to use for lambda regression (default: 150)",
+    )
+    parser.add_argument(
         "--save_to_cloud",
         action="store_true",
         default=False,
@@ -333,6 +272,7 @@ if __name__ == "__main__":
     main(
         model=args.model,
         end_period_years=args.end_period_years,
+        n_years_ecs=args.n_years_ecs,
         save_to_cloud=args.save_to_cloud,
         overwrite=args.overwrite,
     )

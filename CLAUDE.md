@@ -66,7 +66,7 @@ python bjerknes_benchmark.py --model CanESM5 --min_years 200
 ```bash
 cd benchmark_scrips
 python aerosol_forcing_benchmark.py --model CanESM5
-python aerosol_forcing_benchmark.py --model UKESM1-0-LL --end_period_years 30
+python aerosol_forcing_benchmark.py --model UKESM1-0-LL --end_period_years 30 --n_years_ecs 150
 **Meridional heat transport partitioning (Tier I):**
 ```bash
 cd benchmark_scrips
@@ -165,6 +165,6 @@ Default SSP scenario is `ssp245`, set in `constants.py`. Historical runs cover 1
 | Land-ocean warming contrast | `land_ocean_warming_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `sftlf` | `results/land_ocean_warming/land_ocean_warming_results.csv` |
 | Arctic amplification | `arctic_amplification_benchmark.py` | piControl, abrupt-4xCO2 | `tas` | `results/arctic_amplification/arctic_amplification_results.csv` |
 | Bjerknes compensation | `bjerknes_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/bjerknes_compensation/bjerknes_results.csv` |
-| Aerosol forcing (hist-aer) | `aerosol_forcing_benchmark.py` | piControl, hist-aer (DAMIP) | `tas`, `rsdt`, `rsut`, `rlut` | `results/aerosol_forcing/aerosol_forcing_results.csv` |
+| Aerosol forcing (hist-aer) | `aerosol_forcing_benchmark.py` | piControl, abrupt-4xCO2, hist-aer (DAMIP) | `tas`, `rsdt`, `rsut`, `rlut` | `results/aerosol_forcing/aerosol_forcing_results.csv` |
 | Meridional heat transport | `meridional_heat_transport_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/meridional_heat_transport/meridional_heat_transport_results.csv` |
 | Covariance consistency | `covariance_benchmark.py` | piControl | `tas`, `prw`, `rlutcs`, `pr`, `hfls`, `hfss`, `rsds`, `rsus`, `rlds`, `rlus` | `results/covariance_consistency/covariance_results.csv` |

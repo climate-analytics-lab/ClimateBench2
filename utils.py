@@ -11,6 +11,7 @@ import requests
 import xarray as xr
 from constants import EARTH_RADIUS
 from google.cloud import storage
+from scipy import stats
 
 logger = logging.getLogger(__name__)
 
@@ -352,3 +353,35 @@ def area_mean(da):
     """
     weights = np.cos(np.deg2rad(da["lat"]))
     return da.weighted(weights).mean(dim=spatial_dims(da))
+
+
+def gregory_regression(delta_t, net_flux):
+    """Perform Gregory regression: N = F_4x + lambda * delta_T.
+
+    At equilibrium (N=0): ECS = -F_2x / lambda = -F_4x / (2 * lambda)
+
+    Args:
+        delta_t: annual-mean global-mean surface temperature anomaly (K)
+        net_flux: annual-mean global-mean TOA net downward flux anomaly (W/m2)
+
+    Returns:
+        dict with ecs, lambda_feedback, f4x, f2x, r_squared, p_value, slope_std_err
+    """
+    slope, intercept, r_value, p_value, std_err = stats.linregress(delta_t, net_flux)
+
+    f4x = intercept  # 4xCO2 forcing (W/m2)
+    lambda_feedback = slope  # feedback parameter (W/m2/K), should be negative
+    f2x = f4x / 2  # 2xCO2 forcing (approximate)
+
+    # ECS for 2xCO2: at equilibrium N=0, so 0 = F_2x + lambda*ECS
+    ecs = -f2x / lambda_feedback if lambda_feedback != 0 else np.nan
+
+    return {
+        "ecs": ecs,
+        "lambda_feedback": lambda_feedback,
+        "f4x": f4x,
+        "f2x": f2x,
+        "r_squared": r_value**2,
+        "p_value": p_value,
+        "slope_std_err": std_err,
+    }

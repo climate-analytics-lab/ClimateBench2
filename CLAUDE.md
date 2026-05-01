@@ -90,9 +90,29 @@ chmod +x run_benchmark.sh
 
 **Paleoclimate data download:**
 ```bash
-cd paleo_scrips/paleo_data_cache
-python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/paleo_scrips/paleo_data_cache
+cd paleo_scripts
+python download_paleo.py --source observations
+python download_paleo.py --source cmip6 --model AWI-ESM-1-1-LR --period lgm
+python download_paleo.py --source cmip6 --model all --period all
 ```
+
+**Paleoclimate data processing:**
+```bash
+cd paleo_scripts
+python process_paleo.py --source observations
+python process_paleo.py --source cmip6 --period lgm
+```
+
+**Paleoclimate benchmark (spatial RMSE/MAE/CRPS):**
+```bash
+cd paleo_scripts
+python paleo_benchmark.py --model AWI-ESM-1-1-LR --period lgm
+python paleo_benchmark.py --model all --period all
+python paleo_benchmark.py --model MIROC-ES2L --period lgm --use-picontrol
+```
+
+PI reference for anomaly computation: lgmDA Holocene (default) or model piControl (`--use-picontrol`).
+Precipitation benchmarks (Bartlein MAP, Scussolini LIG) require `--use-picontrol` and processed `pr` data.
 
 ## Architecture
 

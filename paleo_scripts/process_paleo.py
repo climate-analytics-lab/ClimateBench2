@@ -11,11 +11,22 @@ CMIP6 processing (--source cmip6):
   Then deletes the raw files (unless --skip-cleanup).
 
 Observations processing (--source observations):
-  Reads downloaded proxy/reanalysis files and produces unified CSVs/NetCDF:
+  Proxy data — site-level or gridded, saved per period:
+    paleo_data_cache/processed/observations/proxy/lig127k_ottobliesner_tas_proxy.nc
+    paleo_data_cache/processed/observations/proxy/lig127k_scussolini_pr_proxy.csv
+    paleo_data_cache/processed/observations/proxy/lgm_bartlein_proxy.csv
+    paleo_data_cache/processed/observations/proxy/midh_bartlein_proxy.csv
+    paleo_data_cache/processed/observations/proxy/deeptime_hansen_proxy.csv
+    paleo_data_cache/processed/observations/proxy/sisal_v3/
+
+  Data assimilation — gridded, saved per period:
+    paleo_data_cache/processed/observations/da/lgm_lgmda_da.nc
+    paleo_data_cache/processed/observations/da/lgm_lgmr_da.nc
+
+  Multi-period summaries:
     paleo_data_cache/processed/observations/annual_mean_global_obs.csv
     paleo_data_cache/processed/observations/annual_mean_zonal_obs.csv
     paleo_data_cache/processed/observations/monthly_mean_zonal_obs.csv
-    paleo_data_cache/processed/observations/LGM_da.nc
 
 Run download_paleo.py first to populate paleo_data_cache/raw/.
 
@@ -29,6 +40,7 @@ Usage:
 import argparse
 import logging
 import sys
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -150,7 +162,7 @@ def process_cmip6(periods: list[str], skip_cleanup: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Observations processing
+# Observations — sub-processors
 # ---------------------------------------------------------------------------
 
 
@@ -189,56 +201,11 @@ def _parse_holocene(hol_ds: xr.Dataset, var: str) -> xr.Dataset:
     )
 
 
-def process_observations() -> None:
-    obs_raw = RAW_DIR / "observations"
-    obs_proc = PROCESSED_DIR / "observations"
-    obs_proc.mkdir(parents=True, exist_ok=True)
-
-    # --- Mid Holocene (Temp12k) ---
-    logging.info("Processing Mid Holocene (Temp12k)")
-    hol_ds = xr.open_dataset(obs_raw / "temp12k_alldata.nc").load()
-    midH_scc = _parse_holocene(hol_ds, "scc")
-
-    # --- Last Interglacial (Capron et al. 2021) ---
-    logging.info("Processing Last Interglacial (lig127k)")
-    lig_df = pd.concat(
-        [
-            pd.read_excel(
-                obs_raw
-                / "lig127k"
-                / "Table S2. Annual - NH Oceans, Europe, and Greenland (40-90N)_CP-2019-174.xlsx",
-                skiprows=2,
-            ),
-            pd.read_excel(
-                obs_raw
-                / "lig127k"
-                / "Table S3. Annual - Low latitudes (40S-40N)_CP-2019-174.xlsx",
-                skiprows=2,
-            ),
-            pd.read_excel(
-                obs_raw
-                / "lig127k"
-                / "Table S4. Annual - SH Oceans and Antarctica (40-90S)_CP-2019-174.xlsx",
-                skiprows=2,
-            ),
-        ]
-    )
-    lig_df["SD"] = lig_df["Anom+1SD"] - lig_df["Anom"]
-    lig_ds = (
-        lig_df[["Latitude", "Longitude", "Anom", "SD"]]
-        .groupby(["Latitude", "Longitude"])
-        .mean()
-        .to_xarray()
-        .rename({"Latitude": "lat", "Longitude": "lon", "Anom": "tas", "SD": "tas_std"})
-    )
-    lig_weights = np.cos(np.deg2rad(lig_ds.lat)).expand_dims({"lon": lig_ds.lon})
-    lig_zmean = lig_ds.weighted(lig_weights).mean()
-
-    # --- Last Glacial Maximum (lgmDA) ---
-    logging.info("Processing Last Glacial Maximum (lgmDA)")
+def _process_lgmda(obs_raw: Path, da_dir: Path) -> xr.Dataset:
+    """lgmDA monthly gridded fields → da/lgm_lgmda_da.nc. Returns the combined dataset."""
     lgm_raw = xr.open_dataset(obs_raw / "lgmDA_lgm_ATM_monthly_climo.nc")
     pi_raw = xr.open_dataset(obs_raw / "lgmDA_hol_ATM_monthly_climo.nc")
-    lgm_combined = xr.Dataset(
+    ds = xr.Dataset(
         {
             "lgm_tas": (["month", "lat", "lon"], lgm_raw.tas.data),
             "pi_tas": (["month", "lat", "lon"], pi_raw.tas.data),
@@ -251,26 +218,279 @@ def process_observations() -> None:
             "lat": lgm_raw.lat.data,
         },
     )
-    lgm_combined.to_netcdf(obs_proc / "LGM_da.nc")
-    logging.info("Saved LGM_da.nc")
+    ds.to_netcdf(da_dir / "lgm_lgmda_da.nc")
+    logging.info("  Saved da/lgm_lgmda_da.nc")
+    return ds
 
-    lgm_ds = (lgm_combined["lgm_tas"] - lgm_combined["pi_tas"]).to_dataset(name="tas")
-    lgm_ds["tas_std"] = lgm_combined["lgm_tas_std"]
+
+def _process_lgmr(obs_raw: Path, da_dir: Path) -> None:
+    """Osman et al. 2021 LGMR → da/lgm_lgmr_{sat,sst,gmst}_da.nc.
+
+    All LGMR variables are absolute temperatures (°C). Anomalies are computed
+    relative to the pre-industrial reference (100–1000 BP mean).
+
+    SAT and SST live on different grids (96×144 vs 384×320) so they are saved
+    as separate files.
+
+    GMST is saved as a full deglaciation time series (anomaly vs PI) so the
+    complete 0–26 ka record is available for plotting.
+    """
+    osman_dir = obs_raw / "osman2021"
+    required = osman_dir / "LGMR_SAT_climo.nc"
+    if not required.exists():
+        logging.warning("  [skip] lgm_lgmr_*_da.nc — LGMR_SAT_climo.nc not found")
+        return
+
+    # PI reference: 100–1000 BP (5 youngest 200-yr bins, pre-industrial)
+    # LGM window: 19–24 ka BP
+    pi_age = slice(100, 1000)
+    lgm_age = slice(19000, 24000)
+
+    # --- Gridded files: SAT and SST ---
+    for fname, out_name, skip_vars in [
+        ("LGMR_SAT_climo.nc", "lgm_lgmr_sat_da.nc", set()),
+        ("LGMR_SST_climo.nc", "lgm_lgmr_sst_da.nc", {"tarea"}),
+    ]:
+        p = osman_dir / fname
+        if not p.exists():
+            logging.warning(f"  [skip] {out_name} — {fname} not found")
+            continue
+        ds = xr.open_dataset(p).load()
+        pi_mean = ds.sel(age=pi_age).mean(dim="age")
+        lgm_mean = ds.sel(age=lgm_age).mean(dim="age")
+
+        out = xr.Dataset()
+        for var in ds.data_vars:
+            if var in skip_vars:
+                out[var] = (
+                    ds[var].isel(age=0, drop=True) if "age" in ds[var].dims else ds[var]
+                )
+            elif var.endswith("_std"):
+                # Keep LGM-period ensemble spread; differencing stds is not meaningful
+                out[var] = lgm_mean[var]
+                out[var].attrs = {**ds[var].attrs, "note": "ensemble spread at LGM"}
+            else:
+                out[var] = lgm_mean[var] - pi_mean[var]
+                out[var].attrs = {
+                    **ds[var].attrs,
+                    "note": "LGM (19–24 ka) anomaly relative to PI (100–1000 BP)",
+                }
+        out.to_netcdf(da_dir / out_name)
+        logging.info(f"  Saved da/{out_name}")
+
+    # --- GMST: save full time series as anomaly vs PI ---
+    gmst_path = osman_dir / "LGMR_GMST_climo.nc"
+    if not gmst_path.exists():
+        logging.warning("  [skip] lgm_lgmr_gmst_da.nc — LGMR_GMST_climo.nc not found")
+        return
+    ds = xr.open_dataset(gmst_path).load()
+    pi_val = float(ds["gmst"].sel(age=pi_age).mean(dim="age").values)
+    out = xr.Dataset(
+        {
+            "gmst_anom": ds["gmst"] - pi_val,
+            "gmst_anom_std": ds["gmst_std"],
+            "gmst_abs": ds["gmst"],
+        }
+    )
+    out["gmst_anom"].attrs = {
+        "units": "degrees Celsius",
+        "long_name": "GMST anomaly relative to PI (100–1000 BP)",
+    }
+    out["gmst_anom_std"].attrs = ds["gmst_std"].attrs
+    out["gmst_abs"].attrs = {**ds["gmst"].attrs, "note": "absolute temperature"}
+    out.to_netcdf(da_dir / "lgm_lgmr_gmst_da.nc")
+    logging.info("  Saved da/lgm_lgmr_gmst_da.nc")
+
+
+def _process_ottobliesner_lig(
+    obs_raw: Path, proxy_dir: Path
+) -> tuple[xr.Dataset, xr.DataArray]:
+    """Otto-Bliesner et al. (2021), Clim. Past 17, 63–88 LIG proxy tables →
+    proxy/lig127k_ottobliesner_tas_proxy.nc.
+    Returns (lig_ds, lig_weights) for use in summary CSVs."""
+    lig_dir = obs_raw / "lig127k"
+    tables = [
+        "Table S2. Annual - NH Oceans, Europe, and Greenland (40-90N)_CP-2019-174.xlsx",
+        "Table S3. Annual - Low latitudes (40S-40N)_CP-2019-174.xlsx",
+        "Table S4. Annual - SH Oceans and Antarctica (40-90S)_CP-2019-174.xlsx",
+    ]
+    lig_df = pd.concat([pd.read_excel(lig_dir / t, skiprows=2) for t in tables])
+    lig_df["SD"] = lig_df["Anom+1SD"] - lig_df["Anom"]
+    lig_ds = (
+        lig_df[["Latitude", "Longitude", "Anom", "SD"]]
+        .groupby(["Latitude", "Longitude"])
+        .mean()
+        .to_xarray()
+        .rename({"Latitude": "lat", "Longitude": "lon", "Anom": "tas", "SD": "tas_std"})
+    )
+    lig_ds.to_netcdf(proxy_dir / "lig127k_ottobliesner_tas_proxy.nc")
+    logging.info("  Saved proxy/lig127k_ottobliesner_tas_proxy.nc")
+    lig_weights = np.cos(np.deg2rad(lig_ds.lat)).expand_dims({"lon": lig_ds.lon})
+    return lig_ds, lig_weights
+
+
+def _process_scussolini(obs_raw: Path, proxy_dir: Path) -> None:
+    """Scussolini et al. 2019 LIG precip proxy → proxy/lig127k_scussolini_pr_proxy.csv."""
+    xlsx_path = obs_raw / "scussolini2019_lig_precip_proxy.xlsx"
+    if not xlsx_path.exists() or xlsx_path.stat().st_size == 0:
+        logging.warning(
+            "  [skip] proxy/lig127k_scussolini_pr_proxy.csv — file missing or empty"
+            " (manual download required, see download_paleo.py)"
+        )
+        return
+
+    # Data is in the 'Proxy_Database' sheet; 'LatºN' and 'LonºE' are the coords.
+    df = pd.read_excel(
+        xlsx_path, sheet_name="Proxy_Database", header=0, engine="openpyxl"
+    )
+    col_lower = {c.lower(): c for c in df.columns}
+    lat_col = next((col_lower[k] for k in col_lower if "lat" in k), None)
+    lon_col = next((col_lower[k] for k in col_lower if "lon" in k), None)
+    if lat_col is None or lon_col is None:
+        logging.warning(
+            f"  Scussolini xlsx: could not detect lat/lon columns. Found: {list(df.columns)}"
+        )
+        return
+
+    df.rename(columns={lat_col: "lat", lon_col: "lon"}, inplace=True)
+    df.to_csv(proxy_dir / "lig127k_scussolini_pr_proxy.csv", index=False)
+    logging.info(f"  Saved proxy/lig127k_scussolini_pr_proxy.csv ({len(df)} records)")
+
+
+def _process_bartlein2011(obs_raw: Path, proxy_dir: Path) -> None:
+    """Bartlein et al. 2011 pollen reconstructions → proxy/lgm_bartlein_proxy.nc
+    and proxy/midh_bartlein_proxy.nc.
+
+    The zip contains one NetCDF per variable per period
+    ({var}_delta_{06|21}ka_ALL_grid_2x2.nc). Variables are merged into one
+    Dataset per period (6ka = midHolocene, 21ka = LGM).
+    """
+    import tempfile
+
+    zip_path = obs_raw / "bartlein2011_pollen_climate_recon.zip"
+    if not zip_path.exists():
+        logging.warning("  [skip] Bartlein 2011 — zip not downloaded")
+        return
+
+    with zipfile.ZipFile(zip_path) as zf, tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        zf.extractall(tmp_path)
+
+        period_datasets: dict[str, list[xr.Dataset]] = {"06ka": [], "21ka": []}
+        for nc_file in sorted(tmp_path.glob("*.nc")):
+            name = nc_file.stem  # e.g. mat_delta_06ka_ALL_grid_2x2
+            for period in period_datasets:
+                if f"_{period}_" in name:
+                    period_datasets[period].append(xr.open_dataset(nc_file).load())
+                    break
+
+        period_out = {
+            "06ka": ("midh_bartlein_proxy.nc", "midH"),
+            "21ka": ("lgm_bartlein_proxy.nc", "LGM"),
+        }
+        for period, datasets in period_datasets.items():
+            out_name, label = period_out[period]
+            if not datasets:
+                logging.warning(f"  Bartlein 2011: no files found for {period}")
+                continue
+            merged = xr.merge(datasets)
+            merged.to_netcdf(proxy_dir / out_name)
+            logging.info(
+                f"  Saved proxy/{out_name} ({label}, {len(datasets)} variables)"
+            )
+
+
+def _process_hansen_deeptime(obs_raw: Path, proxy_dir: Path) -> None:
+    """Tierney THansenMethod.csv → proxy/deeptime_hansen_proxy.csv."""
+    csv_path = obs_raw / "THansenMethod.csv"
+    if not csv_path.exists():
+        logging.warning(
+            "  [skip] proxy/deeptime_hansen_proxy.csv — THansenMethod.csv not found"
+        )
+        return
+    pd.read_csv(csv_path).to_csv(proxy_dir / "deeptime_hansen_proxy.csv", index=False)
+    logging.info("  Saved proxy/deeptime_hansen_proxy.csv")
+
+
+def _process_sisal(obs_raw: Path, proxy_dir: Path) -> None:
+    """Extract SISAL v3 speleothem database zips into proxy/sisal_v3/."""
+    sisal_raw = obs_raw / "sisal_v3"
+    sisal_proc = proxy_dir / "sisal_v3"
+
+    for fname in ["sisalv3_database_mysql_csv.zip", "sisalv3_codes.zip"]:
+        zip_path = sisal_raw / fname
+        if not zip_path.exists():
+            logging.warning(f"  [skip] sisal_v3 — {fname} not found")
+            continue
+        dest = sisal_proc / fname.replace(".zip", "")
+        if dest.exists():
+            logging.info(f"  [skip] {fname} already extracted")
+            continue
+        dest.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(dest)
+        logging.info(f"  Extracted {fname} → proxy/sisal_v3/{dest.name}/")
+
+
+# ---------------------------------------------------------------------------
+# Observations — top-level orchestrator
+# ---------------------------------------------------------------------------
+
+
+def process_observations() -> None:
+    obs_raw = RAW_DIR / "observations"
+    obs_proc = PROCESSED_DIR / "observations"
+    proxy_dir = obs_proc / "proxy"
+    da_dir = obs_proc / "da"
+
+    for d in (obs_proc, proxy_dir, da_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+    # ---- Data assimilation ----
+    logging.info("Processing LGM lgmDA (data assimilation)")
+    lgmda_ds = _process_lgmda(obs_raw, da_dir)
+
+    logging.info("Processing LGM Osman 2021 LGMR (data assimilation)")
+    _process_lgmr(obs_raw, da_dir)
+
+    # ---- Proxy ----
+    logging.info("Processing LIG Otto-Bliesner et al. 2021 temperature proxy")
+    lig_ds, lig_weights = _process_ottobliesner_lig(obs_raw, proxy_dir)
+
+    logging.info("Processing LIG Scussolini et al. 2019 precipitation proxy")
+    _process_scussolini(obs_raw, proxy_dir)
+
+    logging.info("Processing Bartlein et al. 2011 pollen reconstructions (LGM + midH)")
+    _process_bartlein2011(obs_raw, proxy_dir)
+
+    logging.info("Processing deep-time Hansen reconstruction")
+    _process_hansen_deeptime(obs_raw, proxy_dir)
+
+    logging.info("Extracting SISAL v3 speleothem database")
+    _process_sisal(obs_raw, proxy_dir)
+
+    # ---- Mid Holocene (Temp12k) — needed for summary CSVs ----
+    logging.info("Processing Mid Holocene Temp12k (Kaufman et al. 2020)")
+    hol_ds = xr.open_dataset(obs_raw / "temp12k_alldata.nc").load()
+    midH_scc = _parse_holocene(hol_ds, "scc")
+
+    # ---- Derived LGM anomaly fields for summaries ----
+    lgm_ds = (lgmda_ds["lgm_tas"] - lgmda_ds["pi_tas"]).to_dataset(name="tas")
+    lgm_ds["tas_std"] = lgmda_ds["lgm_tas_std"]
     lgm_annual = lgm_ds.mean(dim="month")
     lgm_weights = np.cos(np.deg2rad(lgm_annual.lat)).expand_dims(
         {"lon": lgm_annual.lon}
     )
 
-    # --- Global mean annual CSV (all periods) ---
+    # ---- Global mean annual CSV (all periods) ----
     logging.info("Building annual_mean_global_obs.csv")
     paleo_avgs = pd.read_csv(obs_raw / "Figure7_19_obs.csv", skiprows=2)
     midH_global = midH_scc.sel(lat_bnd="90S_to_90N")
-    midH_mean, midH_std = float(midH_global["tas"].values), float(
-        midH_global["tas_std"].values
-    )
-    lig_mean, lig_std = float(lig_zmean["tas"].values), float(
-        lig_zmean["tas_std"].values
-    )
+    midH_mean = float(midH_global["tas"].values)
+    midH_std = float(midH_global["tas_std"].values)
+    lig_zmean = lig_ds.weighted(lig_weights).mean()
+    lig_mean = float(lig_zmean["tas"].values)
+    lig_std = float(lig_zmean["tas_std"].values)
 
     paleo_avgs = pd.concat(
         [
@@ -321,7 +541,7 @@ def process_observations() -> None:
     )
     logging.info("Saved annual_mean_global_obs.csv")
 
-    # --- Zonal mean annual CSV ---
+    # ---- Zonal mean annual CSV ----
     logging.info("Building annual_mean_zonal_obs.csv")
     regions = {
         "global": [-90, 90],
@@ -397,7 +617,7 @@ def process_observations() -> None:
     pd.DataFrame(rows).to_csv(obs_proc / "annual_mean_zonal_obs.csv", index=False)
     logging.info("Saved annual_mean_zonal_obs.csv")
 
-    # --- Monthly zonal CSV (LGM only — only dataset with monthly resolution) ---
+    # ---- Monthly zonal CSV (LGM lgmDA — only dataset with monthly resolution) ----
     logging.info("Building monthly_mean_zonal_obs.csv")
     rows = []
     for region, (lat_min, lat_max) in regions.items():

@@ -72,15 +72,6 @@ logging.basicConfig(
     force=True,
 )
 
-# ---------------------------------------------------------------------------
-# PALEO_MODELS / PALEO_PERIODS imported from constants
-# ---------------------------------------------------------------------------
-try:
-    from paleo_constants import PALEO_MODELS, PALEO_PERIODS
-except ImportError:
-    PALEO_MODELS = []
-    PALEO_PERIODS = ["lgm", "lig127k", "midHolocene"]
-
 
 # ---------------------------------------------------------------------------
 # CRPS and spatial metrics

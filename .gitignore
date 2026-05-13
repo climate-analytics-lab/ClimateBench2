@@ -2,3 +2,6 @@ observations
 results
 scratch.ipynb
 paleo_data_cache
+.DS_Store
+pangeo-cmip6.csv
+__pycache__

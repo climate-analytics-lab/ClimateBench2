@@ -30,7 +30,9 @@ Usage:
     python paleo_benchmark.py --model AWI-ESM-1-1-LR --period lgm
     python paleo_benchmark.py --model all --period all
     python paleo_benchmark.py --model MIROC-ES2L --period lgm --use-picontrol
-    python paleo_benchmark.py --model all --period lgm --save-to-cloud
+    python paleo_benchmark.py --model all --period lgm --obs-source lgmDA
+    python paleo_benchmark.py --model all --period lgm --obs-source Bartlein2011 --variable tas
+    python paleo_benchmark.py --model all --period all --save-to-cloud
 
 Results saved to:
     ../results/paleo/{period}_paleo_benchmark_results.csv
@@ -54,15 +56,14 @@ import xarray as xr
 from scipy.special import erf
 
 sys.path.append("..")
-from utils import standardize_dims
+from utils import save_results_csv, standardize_dims
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 PALEO_DIR = Path(__file__).parent
 OBS_DIR = PALEO_DIR / "paleo_data_cache" / "processed" / "observations"
-MODEL_DIR = PALEO_DIR / "paleo_data_cache" / "processed"
-RESULTS_DIR = PALEO_DIR.parent / "results" / "paleo"
+MODEL_PROC_DIR = PALEO_DIR / "paleo_data_cache" / "processed" / "models"
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -212,34 +213,33 @@ def _interp_to_points(
 
 
 def _load_model_tas(model: str, period: str) -> xr.DataArray | None:
-    """Load annual-mean tas from processed CMIP6 paleo file.
+    """Load annual-mean tas from processed monthly climatology.
 
     Returns DataArray in °C, or None if data is unavailable.
     """
-    nc = MODEL_DIR / model / f"{period}_tas_annual.nc"
+    nc = MODEL_PROC_DIR / model / f"{period}_tas_monthly_climo.nc"
     if not nc.exists():
         logger.warning(
-            f"  [skip] No processed {period} tas for {model} — run process_paleo.py first"
+            f"  [skip] No processed {period} tas for {model} — run process_paleo_models.py first"
         )
         return None
     ds = xr.open_dataset(nc)
-    da = ds["tas"]
+    da = ds["tas"].mean("month")
     da = standardize_dims(da.to_dataset(name="tas"))["tas"]
     return _to_celsius(da)
 
 
 def _load_model_pr(model: str, period: str) -> xr.DataArray | None:
-    """Load annual-mean pr from processed CMIP6 paleo file (kg m-2 s-1 → mm/yr).
+    """Load annual-mean pr from processed monthly climatology (kg m-2 s-1 → mm/yr).
 
     Returns DataArray in mm/yr, or None if data is unavailable.
     """
-    nc = MODEL_DIR / model / f"{period}_pr_annual.nc"
+    nc = MODEL_PROC_DIR / model / f"{period}_pr_monthly_climo.nc"
     if not nc.exists():
         return None
     ds = xr.open_dataset(nc)
-    da = ds["pr"]
+    da = ds["pr"].mean("month")
     da = standardize_dims(da.to_dataset(name="pr"))["pr"]
-    # Convert kg m-2 s-1 → mm/yr
     return da * 86400 * 365.25
 
 
@@ -252,7 +252,6 @@ def _load_picontrol_tas(model: str) -> xr.DataArray | None:
         df = DataFinder(model=model, variable="tas", start_year=1850, end_year=2000)
         pi_ds = df.load_experiment_ds(experiment="piControl", ensemble_mean=True)
         pi_da = standardize_dims(pi_ds)["tas"]
-        # Annual mean over all time steps
         return _to_celsius(pi_da.mean(dim="time"))
     except Exception as e:
         logger.warning(f"  Could not load piControl for {model}: {e}")
@@ -261,13 +260,16 @@ def _load_picontrol_tas(model: str) -> xr.DataArray | None:
 
 def _load_lgmda_pi_tas() -> xr.DataArray | None:
     """Load lgmDA Holocene (PI) annual-mean tas as a spatially resolved modern reference."""
-    nc = OBS_DIR / "da" / "lgm_lgmda_da.nc"
+    nc = OBS_DIR / "multi_period" / "lgmDA_v2.1_holocene_tas.nc"
     if not nc.exists():
-        logger.warning("  lgm_lgmda_da.nc not found — cannot compute model anomalies")
+        logger.warning(
+            "  lgmDA_v2.1_holocene_tas.nc not found — cannot compute model anomalies"
+        )
         return None
     ds = xr.open_dataset(nc)
-    # Monthly mean → annual mean; lgmDA is in °C
-    pi = ds["pi_tas"].mean(dim="month")
+    pi = ds["pi_tas"]
+    if "month" in pi.dims:
+        pi = pi.mean(dim="month")
     return _to_celsius(pi)
 
 
@@ -295,12 +297,12 @@ def bench_lgmda_absolute(
     model_tas: xr.DataArray, model: str, period: str
 ) -> list[dict]:
     """Absolute temperature comparison: model lgm tas vs lgmDA lgm_tas."""
-    nc = OBS_DIR / "da" / "lgm_lgmda_da.nc"
+    nc = OBS_DIR / "lgm" / "lgmDA_v2.1_tas.nc"
     if not nc.exists():
         return []
     ds = xr.open_dataset(nc)
-    lgmda_lgm = _to_celsius(ds["lgm_tas"].mean(dim="month"))
-    lgmda_std = ds["lgm_tas_std"].mean(dim="month")
+    lgmda_lgm = _to_celsius((ds["pi_tas"] + ds["tas"]).mean(dim="month"))
+    lgmda_std = ds["tas_std"].mean(dim="month")
 
     model_on_lgmda = _regrid(model_tas, lgmda_lgm.lat.values, lgmda_lgm.lon.values)
     cos_w = np.cos(np.deg2rad(lgmda_lgm.lat.values))
@@ -319,16 +321,12 @@ def bench_lgmda_anomaly(
     model_anom: xr.DataArray, model: str, period: str
 ) -> list[dict]:
     """Anomaly comparison: model − lgmDA_pi vs lgmDA (lgm_tas − pi_tas)."""
-    nc = OBS_DIR / "da" / "lgm_lgmda_da.nc"
+    nc = OBS_DIR / "lgm" / "lgmDA_v2.1_tas.nc"
     if not nc.exists():
         return []
     ds = xr.open_dataset(nc)
-    proxy_anom = _to_celsius(ds["lgm_tas"] - ds["pi_tas"]).mean(dim="month")
-    # Propagate lgm and pi stds
-    proxy_sigma = np.sqrt(
-        ds["lgm_tas_std"].mean(dim="month") ** 2
-        + ds["pi_tas_std"].mean(dim="month") ** 2
-    )
+    proxy_anom = ds["tas"].mean(dim="month")
+    proxy_sigma = ds["tas_std"].mean(dim="month")
 
     model_on_lgmda = _regrid(model_anom, proxy_anom.lat.values, proxy_anom.lon.values)
     cos_w = np.cos(np.deg2rad(proxy_anom.lat.values))
@@ -345,12 +343,12 @@ def bench_lgmda_anomaly(
 
 def bench_lgmr_sat(model_anom: xr.DataArray, model: str, period: str) -> list[dict]:
     """Anomaly comparison: model vs LGMR SAT (Osman et al. 2021)."""
-    nc = OBS_DIR / "da" / "lgm_lgmr_sat_da.nc"
+    nc = OBS_DIR / "lgm" / "LGMR_SAT_tas.nc"
     if not nc.exists():
         return []
     ds = xr.open_dataset(nc)
-    proxy_mu = ds["sat"]
-    proxy_sigma = ds["sat_std"]
+    proxy_mu = ds["tas"]
+    proxy_sigma = ds["tas_std"]
 
     model_on_lgmr = _regrid(model_anom, proxy_mu.lat.values, proxy_mu.lon.values)
     cos_w = np.cos(np.deg2rad(proxy_mu.lat.values))
@@ -368,21 +366,18 @@ def bench_lgmr_sat(model_anom: xr.DataArray, model: str, period: str) -> list[di
 def bench_bartlein_tas(model_anom: xr.DataArray, period: str, model: str) -> list[dict]:
     """Pollen-based MAT anomaly comparison (Bartlein et al. 2011).
 
-    Uses mat_anm_mean (°C anomaly) and mat_se_mean (standard error) from
-    the Bartlein gridded reconstructions. Only cells with significant signal
-    (mat_sig == 1) are included.
+    Uses tas and tas_std. Only cells with significant signal (tas_sig_val != 0) are included.
     """
-    tag = "lgm" if period == "lgm" else "midh"
-    nc = OBS_DIR / "proxy" / f"{tag}_bartlein_proxy.nc"
+    nc = OBS_DIR / period / "Bartlein2011_tas.nc"
     if not nc.exists():
         return []
     ds = xr.open_dataset(nc)
-    proxy_mu = ds["mat_anm_mean"]
-    proxy_sigma = ds["mat_se_mean"]
-    # mat_sig_val stores the anomaly at significant cells (0 where not significant);
-    # mat_sig == ±1 uses a stricter threshold. We keep all cells where the
-    # anomaly is significant (mat_sig_val != 0) which matches |t| > ~2.
-    sig_mask = np.isfinite(ds["mat_sig_val"].values) & (ds["mat_sig_val"].values != 0)
+    proxy_mu = ds["tas"]
+    proxy_sigma = ds["tas_std"]
+    sig_var = (
+        ds["tas_sig_val"] if "tas_sig_val" in ds else ds.get("tas_sig", proxy_mu * 0)
+    )
+    sig_mask = np.isfinite(sig_var.values) & (sig_var.values != 0)
 
     proxy_mu_masked = proxy_mu.where(
         xr.DataArray(sig_mask, dims=proxy_mu.dims, coords=proxy_mu.coords)
@@ -409,18 +404,20 @@ def bench_bartlein_pr(
 ) -> list[dict]:
     """Pollen-based MAP anomaly comparison (Bartlein et al. 2011).
 
-    map_anm_mean in mm/yr, map_se_mean is standard error.
+    pr in mm/yr; pr_std is standard error.
     """
     if model_pr_anom is None:
         return []
-    tag = "lgm" if period == "lgm" else "midh"
-    nc = OBS_DIR / "proxy" / f"{tag}_bartlein_proxy.nc"
+    nc = OBS_DIR / period / "Bartlein2011_pr.nc"
     if not nc.exists():
         return []
     ds = xr.open_dataset(nc)
-    proxy_mu = ds["map_anm_mean"]
-    proxy_sigma = ds["map_se_mean"]
-    sig_mask = np.isfinite(ds["map_sig_val"].values) & (ds["map_sig_val"].values != 0)
+    if "pr" not in ds:
+        return []
+    proxy_mu = ds["pr"]
+    proxy_sigma = ds["pr_std"]
+    sig_var = ds["pr_sig_val"] if "pr_sig_val" in ds else ds.get("pr_sig", proxy_mu * 0)
+    sig_mask = np.isfinite(sig_var.values) & (sig_var.values != 0)
 
     proxy_mu_masked = proxy_mu.where(
         xr.DataArray(sig_mask, dims=proxy_mu.dims, coords=proxy_mu.coords)
@@ -448,19 +445,17 @@ def bench_ottobliesner_lig(
     """LIG proxy temperature comparison (Otto-Bliesner et al. 2021)."""
     if model_anom is None:
         return []
-    nc = OBS_DIR / "proxy" / "lig127k_ottobliesner_tas_proxy.nc"
+    nc = OBS_DIR / "lig127k" / "OttoBliesner2021_tas.nc"
     if not nc.exists():
         return []
     ds = xr.open_dataset(nc)
-    # tas/tas_std are on a sparse grid; flatten to valid sites
-    tas = ds["tas"].values.ravel()
-    tas_std = ds["tas_std"].values.ravel()
-    lon_grid, lat_grid = np.meshgrid(ds.lon.values, ds.lat.values)
-    lats = lat_grid.ravel()
-    lons = lon_grid.ravel()
-    valid = np.isfinite(tas)
+    lats = ds["lat"].values
+    lons = ds["lon"].values
+    proxy_mu = ds["tas"].values
+    proxy_sigma = ds["tas_std"].values
+    valid = np.isfinite(proxy_mu)
     lats, lons = lats[valid], lons[valid]
-    proxy_mu, proxy_sigma = tas[valid], tas_std[valid]
+    proxy_mu, proxy_sigma = proxy_mu[valid], proxy_sigma[valid]
 
     model_vals = _interp_to_points(model_anom, lats, lons)
     metrics = _spatial_metrics(model_vals, proxy_mu, proxy_sigma)
@@ -476,31 +471,35 @@ def bench_scussolini_lig(
     """LIG precipitation comparison (Scussolini et al. 2019).
 
     Uses only sites with quantitative ΔP (mm) estimates and reliability ≥ 1.
-    Semi-quantitative signal is used as ordinal class (−2 to +2) when
-    quantitative ΔP is absent; those sites get a proxy_sigma of 200 mm/yr
-    so CRPS is appropriately wide.
+    Reliability 1 → proxy_sigma = 300 mm/yr; reliability ≥ 2 → 150 mm/yr.
     """
     if model_pr_anom is None:
         return []
-    csv = OBS_DIR / "proxy" / "lig127k_scussolini_pr_proxy.csv"
-    if not csv.exists():
+    nc = OBS_DIR / "lig127k" / "Scussolini2019_pr.nc"
+    if not nc.exists():
         return []
-    df = pd.read_csv(csv)
+    ds = xr.open_dataset(nc)
+    if "pr" not in ds:
+        logger.warning("  Scussolini: no pr variable in NetCDF")
+        return []
 
-    # Filter to sites with usable data
-    has_quant = df["Quantitative signal of ΔP (mm)"].notna()
-    reliable = df["Reliability score"].fillna(0) >= 1
-    quant_sites = df[has_quant & reliable].copy()
-    if quant_sites.empty:
+    lats = ds["lat"].values
+    lons = ds["lon"].values
+    proxy_mu_all = ds["pr"].values
+    reliability = (
+        ds["pr_reliability"].values if "pr_reliability" in ds else np.ones(len(lats))
+    )
+
+    has_quant = np.isfinite(proxy_mu_all)
+    reliable = reliability >= 1
+    mask = has_quant & reliable
+    if not mask.any():
         logger.warning("  Scussolini: no quantitative precipitation sites available")
         return []
 
-    lats = quant_sites["lat"].values
-    lons = quant_sites["lon"].values
-    proxy_mu = quant_sites["Quantitative signal of ΔP (mm)"].values.astype(float)
-    # Use reliability score to set uncertainty: reliability 1 → ±300 mm/yr, 2 → ±150 mm/yr
-    reliability = quant_sites["Reliability score"].values
-    proxy_sigma = np.where(reliability >= 2, 150.0, 300.0)
+    lats, lons = lats[mask], lons[mask]
+    proxy_mu = proxy_mu_all[mask]
+    proxy_sigma = np.where(reliability[mask] >= 2, 150.0, 300.0)
 
     model_vals = _interp_to_points(model_pr_anom, lats, lons)
     metrics = _spatial_metrics(model_vals, proxy_mu, proxy_sigma)
@@ -510,18 +509,55 @@ def bench_scussolini_lig(
     return [_result_row(model, period, "Scussolini2019", "pr_anomaly_mmyr", metrics)]
 
 
+def bench_temp12k(
+    model_anom: xr.DataArray | None, model: str, period: str
+) -> list[dict]:
+    """Holocene temperature reconstruction (Kaufman et al. 2020 / Temp12k). Stub — not yet implemented."""
+    logger.warning("  bench_temp12k: not yet implemented")
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Obs source registry — maps period → source → {variable → benchmark functions}
+# Used for --obs-source filtering
+# ---------------------------------------------------------------------------
+
+OBS_SOURCE_REGISTRY: dict[str, dict[str, dict[str, tuple]]] = {
+    "lgm": {
+        "lgmDA": {"tas": (bench_lgmda_absolute, bench_lgmda_anomaly)},
+        "LGMR_SAT": {"tas": (bench_lgmr_sat,)},
+        "Bartlein2011": {"tas": (bench_bartlein_tas,), "pr": (bench_bartlein_pr,)},
+    },
+    "midHolocene": {
+        "Bartlein2011": {"tas": (bench_bartlein_tas,), "pr": (bench_bartlein_pr,)},
+        "Temp12k": {"tas": (bench_temp12k,)},
+    },
+    "lig127k": {
+        "OttoBliesner2021": {"tas": (bench_ottobliesner_lig,)},
+        "Scussolini2019": {"pr": (bench_scussolini_lig,)},
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Per-period orchestration
 # ---------------------------------------------------------------------------
 
 
-def _run_lgm(model: str, use_picontrol: bool) -> list[dict]:
+def _run_lgm(
+    model: str,
+    use_picontrol: bool,
+    obs_sources: list[str] | None,
+    variables: list[str],
+) -> list[dict]:
     rows = []
-    model_tas = _load_model_tas(model, "lgm")
-    if model_tas is None:
+    run_tas = "tas" in variables
+    run_pr = "pr" in variables
+
+    model_tas = _load_model_tas(model, "lgm") if run_tas else None
+    if run_tas and model_tas is None:
         return rows
 
-    # PI reference for anomaly computation
     if use_picontrol:
         pi_ref = _load_picontrol_tas(model)
         if pi_ref is None:
@@ -530,32 +566,50 @@ def _run_lgm(model: str, use_picontrol: bool) -> list[dict]:
     else:
         pi_ref = _load_lgmda_pi_tas()
 
-    # Absolute temperature comparison (no PI ref needed)
-    rows += bench_lgmda_absolute(model_tas, model, "lgm")
+    sources = obs_sources or list(OBS_SOURCE_REGISTRY["lgm"])
+
+    if run_tas and "lgmDA" in sources and model_tas is not None:
+        rows += bench_lgmda_absolute(model_tas, model, "lgm")
 
     if pi_ref is not None:
-        model_anom = _compute_model_anom(model_tas, pi_ref)
-        rows += bench_lgmda_anomaly(model_anom, model, "lgm")
-        rows += bench_lgmr_sat(model_anom, model, "lgm")
-        rows += bench_bartlein_tas(model_anom, "lgm", model)
-
-        model_pr = _load_model_pr(model, "lgm")
-        model_pr_anom = (
-            _compute_pr_anom(model_pr, model, "lgm", use_picontrol)
-            if model_pr is not None
-            else None
+        model_anom = (
+            _compute_model_anom(model_tas, pi_ref) if model_tas is not None else None
         )
-        rows += bench_bartlein_pr(model_pr_anom, "lgm", model)
+
+        if run_tas and model_anom is not None:
+            if "lgmDA" in sources:
+                rows += bench_lgmda_anomaly(model_anom, model, "lgm")
+            if "LGMR_SAT" in sources:
+                rows += bench_lgmr_sat(model_anom, model, "lgm")
+            if "Bartlein2011" in sources:
+                rows += bench_bartlein_tas(model_anom, "lgm", model)
+
+        if run_pr and "Bartlein2011" in sources:
+            model_pr = _load_model_pr(model, "lgm")
+            model_pr_anom = (
+                _compute_pr_anom(model_pr, model, "lgm", use_picontrol)
+                if model_pr is not None
+                else None
+            )
+            rows += bench_bartlein_pr(model_pr_anom, "lgm", model)
     else:
         logger.warning("  No PI reference — skipping anomaly benchmarks for LGM")
 
     return rows
 
 
-def _run_midholocene(model: str, use_picontrol: bool) -> list[dict]:
+def _run_midholocene(
+    model: str,
+    use_picontrol: bool,
+    obs_sources: list[str] | None,
+    variables: list[str],
+) -> list[dict]:
     rows = []
-    model_tas = _load_model_tas(model, "midHolocene")
-    if model_tas is None:
+    run_tas = "tas" in variables
+    run_pr = "pr" in variables
+
+    model_tas = _load_model_tas(model, "midHolocene") if run_tas else None
+    if run_tas and model_tas is None:
         return rows
 
     pi_ref = _load_picontrol_tas(model) if use_picontrol else _load_lgmda_pi_tas()
@@ -565,40 +619,60 @@ def _run_midholocene(model: str, use_picontrol: bool) -> list[dict]:
         )
         return rows
 
-    model_anom = _compute_model_anom(model_tas, pi_ref)
-    rows += bench_bartlein_tas(model_anom, "midHolocene", model)
+    sources = obs_sources or list(OBS_SOURCE_REGISTRY["midHolocene"])
 
-    model_pr = _load_model_pr(model, "midHolocene")
-    model_pr_anom = (
-        _compute_pr_anom(model_pr, model, "midHolocene", use_picontrol)
-        if model_pr is not None
-        else None
-    )
-    rows += bench_bartlein_pr(model_pr_anom, "midHolocene", model)
+    if run_tas and model_tas is not None:
+        model_anom = _compute_model_anom(model_tas, pi_ref)
+        if "Bartlein2011" in sources:
+            rows += bench_bartlein_tas(model_anom, "midHolocene", model)
+        if "Temp12k" in sources:
+            rows += bench_temp12k(model_anom, model, "midHolocene")
+
+    if run_pr and "Bartlein2011" in sources:
+        model_pr = _load_model_pr(model, "midHolocene")
+        model_pr_anom = (
+            _compute_pr_anom(model_pr, model, "midHolocene", use_picontrol)
+            if model_pr is not None
+            else None
+        )
+        rows += bench_bartlein_pr(model_pr_anom, "midHolocene", model)
+
     return rows
 
 
-def _run_lig127k(model: str, use_picontrol: bool) -> list[dict]:
+def _run_lig127k(
+    model: str,
+    use_picontrol: bool,
+    obs_sources: list[str] | None,
+    variables: list[str],
+) -> list[dict]:
     rows = []
-    model_tas = _load_model_tas(model, "lig127k")
-    if model_tas is None:
-        return rows
+    run_tas = "tas" in variables
+    run_pr = "pr" in variables
+
+    model_tas = _load_model_tas(model, "lig127k") if run_tas else None
 
     pi_ref = _load_picontrol_tas(model) if use_picontrol else _load_lgmda_pi_tas()
     if pi_ref is None:
         logger.warning("  No PI reference — skipping anomaly benchmarks for lig127k")
         return rows
 
-    model_anom = _compute_model_anom(model_tas, pi_ref)
-    rows += bench_ottobliesner_lig(model_anom, model, "lig127k")
+    sources = obs_sources or list(OBS_SOURCE_REGISTRY["lig127k"])
 
-    model_pr = _load_model_pr(model, "lig127k")
-    model_pr_anom = (
-        _compute_pr_anom(model_pr, model, "lig127k", use_picontrol)
-        if model_pr is not None
-        else None
-    )
-    rows += bench_scussolini_lig(model_pr_anom, model, "lig127k")
+    if run_tas and model_tas is not None:
+        model_anom = _compute_model_anom(model_tas, pi_ref)
+        if "OttoBliesner2021" in sources:
+            rows += bench_ottobliesner_lig(model_anom, model, "lig127k")
+
+    if run_pr and "Scussolini2019" in sources:
+        model_pr = _load_model_pr(model, "lig127k")
+        model_pr_anom = (
+            _compute_pr_anom(model_pr, model, "lig127k", use_picontrol)
+            if model_pr is not None
+            else None
+        )
+        rows += bench_scussolini_lig(model_pr_anom, model, "lig127k")
+
     return rows
 
 
@@ -611,7 +685,6 @@ def _compute_pr_anom(
     """Compute model precipitation anomaly (mm/yr) relative to PI reference."""
     if model_pr is None:
         return None
-    # Load piControl pr if available; otherwise skip (no lgmDA precip reference)
     if use_picontrol:
         try:
             sys.path.append(str(PALEO_DIR.parent / "benchmark_scrips"))
@@ -648,8 +721,12 @@ def main(
     use_picontrol: bool = False,
     save_to_cloud: bool = False,
     overwrite: bool = False,
+    obs_sources: list[str] | None = None,
+    variables: list[str] | None = None,
 ) -> pd.DataFrame:
-    # Collect rows per period so each period gets its own results file
+    if variables is None:
+        variables = ["tas", "pr"]
+
     rows_by_period: dict[str, list[dict]] = {p: [] for p in periods}
 
     for model in models:
@@ -660,7 +737,7 @@ def main(
                 )
                 continue
             logger.info(f"\n{'='*60}\n  {model} / {period}\n{'='*60}")
-            rows = PERIOD_RUNNERS[period](model, use_picontrol)
+            rows = PERIOD_RUNNERS[period](model, use_picontrol, obs_sources, variables)
             rows_by_period[period].extend(rows)
             if not rows:
                 logger.warning(f"  No benchmark results for {model}/{period}")
@@ -670,7 +747,9 @@ def main(
         if not rows:
             continue
         period_df = pd.DataFrame(rows)
-        _save_results(period_df, period, save_to_cloud, overwrite)
+        results_file = f"../results/paleo/{period}_paleo_benchmark_results.csv"
+        save_results_csv(period_df, results_file, save_to_cloud, overwrite)
+        print(period_df.to_string(index=False))
         all_dfs.append(period_df)
 
     if not all_dfs:
@@ -678,42 +757,6 @@ def main(
         return pd.DataFrame()
 
     return pd.concat(all_dfs, ignore_index=True)
-
-
-def _save_results(
-    df: pd.DataFrame, period: str, save_to_cloud: bool, overwrite: bool
-) -> None:
-    results_file = RESULTS_DIR / f"{period}_paleo_benchmark_results.csv"
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    if save_to_cloud:
-        try:
-            from google.cloud import storage
-
-            gcs_path = f"results/paleo/{results_file.name}"
-            storage_client = storage.Client(project="JCM and Benchmarking")
-            storage_client.bucket("climatebench")
-            df.to_csv(f"gs://climatebench/{gcs_path}", index=False)
-            logger.info(f"Results saved to cloud: gs://climatebench/{gcs_path}")
-        except Exception as e:
-            logger.warning(f"Cloud save failed: {e}. Saving locally instead.")
-            save_to_cloud = False
-
-    if not save_to_cloud:
-        if overwrite or not results_file.exists():
-            df.to_csv(results_file, index=False)
-        else:
-            existing = pd.read_csv(results_file)
-            key_cols = ["model", "period", "dataset", "variable"]
-            existing = existing[
-                ~existing.set_index(key_cols).index.isin(df.set_index(key_cols).index)
-            ]
-            pd.concat([existing, df], ignore_index=True).to_csv(
-                results_file, index=False
-            )
-        logger.info(f"Results saved: {results_file}")
-
-    print(df.to_string(index=False))
 
 
 if __name__ == "__main__":
@@ -732,11 +775,30 @@ if __name__ == "__main__":
         help="Paleo period to benchmark (default: all)",
     )
     parser.add_argument(
+        "--obs-source",
+        nargs="+",
+        default=None,
+        metavar="SOURCE",
+        help=(
+            "Observation source(s) to benchmark against. "
+            "LGM: lgmDA, LGMR_SAT, Bartlein2011. "
+            "midHolocene: Bartlein2011, Temp12k. "
+            "lig127k: OttoBliesner2021, Scussolini2019. "
+            "Default: all sources for the selected period."
+        ),
+    )
+    parser.add_argument(
+        "--variable",
+        nargs="+",
+        default=["all"],
+        choices=["tas", "pr", "all"],
+        help="Variable(s) to benchmark: tas, pr, or all (default: all)",
+    )
+    parser.add_argument(
         "--use-picontrol",
         action="store_true",
         default=False,
-        help="Load model piControl from main ClimateBench DataFinder for anomaly computation "
-        "(requires processed piControl data; default uses lgmDA Holocene as PI reference)",
+        help="Load model piControl from main ClimateBench DataFinder for anomaly computation",
     )
     parser.add_argument(
         "--save-to-cloud",
@@ -756,15 +818,13 @@ if __name__ == "__main__":
     if args.model == "all":
         available = [
             p.name
-            for p in MODEL_DIR.iterdir()
-            if p.is_dir()
-            and p.name != "observations"
-            and any(p.glob("*_tas_annual.nc"))
+            for p in MODEL_PROC_DIR.iterdir()
+            if p.is_dir() and any(p.glob("*_tas_monthly_climo.nc"))
         ]
         if not available:
             logger.error(
-                "No processed model data found in paleo_data_cache/processed/. "
-                "Run process_paleo.py --source cmip6 first."
+                "No processed model data found in paleo_data_cache/processed/models/. "
+                "Run process_paleo_models.py first."
             )
             sys.exit(1)
         model_list = sorted(available)
@@ -774,8 +834,13 @@ if __name__ == "__main__":
     # Resolve period list
     period_list = list(PERIOD_RUNNERS) if args.period == "all" else [args.period]
 
-    logger.info(f"Models: {model_list}")
-    logger.info(f"Periods: {period_list}")
+    # Resolve variable list
+    variable_list = ["tas", "pr"] if "all" in args.variable else args.variable
+
+    logger.info(f"Models:    {model_list}")
+    logger.info(f"Periods:   {period_list}")
+    logger.info(f"Variables: {variable_list}")
+    logger.info(f"Sources:   {args.obs_source or 'all'}")
     logger.info(
         f"PI reference: {'piControl (DataFinder)' if args.use_picontrol else 'lgmDA Holocene'}"
     )
@@ -786,4 +851,6 @@ if __name__ == "__main__":
         use_picontrol=args.use_picontrol,
         save_to_cloud=args.save_to_cloud,
         overwrite=args.overwrite,
+        obs_sources=args.obs_source,
+        variables=variable_list,
     )

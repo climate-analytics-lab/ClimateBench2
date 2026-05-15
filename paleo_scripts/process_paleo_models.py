@@ -83,12 +83,15 @@ def _process_one(
 
     ds = xr.open_mfdataset(
         files,
-        combine="by_coords",
+        combine="nested",
+        concat_dim="time",
         use_cftime=True,
         data_vars="minimal",
         coords="minimal",
         compat="override",
     )
+    ds = ds.sortby("time")
+    ds = ds.sel(time=~ds.indexes["time"].duplicated())
     ds = standardize_dims(ds)
 
     climo = ds[[variable]].groupby("time.month").mean("time")

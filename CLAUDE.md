@@ -9,7 +9,7 @@ conda env create -f env.yml
 conda activate backend_env
 ```
 
-Note: directory names use intentional typos — `benchmark_scrips/` and `paleo_scrips/` (not `scripts`).
+Note: the `benchmark_scrips/` directory name uses an intentional typo (not `scripts`). The paleoclimate scripts live in the correctly-spelled `paleo_scripts/`.
 
 ## Common Commands
 
@@ -91,16 +91,23 @@ chmod +x run_benchmark.sh
 **Paleoclimate data download:**
 ```bash
 cd paleo_scripts
-python download_paleo.py --source observations
-python download_paleo.py --source cmip6 --model AWI-ESM-1-1-LR --period lgm
-python download_paleo.py --source cmip6 --model all --period all
+# Observations (proxy/reanalysis datasets)
+python download_paleo_observations.py                        # all datasets
+python download_paleo_observations.py --dataset lgmda lig127k
+python download_paleo_observations.py --list                 # show all dataset keys
+# CMIP6 model data (ESGF-generated wget scripts, named {period}_{variable}.sh)
+cd download_model_data
+bash lgm_tas.sh
+bash lgm_pr.sh
 ```
 
 **Paleoclimate data processing:**
 ```bash
 cd paleo_scripts
-python process_paleo.py --source observations
-python process_paleo.py --source cmip6 --period lgm
+python process_paleo_observations.py                         # process all observation sources
+python process_paleo_observations.py --source lgmda bartlein2011
+python process_paleo_models.py --model all --period all      # compute model monthly climatologies
+python process_paleo_models.py --model AWI-ESM-1-1-LR --period lgm
 ```
 
 **Paleoclimate benchmark (spatial RMSE/MAE/CRPS):**

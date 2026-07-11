@@ -1,6 +1,6 @@
 # Paleoclimate Scripts
 
-Five scripts cover the full paleo benchmark workflow: download observations, download model data, process both, then run benchmarks.
+Four Python scripts (plus the ESGF wget scripts in `download_model_data/`) cover the full paleo benchmark workflow: download observations, download model data, process both, then run benchmarks.
 
 ---
 
@@ -177,12 +177,6 @@ Columns: `model`, `period`, `dataset`, `variable`, `n_sites`, `rmse`, `mae`, `me
 
 ---
 
-### `paleo_constants.py` — Model/period registry
-
-Contains `PALEO_MODELS` and `PALEO_PERIODS` lists used by `paleo_benchmark.py`. Not run directly.
-
----
-
 ## Directory Layout
 
 ```
@@ -195,7 +189,6 @@ paleo_scripts/
 ├── process_paleo_observations.py    # Step 3: process raw observations
 ├── process_paleo_models.py          # Step 4: compute model climatologies
 ├── paleo_benchmark.py               # Step 5: run spatial benchmarks
-├── paleo_constants.py               # Model/period registry
 ├── README.md
 └── paleo_data_cache/
     ├── raw/

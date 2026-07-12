@@ -1,0 +1,8 @@
+This data file provides the observational data behind Figure 7.19
+"It was produced by Dan Lunt, using script plot_all_fgd.pro"
+Time Period,min temperature [degreesC],mean temperature [degreesC],max temperature [degreesC]
+"Historical",0.696823,0.896823,1.09682
+"post 1975",0.378000,0.528000,0.678000
+"LGM",-7.00000,-6.00000,-5.00000
+"MPWP",2.50000,3.25000,4.00000
+"EECO",10.0000,14.0000,18.0000

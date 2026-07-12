@@ -9,7 +9,7 @@ conda env create -f env.yml
 conda activate backend_env
 ```
 
-Note: directory names use intentional typos — `benchmark_scrips/` and `paleo_scrips/` (not `scripts`).
+Note: the `benchmark_scrips/` directory name uses an intentional typo (not `scripts`). The paleoclimate scripts live in the correctly-spelled `paleo_scripts/`.
 
 ## Common Commands
 
@@ -90,9 +90,36 @@ chmod +x run_benchmark.sh
 
 **Paleoclimate data download:**
 ```bash
-cd paleo_scrips/paleo_data_cache
-python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/paleo_scrips/paleo_data_cache
+cd paleo_scripts
+# Observations (proxy/reanalysis datasets)
+python download_paleo_observations.py                        # all datasets
+python download_paleo_observations.py --dataset lgmda lig127k
+python download_paleo_observations.py --list                 # show all dataset keys
+# CMIP6 model data (ESGF-generated wget scripts, named {period}_{variable}.sh)
+cd download_model_data
+bash lgm_tas.sh
+bash lgm_pr.sh
 ```
+
+**Paleoclimate data processing:**
+```bash
+cd paleo_scripts
+python process_paleo_observations.py                         # process all observation sources
+python process_paleo_observations.py --source lgmda bartlein2011
+python process_paleo_models.py --model all --period all      # compute model monthly climatologies
+python process_paleo_models.py --model AWI-ESM-1-1-LR --period lgm
+```
+
+**Paleoclimate benchmark (spatial RMSE/MAE/CRPS):**
+```bash
+cd paleo_scripts
+python paleo_benchmark.py --model AWI-ESM-1-1-LR --period lgm
+python paleo_benchmark.py --model all --period all
+python paleo_benchmark.py --model MIROC-ES2L --period lgm --use-picontrol
+```
+
+PI reference for anomaly computation: lgmDA Holocene (default) or model piControl (`--use-picontrol`).
+Precipitation benchmarks (Bartlein MAP, Scussolini LIG) require `--use-picontrol` and processed `pr` data.
 
 ## Architecture
 

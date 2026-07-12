@@ -1,0 +1,47 @@
+# ClimateBench v2 — Tier II: sub-daily / daily-resolution scoring.
+# Daily tas extremes (TXx-style block maxima, CRPS-ESS scored), the pr
+# intensity PDF (histogram, EMD-metric'd) and the pr diurnal cycle
+# (metrics_reference.md §II.1 "Daily tas extremes / pr intensity PDF" and
+# "Diurnal cycle"). Run against the model's daily/hourly cubes.
+#
+# Note: TXx proper wants daily `tasmax`, which is not yet in ClimateEval's
+# variable registry — `tas` (day) is used until the registry gains tasmax
+# (queued in the upstream PR alongside rsds/rsus/rlds/rlus).
+
+- name: tas_annual_max
+  diagnostic: climatebench2.diags.ScoredAnnualMaxTimeSeries
+  variables:
+    - id: tas_txx
+      var_name: tas
+      frequency: day
+      reference_data: climateeval.data.ERA5Monthly   # placeholder ref; daily obs TBD
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+
+- name: pr_intensity_pdf
+  diagnostic: climateeval.diags.simple.Histogram
+  variables:
+    - id: pr_global
+      var_name: pr
+      frequency: 1hr
+      units: mm day-1
+      diagnostic_kwargs:
+        bin_range: [0.0, 15.0]
+      reference_data: climateeval.data.ERA5Hourly
+    - id: pr_tropics
+      var_name: pr
+      frequency: 1hr
+      units: mm day-1
+      min_lat: -30.0
+      max_lat: 30.0
+      diagnostic_kwargs:
+        bin_range: [0.0, 15.0]
+      reference_data: climateeval.data.ERA5Hourly
+
+- name: pr_diurnal_cycle
+  diagnostic: climateeval.diags.simple.DiurnalCycle
+  variables:
+    - id: pr
+      var_name: pr
+      frequency: 1hr
+      units: mm day-1
+      reference_data: climateeval.data.ERA5Hourly

@@ -9,10 +9,9 @@
 # whose experiments are missing fail with a clear message (or are skipped by
 # the CLI when the key was never provided).
 #
-# Cube-based Tier I checks (ENSO) live in ClimateBench2_TierI_variability.
-# Still missing from the protocol (Phase 4): geostrophic balance (I.3b),
-# precip-buoyancy (I.3c), GFMIP patches (I.4a), amip-4xCO2 ERF (I.4b),
-# MJO (I.5d), ENSO teleconnections (I.5c).
+# Cube-based Tier I checks (ENSO amplitude/spectrum) live in
+# ClimateBench2_TierI_variability. Still missing from the protocol:
+# precip-buoyancy (I.3c, needs 3-D ta/hus/zg monthly anomaly machinery).
 
 - name: ecs_gate                      # I.6c — piControl + abrupt-4xCO2
   diagnostic: climatebench2.diags.ECSGate
@@ -56,4 +55,32 @@
 
 - name: cc_scaling                    # extra — piControl
   diagnostic: climatebench2.diags.CCScalingGate
+  additional_diagnostic_kwargs: {}
+
+- name: enso_teleconnections          # I.5c — piControl (tos, ta, pr)
+  diagnostic: climatebench2.diags.ENSOTeleconnectionsGate
+  additional_diagnostic_kwargs: {}
+
+- name: geostrophic_balance           # I.3b — daily ua/zg (key: day)
+  diagnostic: climatebench2.diags.GeostrophicBalanceGate
+  additional_diagnostic_kwargs: {}
+
+- name: mjo                           # I.5d — daily pr (key: day)
+  diagnostic: climatebench2.diags.MJOGate
+  additional_diagnostic_kwargs: {}
+
+- name: amip_4xco2_erf                # I.4b — amip + amip-4xCO2
+  diagnostic: climatebench2.diags.Amip4xCO2ERFGate
+  additional_diagnostic_kwargs: {}
+
+- name: gfmip_patch                   # I.4a — amip + patch_ep + patch_wp
+  diagnostic: climatebench2.diags.GFMIPPatchGate
+  additional_diagnostic_kwargs: {}
+
+- name: pinatubo                      # II.1 — historical
+  diagnostic: climatebench2.diags.PinatuboResponseGate
+  additional_diagnostic_kwargs: {}
+
+- name: hemispheric_asymmetry         # II.1 — historical
+  diagnostic: climatebench2.diags.HemisphericAsymmetryGate
   additional_diagnostic_kwargs: {}

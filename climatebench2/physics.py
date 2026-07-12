@@ -278,3 +278,157 @@ def cc_scaling_slope(
     tas = np.asarray(tas_annual, dtype=float)
     prw_pct = (prw / prw.mean() - 1.0) * 100.0
     return float(stats.linregress(tas - tas.mean(), prw_pct).slope)
+
+
+# ---------------------------------------------------------------------------
+# I.3b Midlatitude geostrophic balance (daily 850 hPa)
+# ---------------------------------------------------------------------------
+
+OMEGA_EARTH = 7.292e-5  # rad/s
+GRAVITY = 9.80665  # m/s2
+
+
+def geostrophic_wind_u(
+    zg: np.ndarray,
+    lats: np.ndarray,
+) -> np.ndarray:
+    """Zonal geostrophic wind u_g = −(g/f) ∂Z/∂y from geopotential height.
+
+    ``zg``: shape ``(..., lat, lon)`` in m; ``lats`` in degrees. ∂/∂y uses
+    the meridional gradient on the sphere (a·∂φ). Rows with |lat| < 10° are
+    NaN (f too small).
+    """
+    zg = np.asarray(zg, dtype=float)
+    lats = np.asarray(lats, dtype=float)
+    f = 2.0 * OMEGA_EARTH * np.sin(np.deg2rad(lats))
+    dzdy = np.gradient(zg, np.deg2rad(lats) * EARTH_RADIUS_M, axis=-2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ug = -(GRAVITY / f)[..., :, None] * dzdy
+    ug[..., np.abs(lats) < 10.0, :] = np.nan
+    return ug
+
+
+def midlatitude_pattern_correlation(
+    a: np.ndarray,
+    b: np.ndarray,
+    lats: np.ndarray,
+    *,
+    band: tuple[float, float] = (30.0, 60.0),
+) -> float:
+    """cos(lat)-weighted correlation of two fields over both 30–60° bands.
+
+    Fields ``(..., lat, lon)`` are pooled over every leading dimension (time)
+    and both hemispheres' midlatitude bands; NaNs excluded pairwise.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    lats = np.asarray(lats, dtype=float)
+    band_mask = (np.abs(lats) >= band[0]) & (np.abs(lats) <= band[1])
+    a_band = a[..., band_mask, :]
+    b_band = b[..., band_mask, :]
+    w = np.broadcast_to(
+        np.cos(np.deg2rad(lats[band_mask]))[:, None],
+        a_band.shape[-2:],
+    )
+    w_full = np.broadcast_to(w, a_band.shape).ravel()
+    x = a_band.ravel()
+    y = b_band.ravel()
+    valid = np.isfinite(x) & np.isfinite(y)
+    x, y, w_full = x[valid], y[valid], w_full[valid]
+    if x.size < 3:
+        return float("nan")
+    mx = np.average(x, weights=w_full)
+    my = np.average(y, weights=w_full)
+    cov = np.average((x - mx) * (y - my), weights=w_full)
+    vx = np.average((x - mx) ** 2, weights=w_full)
+    vy = np.average((y - my) ** 2, weights=w_full)
+    return float(cov / np.sqrt(vx * vy))
+
+
+# ---------------------------------------------------------------------------
+# I.5c ENSO teleconnections
+# ---------------------------------------------------------------------------
+
+
+def regression_on_index(series: np.ndarray, index: np.ndarray) -> float:
+    """OLS regression coefficient of a series on a (Niño-3.4) index."""
+    series = np.asarray(series, dtype=float)
+    index = np.asarray(index, dtype=float)
+    n = min(series.size, index.size)
+    valid = np.isfinite(series[:n]) & np.isfinite(index[:n])
+    return float(stats.linregress(index[:n][valid], series[:n][valid]).slope)
+
+
+# ---------------------------------------------------------------------------
+# I.5d MJO (Wheeler–Kiladis east/west power ratio)
+# ---------------------------------------------------------------------------
+
+
+def mjo_east_west_ratio(
+    pr_equatorial: np.ndarray,
+    *,
+    wavenumbers: tuple[int, int] = (1, 3),
+    period_days: tuple[float, float] = (30.0, 90.0),
+) -> float:
+    """Eastward/westward power ratio for k = 1–3, 30–90 d (I.5d).
+
+    ``pr_equatorial``: daily, meridionally averaged (±15°) precipitation of
+    shape ``(n_time, n_lon)``. Detrended and Hann-tapered in time before the
+    2-D FFT. With time factor e^{−iωt} and zonal factor e^{ikx}, eastward
+    propagation has ω·k > 0.
+    """
+    x = np.asarray(pr_equatorial, dtype=float)
+    n_time, _n_lon = x.shape
+    x = x - x.mean(axis=0, keepdims=True)
+    x = x * np.hanning(n_time)[:, None]
+    spec = np.fft.fft2(x)  # (freq, wavenumber), FFT sign conventions below
+    power = np.abs(spec) ** 2
+    freqs = np.fft.fftfreq(n_time, d=1.0)  # cycles/day
+    ks = np.fft.fftfreq(x.shape[1], d=1.0 / x.shape[1])  # integer wavenumbers
+
+    f_lo, f_hi = 1.0 / period_days[1], 1.0 / period_days[0]
+    k_lo, k_hi = wavenumbers
+
+    def band_power(eastward: bool) -> float:
+        total = 0.0
+        for i, f in enumerate(freqs):
+            for j, k in enumerate(ks):
+                if not (f_lo <= abs(f) <= f_hi and k_lo <= abs(k) <= k_hi):
+                    continue
+                # numpy fft2 uses e^{-i(ωt + kx)}: propagation speed = -ω/k,
+                # so eastward (+x) waves have ω·k < 0
+                is_east = f * k < 0
+                if is_east == eastward:
+                    total += power[i, j]
+        return total
+
+    east = band_power(eastward=True)
+    west = band_power(eastward=False)
+    return float(east / west) if west > 0 else float("inf")
+
+
+# ---------------------------------------------------------------------------
+# Tier II scalar diagnostics
+# ---------------------------------------------------------------------------
+
+
+def ols_trend(series: np.ndarray) -> float:
+    """OLS trend per step of a series (NaNs dropped)."""
+    y = np.asarray(series, dtype=float)
+    t = np.arange(y.size, dtype=float)
+    valid = np.isfinite(y)
+    if valid.sum() < 3:
+        return float("nan")
+    return float(stats.linregress(t[valid], y[valid]).slope)
+
+
+def first_harmonic(seasonal_cycle: np.ndarray) -> tuple[float, float]:
+    """(amplitude, phase in months) of the first harmonic of a 12-pt cycle."""
+    x = np.asarray(seasonal_cycle, dtype=float)
+    if x.size != 12:  # noqa: PLR2004
+        msg = f"expected a 12-month climatology, got length {x.size}"
+        raise ValueError(msg)
+    coeff = np.fft.rfft(x)[1]
+    amplitude = 2.0 * np.abs(coeff) / 12.0
+    phase_months = float((-np.angle(coeff)) % (2 * np.pi) / (2 * np.pi) * 12.0)
+    return float(amplitude), phase_months

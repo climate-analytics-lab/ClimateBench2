@@ -36,7 +36,19 @@ from climatebench2.diags.tier1_physics import (
     LandOceanWarmingGate,
     MeridionalHeatTransportGate,
 )
+from climatebench2.diags.tier1_extended import (
+    Amip4xCO2ERFGate,
+    ENSOTeleconnectionsGate,
+    GeostrophicBalanceGate,
+    GFMIPPatchGate,
+    MJOGate,
+)
+from climatebench2.diags.tier2_diagnostics import (
+    HemisphericAsymmetryGate,
+    PinatuboResponseGate,
+)
 from climatebench2.diags.tier2_scores import (
+    ScoredAnnualMaxTimeSeries,
     ScoredAnnualMeanTimeSeries,
     ScoredMonthlyMeanTimeSeries,
     TrendConsistency,
@@ -44,6 +56,7 @@ from climatebench2.diags.tier2_scores import (
 
 __all__ = [
     "AerosolForcingGate",
+    "Amip4xCO2ERFGate",
     "ArcticAmplificationGate",
     "BjerknesGate",
     "CB2ComplexDiagnostic",
@@ -52,12 +65,19 @@ __all__ = [
     "ClosureGate",
     "ECSGate",
     "ENSOGate",
+    "ENSOTeleconnectionsGate",
     "EnergyBalanceGate",
+    "GFMIPPatchGate",
     "GateCheck",
     "GateMixin",
+    "GeostrophicBalanceGate",
+    "HemisphericAsymmetryGate",
     "ITCZEFEGate",
     "LandOceanWarmingGate",
+    "MJOGate",
     "MeridionalHeatTransportGate",
+    "PinatuboResponseGate",
+    "ScoredAnnualMaxTimeSeries",
     "ScoredAnnualMeanTimeSeries",
     "ScoredMonthlyMeanTimeSeries",
     "TrendConsistency",

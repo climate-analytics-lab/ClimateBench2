@@ -28,6 +28,7 @@ from esmvalcore.preprocessor import (
     zonal_statistics,
 )
 from iris.cube import Cube
+from loguru import logger
 
 from climateeval import Coordinate, Variable
 from climateeval._config import setup_esmvaltool_config_and_logging
@@ -129,6 +130,29 @@ class CB2ComplexDiagnostic(GateMixin, ComplexDiagnostic):
                 f"diagnostic '{self.name}' (required: {self._required_data_keys})"
             )
             raise ValueError(msg)
+
+    def get_output(self, data: Any, data_information: Any) -> Any:
+        """Run the gate; degrade to an empty output on missing experiments.
+
+        With ``fail_on_missing_data=False`` (the CLI default) a gate whose
+        experiment keys were not provided is skipped with a warning instead
+        of aborting the whole suite.
+        """
+        try:
+            self._check_required_dict_keys(data, "data")
+        except ValueError as exc:
+            if self._fail_on_missing_data:
+                raise
+            logger.warning(f"Skipping gate '{self.name}': {exc}")
+            from climateeval.diags._base import DiagnosticOutput
+
+            return DiagnosticOutput(
+                raw_output=None,
+                metrics=None,
+                variables=None,  # type: ignore[arg-type] - Suite skips None tables
+                data_sources=None,  # type: ignore[arg-type]
+            )
+        return super().get_output(data, data_information)
 
     # -- preprocessing helpers (all regrid to the common 2x2 grid first) ----
 

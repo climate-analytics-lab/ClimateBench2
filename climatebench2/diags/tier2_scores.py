@@ -30,16 +30,27 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from esmvalcore.preprocessor import (
+    annual_statistics,
+    area_statistics,
+    regrid,
+    regrid_time,
+)
+
+from climateeval._config import setup_esmvaltool_config_and_logging
+from climateeval._variable import COORDINATES
 from climateeval.diags._base import DiagnosticOutput
+from climateeval.diags._utils import DEFAULT_GRID
 from climateeval.diags.simple import AnnualMeanTimeSeries, MeanTimeSeries
 
-from climatebench2 import scoring
+from climatebench2 import baselines, scoring
 from climatebench2._thresholds import get_threshold
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 MME_DATA_ID = "CMIP6-MME"
+CLIMATOLOGY_DATA_ID = "Climatology"
 _META_COLUMNS = {"data_id", "data_type", "time"}
 
 
@@ -138,6 +149,11 @@ class _ScoredTimeSeriesMixin:
                         self._crps_row(column, MME_DATA_ID, "baseline", members, y),
                     )
 
+            # Climatology-persistence baseline from the reference itself
+            clim_row = self._climatology_row(column, reference)
+            if clim_row is not None:
+                rows.append(clim_row)
+
         if not rows:
             return output
         scores_df = pd.DataFrame(rows)
@@ -152,6 +168,58 @@ class _ScoredTimeSeriesMixin:
             metrics=ibis.memtable(scores_df),
             variables=output.variables,
             data_sources=output.data_sources,
+        )
+
+    def _climatology_row(
+        self,
+        column: str,
+        reference: pd.DataFrame,
+    ) -> dict[str, Any] | None:
+        """Baseline (i): score the reference's own climatology persistence.
+
+        The climatology comes from the protocol's baseline window
+        (``tier2.climatology_baseline_period``); monthly series get the
+        repeating 12-month climatology, annual series the constant mean.
+        Skipped when the reference doesn't cover the window.
+        """
+        ref = reference[["time", column]].dropna().sort_values("time")
+        if ref.empty:
+            return None
+        times = pd.to_datetime(ref["time"])
+        y0, y1 = get_threshold("tier2.climatology_baseline_period")
+        in_window = (times.dt.year >= int(y0)) & (times.dt.year <= int(y1))
+        if in_window.sum() < self._min_overlap:
+            return None
+        window = ref.loc[in_window.to_numpy(), column].to_numpy(float)
+        obs = ref[column].to_numpy(float)
+        monthly = (
+            times.size > 1
+            and times.diff().dropna().dt.days.median() < 200  # noqa: PLR2004
+        )
+        if monthly:
+            clim = np.array(
+                [
+                    np.nanmean(
+                        window[
+                            times[in_window.to_numpy()].dt.month.to_numpy() == m
+                        ],
+                    )
+                    for m in range(1, 13)
+                ],
+            )
+            forecast = clim[times.dt.month.to_numpy() - 1]
+        else:
+            forecast = baselines.climatology_forecast(
+                window,
+                monthly=False,
+                n_time=obs.size,
+            )
+        return self._crps_row(
+            column,
+            CLIMATOLOGY_DATA_ID,
+            "baseline",
+            forecast[None, :],
+            obs,
         )
 
     @staticmethod
@@ -181,6 +249,29 @@ class ScoredAnnualMeanTimeSeries(_ScoredTimeSeriesMixin, AnnualMeanTimeSeries):
 
 class ScoredMonthlyMeanTimeSeries(_ScoredTimeSeriesMixin, MeanTimeSeries):
     """Monthly-mean time series with regime-(a) CRPS-ESS scoring."""
+
+
+class ScoredAnnualMaxTimeSeries(_ScoredTimeSeriesMixin, AnnualMeanTimeSeries):
+    """TXx-style annual block maxima with regime-(a) CRPS-ESS scoring.
+
+    Per-gridpoint annual maximum first, then the area mean — the global-mean
+    TXx series of metrics_reference.md §II.1 "Daily tas extremes". Feed it
+    daily ``tasmax`` (or ``tas``); on monthly input it degrades to the
+    annual maximum of monthly means (documented, weaker).
+    """
+
+    def _preprocess(self, cube: Any, _variable: Any) -> Any:
+        with setup_esmvaltool_config_and_logging():
+            cube = regrid(cube, DEFAULT_GRID, "linear", cache_weights=True)
+            cube = annual_statistics(cube, "max")  # per-gridpoint block max
+            cube = area_statistics(cube, "mean")
+            cube = regrid_time(
+                cube,
+                frequency="yr",
+                calendar="standard",
+                units=COORDINATES["time"]["units"],
+            )
+        return cube
 
 
 class TrendConsistency(AnnualMeanTimeSeries):

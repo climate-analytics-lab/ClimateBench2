@@ -51,6 +51,12 @@ tier1:
     amplitude_range: [0.5, 1.4]        # K, σ(Niño-3.4)
     band_power_ratio_min: 1.5          # power(2–7 yr) / power(1–2 yr)
     teleconnection_obs_factor: 2.0     # regressions within factor 2 of ERA5/GPCP
+    teleconnection_t_min: 0.0          # tropical ta500 regression > 0 (sign)
+    teleconnection_pr_max: 0.0         # Maritime Continent pr regression < 0
+    # TODO: observed regression coefficients (ERA5 ta500, GPCP pr on Niño-3.4)
+    # for the factor-2 amplitude check; null disables until wired
+    teleconnection_reference_t: null
+    teleconnection_reference_pr: null
 
   # I.5d MJO Wheeler–Kiladis
   mjo:
@@ -106,7 +112,23 @@ tier2:
   crps_ess_correction: true
   # Regime (b): ensemble-consistency test
   consistency_p_value: 0.05            # two-sided
-  # TODO Phase 2: EOF truncation, piControl chunking parameters
+  eof_modes: 5                         # spatial fields: leading EOFs tested
+  # Pinatubo response (1991-07 .. 1993-12 vs 1990–2020 climatology)
+  pinatubo:
+    rsds_anomaly_max: 0.0              # dimming: global-mean anomaly < 0
+    tas_anomaly_max: 0.0               # cooling: global-mean anomaly < 0
+  # Aerosol-era hemispheric asymmetry (1950–1985)
+  hemispheric_asymmetry:
+    nh_minus_sh_trend_max: 0.0         # NH warming suppressed vs SH
+    itcz_shift_max: 0.0                # southward ITCZ migration (°/decade)
+  # Two-layer EBM parameters for the pattern-scaling baseline (Geoffroy 2013
+  # multi-model means; recalibrate when the protocol fixes them)
+  ebm:
+    lambda_feedback: -1.3              # W m-2 K-1
+    c_upper: 8.0                       # W yr m-2 K-1
+    c_deep: 100.0                      # W yr m-2 K-1
+    gamma: 0.7                         # W m-2 K-1
+    efficacy: 1.3
 
 tier3:
   # mid-Holocene North-Africa monsoon check

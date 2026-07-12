@@ -17,6 +17,7 @@ import ibis  # noqa: E402
 from climateeval.diags._base import DiagnosticOutput  # noqa: E402
 
 from climatebench2.diags.tier2_scores import (  # noqa: E402
+    CLIMATOLOGY_DATA_ID,
     MME_DATA_ID,
     ScoredAnnualMeanTimeSeries,
     TrendConsistency,
@@ -74,7 +75,18 @@ def test_scored_time_series_appends_crps_rows(monkeypatch: pytest.MonkeyPatch) -
     output = diag.get_output(None, None)
 
     metrics = output.metrics.to_pandas()
-    assert set(metrics["data_id"]) == {"MyModel", "CMIP6_A", "CMIP6_B", MME_DATA_ID}
+    assert set(metrics["data_id"]) == {
+        "MyModel",
+        "CMIP6_A",
+        "CMIP6_B",
+        MME_DATA_ID,
+        CLIMATOLOGY_DATA_ID,
+    }
+    # Climatology persistence: constant forecast against a trending truth
+    # must score worse (higher CRPS) than the truth-tracking model
+    by_id = metrics.set_index("data_id")
+    assert by_id.loc[CLIMATOLOGY_DATA_ID, "data_type"] == "baseline"
+    assert by_id.loc[CLIMATOLOGY_DATA_ID, "crps"] > by_id.loc["MyModel", "crps"]
     my = metrics.set_index("data_id").loc["MyModel"]
     assert my["var_id"] == "tas"
     assert my["crps"] > 0

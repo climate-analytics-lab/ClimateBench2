@@ -216,9 +216,10 @@ def main(argv: list[str] | None = None) -> None:
         metavar="KEY=PATH",
         help=(
             "CMOR output of an auxiliary experiment for the Tier I gates; "
-            "repeatable. Keys: picontrol, 4xco2, histaer (historical defaults "
-            "to the MODEL data). Suites needing experiments are skipped if "
-            "none are given."
+            "repeatable. Keys: picontrol, 4xco2, histaer, day, amip, "
+            "amip4xco2, patch_ep, patch_wp (historical defaults to the MODEL "
+            "data). Gates whose keys are absent are skipped; suites needing "
+            "experiments are skipped if none are given."
         ),
     )
     score.add_argument(

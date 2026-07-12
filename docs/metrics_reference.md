@@ -49,8 +49,8 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 | I.5b | ENSO spectrum | power(2–7 yr)/power(1–2 yr) > 1.5 | 🟡 partial — peak-period-in-band check, not band-power ratio | `enso_benchmark.py` |
 | I.5c | ENSO teleconnections | tropical 500 hPa T regression > 0; MC precip regression < 0; within factor 2 of ERA5/GPCP | 🟡 partial — sign-only composites, surface tas not ta500, no amplitude check | `enso_benchmark.py` |
 | I.5d | MJO Wheeler–Kiladis | east/west power ratio (k=1–3, 30–90 d) > 1.5 | ❌ missing | — |
-| I.6a | Land–ocean warming ratio | ∈ [1.2, 1.6] (>1 required); a4x last 10 yr | 🟡 near-complete — last 50 yr not 10 | `land_ocean_warming_benchmark.py` |
-| I.6b | Arctic amplification | (ΔT>66.5N)/(ΔT global) ≥ 1.5; a4x last 10 yr | 🟡 near-complete — last 50 yr not 10 | `arctic_amplification_benchmark.py` |
+| I.6a | Land–ocean warming ratio | ∈ [1.2, 1.6] (>1 required); a4x last 50 yr | ✅ window aligned (paper updated 2026-07 to last-50) | `land_ocean_warming_benchmark.py` |
+| I.6b | Arctic amplification | (ΔT>66.5N)/(ΔT global) ≥ 1.5; a4x last 50 yr | ✅ window aligned (paper updated 2026-07 to last-50) | `arctic_amplification_benchmark.py` |
 | I.6c | ECS (Gregory, 150 yr) | ∈ [1, 7] K | 🟡 near-complete — ECS computed, no [1,7] K pass/fail emitted | `ecs_benchmark.py` |
 | I.7 | Aerosol forcing (hist-aer) | 2015 aerosol ERF ∈ [−2.0, −0.5] W/m²; ΔT(2015) < 0 | ✅ implemented (end-of-period 30-yr window used for "2015") | `aerosol_forcing_benchmark.py` |
 | I.8a | Meridional heat transport | OMET peak 1.5–2.0 PW near 15–20°; AMET peak 4–5 PW near ~45° | 🟡 near-complete — peak-latitude pass windows widened (10–25°, 30–50°) | `meridional_heat_transport_benchmark.py` |
@@ -194,6 +194,13 @@ to geostrophic balance with the model's own geopotential field.
 (historical). Geostrophic wind `u_g = −(g/f) ∂Z/∂y`, `f = 2Ω sin(lat)`. For each day (or
 pooled), compute the **spatial** Pearson correlation ρ(u, u_g) over 30–60° (each
 hemisphere or combined; masking |lat|<30 avoids small f). **Pass: ρ > 0.9.**
+
+**Implementation note (per Duncan, 2026-07):** the 850 hPa surface intersects orography
+across much of the 30–60° band (Rockies, Andes, Tibetan Plateau, Antarctica), where
+sub-surface pressure-level values are extrapolated or missing. Mask grid points where
+`ps < 870 hPa` (or where the level is flagged sub-surface) before computing both u and
+u_g, and compute ∂Z/∂y only from unmasked neighbours. The paper deliberately leaves this
+at 850 hPa; handle the masking here in code rather than changing the spec.
 
 **Status: ❌ missing.** No script; would require daily `ua`, `zg` (table `day`), which
 `constants.VARIABLE_FREQUENCY_GROUP` does not yet include (all entries are monthly).
@@ -360,8 +367,8 @@ passes = east / west > 1.5
 
 ## I.6 Basic forced responses (abrupt-4xCO2)
 
-Paper: averages over the **last 10 yr** annual mean of abrupt-4xCO2 unless stated;
-code uses the **last 50 yr** (`--equilibrium_years 50`) for I.6a/b. Decide and unify —
+RESOLVED 2026-07: paper updated to **last 50 yr**, matching the code
+(`--equilibrium_years 50`) for I.6a/b. Previously —
 50 yr is less noisy, 10 yr is the written spec.
 
 ### I.6a Land–ocean warming ratio — `land_ocean_warming_benchmark.py`
@@ -378,7 +385,7 @@ fraction, 0–100). **Required: ratio > 1. Expected range: [1.2, 1.6].**
   local→GCS→ESGF cascade); domain weights `cos(lat)·sftlf/100` (land) and
   `cos(lat)·(1−sftlf/100)` (ocean) — correctly fraction-weighted, not binary masks.
 - ✅ Pass flag `ratio > 1.0`; `in_expected_range` flag for [1.2, 1.6].
-- 🟡 Equilibrium window = last 50 yr of 150 (paper: last 10 yr).
+- ✅ Equilibrium window = last 50 yr of 150 (paper aligned 2026-07).
 - Output: `results/land_ocean_warming/land_ocean_warming_results.csv`.
 
 ```python
@@ -853,7 +860,7 @@ is bespoke work).
 6. ENSO amplitude window [0.4,1.8] vs [0.5,1.4] K (and a third window 0.7–1.2 in the
    integration plan); spectral peak-in-band vs 2–7/1–2-yr band-power ratio >1.5;
    teleconnections sign-only with tas vs ta500 regressions within factor 2 of obs.
-7. abrupt-4xCO2 equilibrium window: last 50 yr (code) vs last 10 yr (paper) for
+7. RESOLVED 2026-07 (paper → last-50): abrupt-4xCO2 equilibrium window, for
    land–ocean and Arctic; ECS has no [1,7] K pass flag.
 8. Aerosol ERF: end-of-record 30-yr mean vs "2015" value (interpretation, document it).
 9. MHT peak-latitude windows widened (10–25°/30–50° vs 15–20°/~45°); no budget-residual

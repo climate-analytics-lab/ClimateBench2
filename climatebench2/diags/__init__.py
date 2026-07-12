@@ -47,6 +47,10 @@ from climatebench2.diags.tier2_diagnostics import (
     HemisphericAsymmetryGate,
     PinatuboResponseGate,
 )
+from climatebench2.diags.tier3_paleo import (
+    MidHoloceneMonsoonGate,
+    PaleoProxyConsistencyGate,
+)
 from climatebench2.diags.tier2_scores import (
     ScoredAnnualMaxTimeSeries,
     ScoredAnnualMeanTimeSeries,
@@ -76,6 +80,8 @@ __all__ = [
     "LandOceanWarmingGate",
     "MJOGate",
     "MeridionalHeatTransportGate",
+    "MidHoloceneMonsoonGate",
+    "PaleoProxyConsistencyGate",
     "PinatuboResponseGate",
     "ScoredAnnualMaxTimeSeries",
     "ScoredAnnualMeanTimeSeries",

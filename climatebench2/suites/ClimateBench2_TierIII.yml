@@ -1,0 +1,35 @@
+# ClimateBench v2 — Tier III: paleoclimate time slices (metrics_reference III.1).
+# Run with an experiment dict holding the PMIP4 slices + piControl, e.g.
+#   climatebench2 score MODEL --experiment picontrol=DIR \
+#       --experiment midholocene=DIR [--experiment lgm=DIR ...] \
+#       --suite ClimateBench2_TierIII
+# Proxy CSVs come from paleo_scripts/process_paleo_observations.py; point the
+# proxy_csv kwargs at the processed files (paths below are the pipeline
+# defaults, override via suite diagnostic_kwargs if staged elsewhere).
+#
+# III.2 (perfect-model, CESM-LE spread) has no suite yet: it scores a
+# submission against a designated truth run through the ordinary Tier II
+# suites, plus climatebench2.scoring.le_variance_ratio /
+# le_spread_pattern_correlation for the spread test.
+
+- name: midholocene_monsoon           # hard requirement: Green Sahara
+  diagnostic: climatebench2.diags.MidHoloceneMonsoonGate
+  additional_diagnostic_kwargs: {}
+
+- name: midholocene_proxies
+  diagnostic: climatebench2.diags.PaleoProxyConsistencyGate
+  additional_diagnostic_kwargs:
+    period_key: midholocene
+    proxy_csv: paleo_scripts/paleo_observations/processed/midholocene_proxies.csv
+
+- name: lgm_proxies
+  diagnostic: climatebench2.diags.PaleoProxyConsistencyGate
+  additional_diagnostic_kwargs:
+    period_key: lgm
+    proxy_csv: paleo_scripts/paleo_observations/processed/lgm_proxies.csv
+
+- name: lig127k_proxies
+  diagnostic: climatebench2.diags.PaleoProxyConsistencyGate
+  additional_diagnostic_kwargs:
+    period_key: lig127k
+    proxy_csv: paleo_scripts/paleo_observations/processed/lig127k_proxies.csv

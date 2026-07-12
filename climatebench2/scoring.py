@@ -311,3 +311,108 @@ def field_consistency(
         for k in range(n_modes)
     ]
     return all(r.passes for r in results), results
+
+
+# ---------------------------------------------------------------------------
+# Tier III: proxy-aware site consistency & perfect-model spread tests
+# ---------------------------------------------------------------------------
+
+
+def proxy_site_consistency(
+    model_values: np.ndarray,
+    proxy_values: np.ndarray,
+    proxy_errors: np.ndarray,
+    *,
+    ensemble_values: np.ndarray | None = None,
+    p_threshold: float = 0.05,
+) -> tuple[float, np.ndarray]:
+    """Regime-(b) consistency at proxy sites (metrics_reference.md III.1).
+
+    Per site: z = (proxy − model) / sqrt(var_ens + σ_proxy²); the score is
+    the fraction of sites with two-sided p ≥ ``p_threshold`` (proxy error
+    dominates σ, per the paper).
+
+    ``model_values``: model anomaly sampled at the sites — ``(n_sites,)``
+    (single run) or via ``ensemble_values`` ``(n_members, n_sites)``.
+    Returns (fraction consistent, per-site z). Sites with NaN model, proxy
+    or error values are excluded from the fraction.
+    """
+    proxy = np.asarray(proxy_values, dtype=float)
+    err = np.asarray(proxy_errors, dtype=float)
+    if ensemble_values is not None:
+        members = np.asarray(ensemble_values, dtype=float)
+        mu = members.mean(axis=0)
+        var_ens = members.var(axis=0, ddof=1) if members.shape[0] > 1 else 0.0
+    else:
+        mu = np.asarray(model_values, dtype=float)
+        var_ens = 0.0
+    total_sigma = np.sqrt(var_ens + err**2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = (proxy - mu) / total_sigma
+    valid = np.isfinite(z)
+    if not valid.any():
+        msg = "no valid proxy sites"
+        raise ValueError(msg)
+    z_crit = stats.norm.isf(p_threshold / 2.0)
+    fraction = float((np.abs(z[valid]) < z_crit).mean())
+    return fraction, z
+
+
+def sample_at_sites(
+    field: np.ndarray,
+    lats: np.ndarray,
+    lons: np.ndarray,
+    site_lats: np.ndarray,
+    site_lons: np.ndarray,
+) -> np.ndarray:
+    """Nearest-gridpoint sampling of a (lat, lon) field at proxy sites.
+
+    Longitudes are compared modulo 360 so −20 and 340 match.
+    """
+    field = np.asarray(field, dtype=float)
+    lats = np.asarray(lats, dtype=float)
+    lons = np.asarray(lons, dtype=float) % 360.0
+    out = np.empty(len(site_lats))
+    for i, (slat, slon) in enumerate(zip(site_lats, site_lons)):
+        j = int(np.argmin(np.abs(lats - slat)))
+        k = int(np.argmin(np.abs((lons - float(slon) % 360.0 + 180.0) % 360.0 - 180.0)))
+        out[i] = field[j, k]
+    return out
+
+
+def le_variance_ratio(
+    predicted_members: np.ndarray,
+    truth_members: np.ndarray,
+) -> float:
+    """Large-ensemble spread test (III.2): predicted/true inter-member
+    variance, aggregated over all remaining dimensions."""
+    pred = np.asarray(predicted_members, dtype=float)
+    truth = np.asarray(truth_members, dtype=float)
+    var_pred = np.nanmean(pred.var(axis=0, ddof=1))
+    var_truth = np.nanmean(truth.var(axis=0, ddof=1))
+    if var_truth == 0:
+        msg = "truth ensemble has zero variance"
+        raise ValueError(msg)
+    return float(var_pred / var_truth)
+
+
+def le_spread_pattern_correlation(
+    predicted_members: np.ndarray,
+    truth_members: np.ndarray,
+    *,
+    weights: np.ndarray | None = None,
+) -> float:
+    """Spatial correlation of the inter-member variability patterns (III.2).
+
+    Members of shape ``(n_members, n_space)``; optional area weights.
+    """
+    pred_var = np.asarray(predicted_members, dtype=float).var(axis=0, ddof=1)
+    truth_var = np.asarray(truth_members, dtype=float).var(axis=0, ddof=1)
+    w = np.ones(pred_var.size) if weights is None else np.asarray(weights, float)
+    valid = np.isfinite(pred_var) & np.isfinite(truth_var)
+    x, y, w = pred_var[valid], truth_var[valid], w[valid]
+    mx, my = np.average(x, weights=w), np.average(y, weights=w)
+    cov = np.average((x - mx) * (y - my), weights=w)
+    vx = np.average((x - mx) ** 2, weights=w)
+    vy = np.average((y - my) ** 2, weights=w)
+    return float(cov / np.sqrt(vx * vy))

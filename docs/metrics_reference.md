@@ -6,12 +6,13 @@ calculation spec (inputs, preprocessing, formula, threshold/score), (c) implemen
 status in this repository, and (d) pseudocode. Definitions are tool-agnostic; a note on
 each Tier II entry states whether it is expected to be provided by **ClimateEval**
 (YAML-suite diagnostic framework on ESMValCore, derived from ICONEval — see
-`docs/iconeval_integration_plan.md`) or by **bespoke** code.
+`docs/climateeval_delineation_plan.md`) or by **bespoke** code.
 
 **Codebase surveyed** (staged read-only copy at `/mnt/user-data/uploads/ClimateBench2/`;
 paths below are repo-relative):
 `benchmark_scrips/*.py`, `constants.py`, `utils.py`, `esmvaltool/recipe_pr_rmse.yml`,
-`docs/iconeval_integration_plan.md`, `paleo_scrips/paleo_benchmarks.ipynb`.
+the ICONEval integration plan (since removed; see git history),
+`paleo_scrips/paleo_benchmarks.ipynb`.
 Note the intentional directory typos `benchmark_scrips/` and `paleo_scrips/`.
 
 **Conventions.**
@@ -84,9 +85,9 @@ basic "the model is a physically closed system" test.
 - 🟡 `--min_years` defaults to 100 (help text notes "spec: 500") and only warns.
 - ➕ Extra: checks mean `rsut`/`rlut` against ICONEval/CERES-EBAF global-mean bounds
   from `constants.REFERENCE_BOUNDS` (rsut ∈ [91.1, 128.8], rlut ∈ [226.4, 246.3] W/m²).
-  ⚠ CLAUDE.md says bounds come from `reference_bounds.yaml`; the yaml is only a *plan*
-  (`docs/iconeval_integration_plan.md` §2) — the code actually imports the dict from
-  `constants.py`.
+  ⚠ CLAUDE.md says bounds come from `reference_bounds.yaml`; the yaml was only ever a
+  *plan* (retired ICONEval integration plan §2, see git history) — the code actually
+  imports the dict from `constants.py`.
 - Output: `results/energy_balance/energy_balance_results.csv`.
 
 **Pseudocode (per spec).**
@@ -264,8 +265,8 @@ and `patch-WP+1K` (GFMIP protocol). For each patch experiment compute global-mea
 **Pass: Δλ = ΔR_EP/ΔTs_EP − ΔR_WP/ΔTs_WP > 0.5 W/m²/K** (sign convention: EP more
 stabilizing).
 
-**Status: ❌ missing.** No code; flagged in `docs/iconeval_integration_plan.md` (issue
-#73, "requires non-standard experiments not in CMIP6 protocol"). Needs a data path for
+**Status: ❌ missing.** No code; flagged against issue
+#73 ("requires non-standard experiments not in CMIP6 protocol"). Needs a data path for
 non-CMIP experiment output (submission-provided), not Pangeo.
 
 ```python
@@ -306,7 +307,7 @@ ocean grids via masking (`_sel_region`, `utils.is_curvilinear`, `utils.area_mean
 **(a) Amplitude.**
 - Spec: **σ(Niño-3.4) ∈ [0.5, 1.4] K**.
 - Code: `check_amplitude` uses **[0.4, 1.8] K** ("factor of two around ~0.9 K").
-  ⚠ Discrepancy; also `docs/iconeval_integration_plan.md` mentions a third window
+  ⚠ Discrepancy; the retired ICONEval integration plan also mentioned a third window
   (0.7–1.2 K). Align on the paper's [0.5, 1.4].
 - Status: 🟡 partial (threshold mismatch).
 
@@ -600,9 +601,9 @@ passes = abs(z) < 1.96                                       # two-sided p < 0.0
 ```
 
 **Tooling direction.** Most Tier II preprocessing and per-variable diagnostics will be
-provided by a wrapper around **ClimateEval** (ESMValCore-based recipe suites;
-`docs/iconeval_integration_plan.md` maps ICONEval recipes to CB2 issues #82–#91,
-#100). The **scoring layer** (CRPS with ESS correction; ensemble-consistency test with
+provided by a wrapper around **ClimateEval** (ESMValCore-based recipe suites; see
+`docs/climateeval_delineation_plan.md` §5 for the protocol→provider map, covering CB2
+issues #82–#91, #100). The **scoring layer** (CRPS with ESS correction; ensemble-consistency test with
 piControl variance + obs error + EOF projection) is **not** in ClimateEval/ESMValTool
 and must remain bespoke (plan explicitly notes "ICONEval is deterministic only",
 issue #97). `esmvaltool/recipe_pr_rmse.yml` is the current (hand-rolled) prototype of
@@ -908,8 +909,8 @@ open `paleo_data` branch — do not duplicate those.
    intensity PDF, diurnal cycle; plus the scalar diagnostics with no provider yet
    (GMST trends, Pinatubo, hemispheric asymmetry, seasonal-cycle triplet) — thin
    bespoke diagnostics feeding the engine from item 1. Sea ice, ts, prw, surface
-   fluxes, cloud properties: route through ClimateEval recipes per
-   `docs/iconeval_integration_plan.md` Phase 3.
+   fluxes, cloud properties: route through ClimateEval per
+   `docs/climateeval_delineation_plan.md` §5.
 6. **Tier III completion:** mid-Holocene North-Africa JJAS precip check (small,
    standalone — not in the paleo PR's tas-only scope as staged); proxy-aware
    consistency scoring reusing item 1 with the `error` column already present in the

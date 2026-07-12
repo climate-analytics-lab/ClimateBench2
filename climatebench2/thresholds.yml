@@ -1,0 +1,112 @@
+# ClimateBench v2 — protocol thresholds
+#
+# Single source of truth for every pass/fail bound and scoring parameter in the
+# ClimateBench v2 protocol. Populated from docs/metrics_reference.md (the
+# authoritative spec, keyed by its section numbers); CB2 diagnostics read their
+# bounds from here and must never hard-code them.
+#
+# Status: Phase 0 skeleton. Entries below are the paper-settled values; items
+# marked TODO await protocol resolution (metrics_reference.md tracks each one).
+
+version: 0
+
+tier1:
+  # I.1 Energy balance closure (piControl)
+  energy_balance:
+    mean_toa_net_abs_max: 0.1          # W m-2, |mean(N)|
+    drift_10yr_running_abs_max: 0.02   # W m-2 / decade, drift of 10-yr running mean
+    min_years: 500                     # TODO: paper internally inconsistent (100 vs 500)
+
+  # I.2a Water budget closure
+  water_budget:
+    p_minus_e_abs_max: 0.05            # mm day-1, absolute
+
+  # I.2b Atmospheric energy budget
+  atm_energy_budget:
+    residual_abs_max: 2.0              # W m-2, |L·P − (Q_rad + SHF)|
+
+  # I.3a Clear-sky LW feedback (gridpoint ∂rlutcs/∂Ts, historical)
+  clear_sky_lw_feedback:
+    reference: 2.2                     # W m-2 K-1 (CERES; Koll & Cronin 2018)
+    rel_tolerance: 0.25                # ±25% → [1.65, 2.75]
+
+  # I.3b Midlatitude geostrophic balance (daily 850 hPa, 30–60°)
+  geostrophic_balance:
+    spatial_corr_min: 0.9
+
+  # I.3c Tropical precipitation–buoyancy (P′ vs column-MSE′, 20S–20N)
+  precip_buoyancy:
+    rel_tolerance_vs_obs: 0.30         # slope within ±30% of GPCP/ERA5
+
+  # I.4a GFMIP SST patch experiments
+  gfmip_patch:
+    delta_lambda_min: 0.5              # W m-2 K-1, λ_EP − λ_WP
+
+  # I.4b amip-4xCO2 effective radiative forcing
+  amip_4xco2_erf:
+    range: [6.5, 9.0]                  # W m-2
+
+  # I.5 ENSO (piControl ≥ 100 yr)
+  enso:
+    amplitude_range: [0.5, 1.4]        # K, σ(Niño-3.4)
+    band_power_ratio_min: 1.5          # power(2–7 yr) / power(1–2 yr)
+    teleconnection_obs_factor: 2.0     # regressions within factor 2 of ERA5/GPCP
+
+  # I.5d MJO Wheeler–Kiladis
+  mjo:
+    east_west_power_ratio_min: 1.5     # k = 1–3, 30–90 day
+
+  # I.6a Land–ocean warming ratio (abrupt-4xCO2, last 50 yr)
+  land_ocean_warming:
+    required_min: 1.0
+    expected_range: [1.2, 1.6]
+    equilibrium_years: 50
+
+  # I.6b Arctic amplification (abrupt-4xCO2, last 50 yr)
+  arctic_amplification:
+    ratio_min: 1.5
+    lat_min: 66.5
+    equilibrium_years: 50
+
+  # I.6c ECS via Gregory regression (150 yr abrupt-4xCO2)
+  ecs:
+    range: [1.0, 7.0]                  # K
+    n_years: 150
+
+  # I.7 Aerosol forcing (DAMIP hist-aer)
+  aerosol_forcing:
+    erf_range: [-2.0, -0.5]            # W m-2, 2015 aerosol ERF
+    require_cooling: true              # ΔT(2015) < 0
+
+  # I.8a Meridional heat transport partitioning (piControl)
+  meridional_heat_transport:
+    omet_peak_range: [1.5, 2.0]        # PW
+    omet_peak_lat_range: [15, 20]      # °N
+    amet_peak_range: [4.0, 5.0]        # PW
+    amet_peak_lat: 45                  # °N (±5)
+    amet_peak_lat_tolerance: 5
+
+  # I.8b ITCZ–energy flux equator (12-month climatology)
+  itcz_efe:
+    slope_reference: 3.0               # ° / PW
+    slope_rel_tolerance: 0.50          # ±50%
+    corr_min: 0.9
+
+tier2:
+  # Scoring window and baselines (metrics_reference.md Tier II preamble)
+  observation_period_start: 2015
+  climatology_baseline_period: [1990, 2020]
+  # Regime (a): CRPS with effective-sample-size correction
+  crps_ess_correction: true
+  # Regime (b): ensemble-consistency test
+  consistency_p_value: 0.05            # two-sided
+  # TODO Phase 2: EOF truncation, piControl chunking parameters
+
+tier3:
+  # mid-Holocene North-Africa monsoon check
+  midholocene_monsoon:
+    jjas_pr_anom_min: 0.5              # mm day-1 vs piControl
+    region: {lat: [10, 30], lon: [-20, 30]}
+  # Perfect-model large-ensemble spread test (TODO Phase 5: settle bounds)
+  le_spread:
+    variance_ratio_range: [0.5, 2.0]

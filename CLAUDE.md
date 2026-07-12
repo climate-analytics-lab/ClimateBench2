@@ -2,169 +2,101 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Setup
+## What this project is
 
-```bash
-conda env create -f env.yml
-conda activate backend_env
+ClimateBench v2 defines the **protocol for scoring and testing climate models**
+(tiered pass/fail gates + probabilistic scores + leaderboard). It is a **thin
+layer on top of [ClimateEval](https://github.com/climate-federation/ClimateEval)**,
+which owns all data loading, preprocessing, and generic physical diagnostics.
+
+Two documents govern all work here:
+
+- [docs/climateeval_delineation_plan.md](docs/climateeval_delineation_plan.md) —
+  the architecture, the CB2⟷ClimateEval ownership boundary, and the phased
+  migration (Phase 0 done: package scaffold).
+- [docs/metrics_reference.md](docs/metrics_reference.md) — the authoritative
+  spec (inputs, formula, threshold) for every Tier I/II/III check.
+
+**Ownership test:** code that loads/regrids data or is a generic physical
+diagnostic belongs in ClimateEval (upstream PR); code that encodes a threshold,
+probabilistic score, baseline, tier structure, or the leaderboard belongs here.
+
+## The package: `climatebench2/`
+
+```
+climatebench2/
+├── diags/               # ClimateEval-compatible Diagnostic subclasses (the protocol)
+├── suites/              # CB2 suite YAMLs; may reference climatebench2.diags.* AND climateeval.diags.*
+├── thresholds.yml       # EVERY pass/fail bound lives here — never hard-code one in a diagnostic
+├── leaderboard/         # .ddb results → scores table (→ static HTML page, Phase 6)
+└── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 ```
 
-Note: directory names use intentional typos — `benchmark_scrips/` and `paleo_scrips/` (not `scripts`).
+Key integration facts (verified against ClimateEval `main`):
 
-## Common Commands
+- ClimateEval's `Suite` loads any importable `diagnostic:` class path via
+  `str_to_object` — CB2 diagnostics need only subclass
+  `climateeval.diags._base.Diagnostic`.
+- Multi-experiment/ensemble inputs follow the `ECS` `ComplexDiagnostic`
+  precedent (`_required_data_keys` + `ComplexDataSource`).
+- All output goes to ClimateEval's standard DuckDB schema (`raw_output`,
+  `metrics`, `variables`, `data_sources` per diagnostic); CB2 scores add
+  columns to `metrics`, never a new schema.
+- ClimateEval is a **third-party dependency** (DLR; `climate-federation` org),
+  pinned by commit in `pyproject.toml`. Never vendor or patch it; contribute
+  upstream via PR or keep the code here.
 
-**Download observational data:**
+### Commands
+
 ```bash
-cd download_scripts
-python download_observations.py --variable tas --source HadCRUT5
-python download_observations.py --variable tas --source HadCRUT5_error
+pip install .                       # installs climateeval (pinned) + climatebench2
+# dev against a local checkout: pip install -e ../ClimateEval && pip install -e . --no-deps
+
+climatebench2 score /path/to/model/cmor/Amon --name MyModel   # → MyModel_climatebench2/*.ddb
+climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scores table
+climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report
 ```
 
-**Run a single benchmark:**
+## Legacy pipeline (being retired — do not extend)
+
+The pre-ClimateEval bespoke code still runs and is deleted piecewise as each
+check reaches parity (plan §6). It uses a separate conda env:
+
 ```bash
-cd benchmark_scrips
-python model_benchmark.py --model CanESM5 --variable tas --metric zonal_mean_rmse --lat_min -90 --lat_max 90 --start_year 2005 --end_year 2015
+conda env create -f env.yml && conda activate backend_env
 ```
 
-Metric options: `zonal_mean_rmse`, `zonal_mean_mae`, `spatial_rmse`, `spatial_mae`, `crps`
-Adjustment options: `bias_adjustment`, `anomaly` (or none)
+Note: directory names use intentional typos — `benchmark_scrips/` and
+`paleo_scrips/` (not `scripts`).
 
-**ECS diagnosis (Tier I — Gregory regression):**
-```bash
-cd benchmark_scrips
-python ecs_benchmark.py --model CanESM5
-python ecs_benchmark.py --model UKESM1-0-LL --n_years 150 --save_to_cloud
-```
+- `benchmark_scrips/` — Tier I scripts (`ecs_benchmark.py`,
+  `energy_balance_benchmark.py`, `land_ocean_warming_benchmark.py`,
+  `arctic_amplification_benchmark.py`, `bjerknes_benchmark.py`,
+  `aerosol_forcing_benchmark.py`, `meridional_heat_transport_benchmark.py`,
+  `covariance_benchmark.py`, `enso_benchmark.py`, `itcz_efe_benchmark.py`) and
+  the Tier II deterministic runner `model_benchmark.py` (metrics:
+  `zonal_mean_rmse|mae`, `spatial_rmse|mae`, `crps`; `ohc` derived from
+  `thetao`+`so`). All take `--model <name>`; outputs go to `results/<benchmark>/`.
+  Shared machinery in `benchmark_utils.py` (`DataFinder`, `MetricCalculation`,
+  `SaveResults`).
+- `constants.py` / `utils.py` — variable→frequency map, obs data specs, GCS
+  project; `standardize_dims()`, `create_zarr()`.
+- `download_scripts/download_observations.py` — obs → zarr
+  (`observations/` or `gs://climatebench/observations/`); `clt`/`od550aer` need
+  `earthengine authenticate`; CERES needs a manual NetCDF download.
+- `paleo_scrips/` — paleo data cache + tas-only prototype notebook (an open
+  `paleo_data` PR builds on it).
+- `app_data_prep/` — notebooks feeding the legacy
+  [ClimateBench web app](https://climate-analytics-lab.github.io/ClimateBench_app/index.html).
+- `esmvaltool/recipe_pr_rmse.yml` — hand-rolled recipe prototype, superseded by
+  the ClimateEval route.
+- CMIP6 data sources, in `DataFinder` priority order: local →
+  Pangeo GCS (`gs://cmip6/`, `pangeo-cmip6.csv`) → ESGF. Historical 1960–2014 +
+  `ssp245` 2015–2024 (set in `constants.py`); `load_experiment_ds()` serves
+  piControl / abrupt-4xCO2 / hist-aer.
 
-**Energy balance closure test (Tier I):**
-```bash
-cd benchmark_scrips
-python energy_balance_benchmark.py --model CanESM5
-python energy_balance_benchmark.py --model CanESM5 --min_years 100
-**Land-ocean warming contrast (Tier I):**
-```bash
-cd benchmark_scrips
-python land_ocean_warming_benchmark.py --model CanESM5
-python land_ocean_warming_benchmark.py --model CanESM5 --n_years 150 --equilibrium_years 50
-```
-
-**Arctic amplification (Tier I):**
-```bash
-cd benchmark_scrips
-python arctic_amplification_benchmark.py --model CanESM5
-python arctic_amplification_benchmark.py --model CanESM5 --n_years 150 --equilibrium_years 50
-```
-
-**Bjerknes compensation (Tier I):**
-```bash
-cd benchmark_scrips
-python bjerknes_benchmark.py --model CanESM5
-python bjerknes_benchmark.py --model CanESM5 --min_years 200
-```
-
-**Aerosol forcing — hist-aer pass/fail (Tier I):**
-```bash
-cd benchmark_scrips
-python aerosol_forcing_benchmark.py --model CanESM5
-python aerosol_forcing_benchmark.py --model UKESM1-0-LL --end_period_years 30 --n_years_ecs 150
-**Meridional heat transport partitioning (Tier I):**
-```bash
-cd benchmark_scrips
-python meridional_heat_transport_benchmark.py --model CanESM5
-python meridional_heat_transport_benchmark.py --model CanESM5 --min_years 200
-```
-
-**Covariance consistency (Tier I):**
-```bash
-cd benchmark_scrips
-python covariance_benchmark.py --model CanESM5
-python covariance_benchmark.py --model CanESM5 --n_years 200
-```
-
-**Bulk benchmark run:**
-```bash
-cd benchmark_scrips
-chmod +x run_benchmark.sh
-./run_benchmark.sh
-```
-
-**Paleoclimate data download:**
-```bash
-cd paleo_scrips/paleo_data_cache
-python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/paleo_scrips/paleo_data_cache
-```
-
-## Architecture
-
-### Data Flow
-
-1. **Observational data** is downloaded via `download_scripts/download_observations.py` → saved as zarr to `observations/` (local) or `gs://climatebench/observations/` (GCS)
-2. **CMIP6 model data** is read from local storage, the [Pangeo Google Cloud CMIP6 bucket](https://cmip6.storage.googleapis.com/), or ESGF
-3. **Benchmarks** are calculated in `benchmark_scrips/` and saved to `results/` or GCS
-4. **App data prep** notebooks in `app_data_prep/` transform results for the [ClimateBench web app](https://climate-analytics-lab.github.io/ClimateBench_app/index.html)
-
-### Key Files
-
-- [constants.py](constants.py) — Central config: variable-to-frequency-group mappings (`VARIABLE_FREQUENCY_GROUP`), historical/SSP date ranges, Google Cloud project ID, and `OBSERVATION_DATA_SPECS` dict mapping each variable+source to cloud/local paths and download URLs
-- [utils.py](utils.py) — Shared utilities: `standardize_dims()` normalizes heterogeneous coordinate naming across datasets (lat/lon variants, time formatting), `create_zarr()`, `download_file()`
-- [benchmark_scrips/benchmark_utils.py](benchmark_scrips/benchmark_utils.py) — Three core classes:
-  - `DataFinder` — locates and loads model ensemble data (historical + SSP concatenated) and observational data; downloads CMIP6 catalogue CSV from Pangeo on first run (`pangeo-cmip6.csv`)
-  - `MetricCalculation` — computes RMSE, MAE, CRPS with optional zonal mean, bias adjustment, or anomaly preprocessing using xskillscore
-  - `SaveResults` — writes results CSV locally or to GCS
-- [benchmark_scrips/model_benchmark.py](benchmark_scrips/model_benchmark.py) — CLI entry point orchestrating the three classes; handles `ohc` (ocean heat content) as a special derived variable requiring both `thetao` and `so`
-- [benchmark_scrips/ecs_benchmark.py](benchmark_scrips/ecs_benchmark.py) — Tier I ECS diagnosis via Gregory regression on `abrupt-4xCO2`; loads `tas`, `rsdt`, `rsut`, `rlut` from piControl (baseline) and abrupt-4xCO2 (first 150 yr), performs linear regression of TOA net flux vs global-mean temperature, outputs ECS/lambda/forcing to `results/ecs/ecs_results.csv`
-- [benchmark_scrips/energy_balance_benchmark.py](benchmark_scrips/energy_balance_benchmark.py) — Tier I energy balance closure test on piControl; computes TOA net flux drift and checks against 0.1 W/m²/decade threshold, validates component fluxes against ICONEval/CERES-EBAF observational bounds from `reference_bounds.yaml`, outputs to `results/energy_balance/energy_balance_results.csv`
-- [benchmark_scrips/land_ocean_warming_benchmark.py](benchmark_scrips/land_ocean_warming_benchmark.py) — Tier I land-ocean warming contrast from `abrupt-4xCO2`; loads `tas` and `sftlf` (land fraction mask), computes warming ratio from equilibrium response (last 50 yr), pass/fail against expected range 1.2–1.6, outputs to `results/land_ocean_warming/land_ocean_warming_results.csv`
-
-### Variable Reference
-
-| CF Name | Description | Frequency | Observation Source |
-|---------|-------------|-----------|-------------------|
-| `tas` | Surface air temperature | Amon | HadCRUT5, NASA GISS |
-| `pr` | Precipitation | Amon | NOAA GPCP |
-| `tos` | Sea surface temperature | Omon | NOAA OISST |
-| `clt` | Cloud area fraction | Amon | NASA MODIS (GEE) |
-| `od550aer` | Aerosol optical depth | AERmon | NASA MODIS (GEE) |
-| `prw` | Precipitable water (column water vapour) | Amon | — |
-| `rsdt` | Incoming TOA SW flux | Amon | — (model only) |
-| `rsut`/`rlut` | TOA SW/LW flux (all-sky) | Amon | NASA CERES |
-| `rsutcs`/`rlutcs` | TOA SW/LW flux (clear-sky) | Amon | NASA CERES |
-| `thetao` | Ocean potential temperature | Omon | Argo |
-| `so` | Ocean salinity | Omon | Argo |
-| `ohc` | Ocean heat content (derived) | — | Argo |
-
-CERES variables (`rsut`, `rlut`, `rsutcs`, `rlutcs`) share a single raw NetCDF file (`CERES_EBAF-TOA_Ed4.2.1_Subset_*.nc`) that must be downloaded manually before processing.
-
-### MODIS/Google Earth Engine Variables
-
-`clt` and `od550aer` require Google Earth Engine authentication:
-```bash
-earthengine authenticate
-```
-
-### CMIP6 Data Sources (priority order in DataFinder)
-
-1. Local filesystem paths
-2. Pangeo Google Cloud (`gs://cmip6/`) via `pangeo-cmip6.csv` catalogue
-3. ESGF via `pyesgf`
-
-### SSP Experiment
-
-Default SSP scenario is `ssp245`, set in `constants.py`. Historical runs cover 1960–2014; SSP covers 2015–2024.
-
-### Non-SSP Experiments (piControl, abrupt-4xCO2, etc.)
-
-`DataFinder.load_experiment_ds(experiment, n_years=None)` loads data for any single CMIP6 experiment without the historical+SSP concatenation logic. Used by Tier I benchmarks that require piControl or idealized forcing experiments. `standardize_dims()` gracefully handles out-of-bounds time coordinates common in long control runs.
-
-### Tier I Benchmarks
-
-| Benchmark | Script | Experiments | Variables | Output |
-|-----------|--------|-------------|-----------|--------|
-| ECS (Gregory regression) | `ecs_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `rsdt`, `rsut`, `rlut` | `results/ecs/ecs_results.csv` |
-| Energy balance closure | `energy_balance_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut` | `results/energy_balance/energy_balance_results.csv` |
-| Land-ocean warming contrast | `land_ocean_warming_benchmark.py` | piControl, abrupt-4xCO2 | `tas`, `sftlf` | `results/land_ocean_warming/land_ocean_warming_results.csv` |
-| Arctic amplification | `arctic_amplification_benchmark.py` | piControl, abrupt-4xCO2 | `tas` | `results/arctic_amplification/arctic_amplification_results.csv` |
-| Bjerknes compensation | `bjerknes_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/bjerknes_compensation/bjerknes_results.csv` |
-| Aerosol forcing (hist-aer) | `aerosol_forcing_benchmark.py` | piControl, abrupt-4xCO2, hist-aer (DAMIP) | `tas`, `rsdt`, `rsut`, `rlut` | `results/aerosol_forcing/aerosol_forcing_results.csv` |
-| Meridional heat transport | `meridional_heat_transport_benchmark.py` | piControl | `rsdt`, `rsut`, `rlut`, `rsds`, `rsus`, `rlds`, `rlus`, `hfss`, `hfls` | `results/meridional_heat_transport/meridional_heat_transport_results.csv` |
-| Covariance consistency | `covariance_benchmark.py` | piControl | `tas`, `prw`, `rlutcs`, `pr`, `hfls`, `hfss`, `rsds`, `rsus`, `rlds`, `rlus` | `results/covariance_consistency/covariance_results.csv` |
+Known legacy bugs (fix only by porting, per plan §6): hard-coded
+`np.ones((1980,1))` in `itcz_efe_benchmark.py`; missing `raise` in the CRPS
+ensemble-dim guards in `benchmark_utils.py`; threshold/method deviations from
+the paper are itemised in `docs/metrics_reference.md` §"Cross-cutting
+discrepancies".

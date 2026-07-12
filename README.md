@@ -1,82 +1,74 @@
 # ClimateBench2
 
-## Directory Structure
+ClimateBench v2 defines the **protocol for scoring and testing climate models**:
+a tiered set of physical-consistency gates (Tier I, pass/fail), probabilistic
+scores against post-2015 observations (Tier II), and out-of-sample paleo /
+perfect-model tests (Tier III), presented as a leaderboard.
 
-- `constants.py`, `utils.py`, `env.yml` – Environment setup and shared codes
-- `app_data_prep/` – Data preparation notebooks
-- `benchmark_scripts/` – Benchmarking scripts
-- `download_scripts/` – Data download scripts
-- `esmvaltool/` – ESMValTool example benchmarking recipe
-- `observations/` – Where downloaded observations will be saved
-- `results/` – Where calculated benchmarks will be saved
-- `paleo_scripts/` – Paleoclimate benchmarking and data prep
+ClimateBench2 is a **thin protocol layer on top of
+[ClimateEval](https://github.com/climate-federation/ClimateEval)**. ClimateEval
+does all data loading, preprocessing and generic physical diagnostics;
+ClimateBench2 owns only what makes it a benchmark — the tier structure, the
+thresholds, the probabilistic scoring semantics, the baselines, and the
+leaderboard.
 
-## Setup
+- **Architecture & migration plan:** [docs/climateeval_delineation_plan.md](docs/climateeval_delineation_plan.md)
+- **Exact spec of every metric/check:** [docs/metrics_reference.md](docs/metrics_reference.md)
+
+## Install
+
+Requires Python ≥ 3.12. ClimateEval is pulled in automatically (pinned by
+commit; it is pre-1.0 and not on PyPI):
+
+```bash
+pip install .
+# or, developing against a local ClimateEval checkout:
+pip install -e ../ClimateEval && pip install -e . --no-deps
+```
+
+## Usage
+
+```bash
+# Score a model: point at CMOR-compliant NetCDF output (file, flat dir, or DRS tree)
+climatebench2 score /path/to/model/cmor/Amon --name MyModel
+# → MyModel_climatebench2/: one DuckDB results database per suite
+
+# Build the leaderboard from one or more models' results
+climatebench2 leaderboard MyModel_climatebench2/*.ddb
+```
+
+Per-model interactive reports remain available through ClimateEval:
+`climateeval report MyModel_climatebench2/*.ddb`.
+
+## Repository layout
 
 ```
+climatebench2/           # the installable package
+├── diags/               # CB2 protocol diagnostics (plug into ClimateEval suites)
+├── suites/              # CB2 suite YAMLs (ClimateEval suite format)
+├── thresholds.yml       # single source of truth for every pass/fail bound
+├── leaderboard/         # scores table / leaderboard renderer
+└── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
+docs/                    # delineation plan, metrics reference
+```
+
+## Status
+
+Phase 0 of the [migration plan](docs/climateeval_delineation_plan.md#6-migration--phased-retire-as-parity):
+the package scaffold is in place and `climatebench2 score` runs stock
+ClimateEval suites. The CB2 tier suites, the probabilistic scoring engine
+(CRPS-with-ESS, ensemble-consistency), and the baselines land in Phases 1–6.
+
+## Legacy code (being retired)
+
+The original bespoke pipeline — `benchmark_scrips/`, `download_scripts/`,
+`constants.py`, `utils.py`, `esmvaltool/`, `paleo_scrips/`, `app_data_prep/` —
+still works (see `CLAUDE.md` for commands) and is deleted piecewise as each
+check reaches parity on the ClimateEval-backed path. Do not add new
+functionality there.
+
+```bash
+# legacy environment, only needed for the legacy scripts
 conda env create -f env.yml
 conda activate backend_env
 ```
-
-## Observational Data
-
-Observational data can be downloaded locally or read from the ClimateBench google cloud bucket. To download observations locally, use the `download_scripts`
-
-```
-conda activate backend_env
-cd download_scripts
-python download_observations.py --variable tas --source HadCRUT5
-python download_observations.py --variable tas --source HadCRUT5_error
-```
-
-There are currently observational datasets for:
-- Surface air temperature (tas)     -- [HadCRUT5](https://www.metoffice.gov.uk/hadobs/hadcrut5/)
-- Precipitation (pr)                -- [GPCP](https://psl.noaa.gov/data/gridded/data.gpcp.html)
-- Sea surface temperature           -- [OISST](https://www.ncei.noaa.gov/products/optimum-interpolation-sst)
-- Cloud area fraction               -- [MODIS](https://developers.google.com/earth-engine/datasets/catalog/MODIS_061_MOD08_M3)
-- Aerosol optical depth             -- [MODIS](https://developers.google.com/earth-engine/datasets/catalog/MODIS_061_MOD08_M3)
-
-## Benchmarking
-The ClimateBench framework allows users to customize the calculated score to the region and time period of interest. There are three skill measures (RMSE, MAE, CRPS) with the option to calculate on the zonal mean, or across all pixels. Users can also use the bias adjustment or anomaly option for additionally preprocessing. 
-
-To calculate a benchmark for one combination of parameters, use the `model_benchmark.py`
-```
-conda activate backend_env
-cd benchmark_scripts
-python model_benchmark.py --model CanESM5 --variable tas --metric zonal_mean_rmse --lat_min -90 --lat_max 90 --start_year 2005 --end_year 2015
-```
-If you would like to do a bulk run of all potential combinations, you can use the `run_benchmark.sh` script, and modify to the desired combinations.
-```
-# make sure permissions are set
-chmod +x run_benchmark.sh
-# run bash script
-./run_benchmark.sh
-```
-
-## App Data Preparation
-
-The app data preparation notebooks create the figures displayed in the [ClimateBench web app](https://climate-analytics-lab.github.io/ClimateBench_app/index.html). These include:
-- Overview scorecard (weather_bench_scorecard.ipynb) 
-    - This notebook is a slightly modified version of [WB_X_Website_Scorecard.ipynb](https://github.com/google-research/weatherbenchX/blob/main/public_benchmark/WB_X_Website_Scorecard.ipynb) from the [WeatherBench](https://sites.research.google/gr/weatherbench/) team.
-- Input data maps (prep_map_images.ipynb)
-    - This notebook plots the climate model data and error as projected maps and saves to a ClimateBench_app folder. If you have the ClimateBench_app repo locally, it will save the files there.
-
-- store_zonal_means.ipynb calculates the zonal mean time series for the models and observations. 
-- process_results.ipynb reformats benchmark results for easier reading in the web app.
-
-## Paleoclimate Benchmarks
-
-The paleoclimate model simulations can be downloaded locally using `paleo_scripts/paleo_data_cache/paleo_data_cache.py`. Downloading all the paleo periods may take a while.
-
-```
-conda activate backend_env
-cd paleo_scripts/paleo_data_cache
-python paleo_data_cache.py --paleo-period lgm --data-cache-dir path/to/ClimateBench2/paleo_scripts/paleo_data_cache
-```
-
-Then you can download and organize the paleo proxy data using the `paleo_scripts/prep_paleo_obs.ipynb`.
-And finally, you can calculate the error in the global mean surface temperature anomaly using `paleo_scripts/paleo_benchmarks.ipynb`.
-
-## ESMValTool
-
-ESMValTool is a helpful evaluation tool for existing climate models. See the `esmvaltool/README.md` for more details.

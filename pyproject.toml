@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "climatebench2"
+version = "0.1.0"
+description = "ClimateBench v2 — the protocol layer (thresholds, probabilistic scoring, leaderboard) on top of ClimateEval"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Duncan Watson-Parris", email = "dwatsonparris@ucsd.edu" },
+]
+# ClimateEval is pre-1.0 (0.0.1) and not on PyPI: pin to a known-good commit and
+# bump deliberately (see docs/climateeval_delineation_plan.md §8.4).
+# For local development against a checkout instead:
+#   pip install -e ../ClimateEval && pip install -e . --no-deps
+dependencies = [
+    "climateeval @ git+https://github.com/climate-federation/ClimateEval.git@4de03ed9ba508ceb8465dabda73bf1c38d89c9c9",
+    "pyyaml",
+]
+
+[project.scripts]
+climatebench2 = "climatebench2._cli:main"
+
+[tool.setuptools.packages.find]
+# Only the package — not the legacy top-level modules (constants.py, utils.py)
+# or script directories, which are being retired per the delineation plan.
+include = ["climatebench2*"]
+
+[tool.setuptools.package-data]
+climatebench2 = ["thresholds.yml", "suites/*.yml"]

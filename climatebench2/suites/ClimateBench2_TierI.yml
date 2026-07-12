@@ -1,0 +1,18 @@
+# ClimateBench v2 — Tier I: physical-consistency gates (pass/fail entry ticket).
+# Spec: docs/metrics_reference.md; bounds: climatebench2/thresholds.yml.
+#
+# Phase-1 coverage: ECS (I.6c) and ENSO amplitude/spectrum (I.5a/b).
+# Remaining Tier I checks land in Phases 3–4 (delineation plan §6).
+
+- name: ecs_gate
+  diagnostic: climatebench2.diags.ECSGate
+  additional_diagnostic_kwargs: {}
+
+- name: enso_gate
+  diagnostic: climatebench2.diags.ENSOGate
+  variables:
+    - id: tos_nino34
+      var_name: tos
+      frequency: mon
+      reference_data: climateeval.data.ESACCISST
+      other_data: [climateeval.data.NOAAERSSTv5, climateeval.data.HadISST]

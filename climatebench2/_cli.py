@@ -7,9 +7,8 @@ Subcommands
 -----------
 ``climatebench2 score MODEL``
     Run the ClimateBench2 evaluation suites on a model's CMOR output via
-    ClimateEval and write one DuckDB results database per suite. In Phase 0
-    the default suite is ClimateEval's stock ``Tier2_atmosphere_monthly``;
-    the CB2 tier suites replace it as they land (delineation plan §6).
+    ClimateEval and write one DuckDB results database per suite (default:
+    the CB2 tier suites, which grow per the delineation plan §6).
 ``climatebench2 leaderboard DB [DB ...]``
     Build the ClimateBench2 leaderboard from result databases. Phase 0 ships
     a scores table (stdout / CSV); the standalone HTML page lands in Phase 6.
@@ -30,7 +29,7 @@ from typing import Any
 # Heavy climateeval subsystems (ESMValCore/iris/dask, ~5 s to import) are
 # imported lazily inside the command functions, mirroring climateeval's CLI.
 
-DEFAULT_SUITES = ["Tier2_atmosphere_monthly"]  # Phase 0: stock ClimateEval suite
+DEFAULT_SUITES = ["ClimateBench2_TierI", "ClimateBench2_TierII"]
 DEFAULT_TIMERANGE = "19790101/20141231"
 
 

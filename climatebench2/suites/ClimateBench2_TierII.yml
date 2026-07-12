@@ -1,0 +1,139 @@
+# ClimateBench v2 — Tier II: scoring against observations.
+# Core protocol variables (metrics_reference.md Tier II): tas, pr, TOA fluxes,
+# SST, sea ice, OHC, prw, clouds — evaluated with ClimateEval diagnostics
+# against the protocol's observational references, with the CMIP6 historical
+# ensemble carried along as comparison (the MME baseline of the protocol).
+#
+# Phase-1 scope: deterministic metrics only (weighted RMSE/pearson/EMD).
+# The probabilistic scoring layer (CRPS-ESS, ensemble-consistency) wraps
+# these outputs from Phase 2 (delineation plan §6).
+
+- name: annual_mean_timeseries
+  diagnostic: climateeval.diags.simple.AnnualMeanTimeSeries
+  variables: &core_variables
+    - id: tas
+      var_name: tas
+      frequency: mon
+      reference_data: climateeval.data.HadCRUT5
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+    - id: pr
+      var_name: pr
+      frequency: mon
+      units: mm day-1
+      reference_data: climateeval.data.GPCP
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+    - id: rsut
+      var_name: rsut
+      frequency: mon
+      reference_data: climateeval.data.CERESEBAF
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+    - id: rlut
+      var_name: rlut
+      frequency: mon
+      reference_data: climateeval.data.CERESEBAF
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+    - id: rtnt
+      var_name: rtnt
+      frequency: mon
+      reference_data: climateeval.data.CERESEBAF
+    - id: prw
+      var_name: prw
+      frequency: mon
+      reference_data: climateeval.data.ERA5Monthly
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+    - id: clt
+      var_name: clt
+      frequency: mon
+      reference_data: climateeval.data.ESACCICloud
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+
+- name: annual_cycle
+  diagnostic: climateeval.diags.simple.AnnualCycle
+  variables: *core_variables
+
+- name: map
+  diagnostic: climateeval.diags.simple.Map
+  variables: *core_variables
+
+- name: zonal_line
+  diagnostic: climateeval.diags.simple.ZonalLine
+  variables: *core_variables
+
+# --- Ocean -----------------------------------------------------------------
+
+- name: sst
+  diagnostic: climateeval.diags.simple.AnnualMeanTimeSeries
+  variables:
+    - &tos
+      id: tos
+      var_name: tos
+      frequency: mon
+      reference_data: climateeval.data.ESACCISST
+      other_data: [climateeval.data.NOAAERSSTv5, climateeval.data.HadISST]
+
+- name: sst_map
+  diagnostic: climateeval.diags.simple.Map
+  variables:
+    - *tos
+
+- name: ohc
+  diagnostic: climateeval.diags.simple.OceanHeatContentTimeSeries
+  variables:
+    - &ohc
+      id: phcint_total
+      var_name: phcint
+      frequency: mon
+      reference_data: climateeval.data.EN4
+      other_data: [climateeval.data.IAP]
+    - <<: *ohc
+      id: phcint_2000m
+      additional_preprocessors:
+        esmvalcore.preprocessor.extract_volume:
+          z_min: 0.0
+          z_max: 2000.0
+          interval_bounds: left_closed
+
+# --- Sea ice ---------------------------------------------------------------
+
+- name: sea_ice_annual_cycle
+  diagnostic: climateeval.diags.simple.SeaIceAreaAnnualCycle
+  variables:
+    - id: siconc_nh
+      var_name: siconc
+      frequency: mon
+      min_lat: 30.0
+      max_lat: 90.0
+      reference_data: climateeval.data.OSI450NH
+      other_data: [climateeval.data.HadISST]
+    - id: siconc_sh
+      var_name: siconc
+      frequency: mon
+      min_lat: -90.0
+      max_lat: -30.0
+      reference_data: climateeval.data.OSI450SH
+      other_data: [climateeval.data.HadISST, climateeval.data.NSIDCG02202SH]
+
+- name: sea_ice_minimum
+  diagnostic: climateeval.diags.simple.SeaIceAreaTimeSeries
+  variables:
+    # NH September / SH February seasonal minima (paper Tier II sea-ice items).
+    - id: siconc_nh_sep
+      var_name: siconc
+      frequency: mon
+      min_lat: 30.0
+      max_lat: 90.0
+      additional_preprocessors:
+        esmvalcore.preprocessor.extract_month:
+          month: 9
+      reference_data: climateeval.data.OSI450NH
+      other_data: [climateeval.data.HadISST]
+    - id: siconc_sh_feb
+      var_name: siconc
+      frequency: mon
+      min_lat: -90.0
+      max_lat: -30.0
+      additional_preprocessors:
+        esmvalcore.preprocessor.extract_month:
+          month: 2
+      reference_data: climateeval.data.OSI450SH
+      other_data: [climateeval.data.HadISST, climateeval.data.NSIDCG02202SH]

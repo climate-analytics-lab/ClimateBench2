@@ -95,38 +95,13 @@ PI reference for anomaly computation: lgmDA Holocene (default) or model
 piControl (`--use-picontrol`). Precipitation benchmarks (Bartlein MAP,
 Scussolini LIG) require `--use-picontrol` and processed `pr` data.
 
-## Legacy pipeline (being retired — do not extend)
+## Legacy remnant (do not extend)
 
-The pre-ClimateEval bespoke code is deleted piecewise as each check reaches
-parity (plan §6). Already retired: `model_benchmark.py`, `ecs_benchmark.py`,
-`enso_benchmark.py`, `run_benchmark.sh` (Phase 1); `MetricCalculation` +
-`SaveResults` (Phase 2). What remains uses a separate conda env:
-
-```bash
-conda env create -f env.yml && conda activate backend_env
-```
-
-Note: `benchmark_scrips/` uses an intentional typo (not `scripts`).
-
-- `benchmark_scrips/` — remaining Tier I scripts
-  (`energy_balance_benchmark.py`, `land_ocean_warming_benchmark.py`,
-  `arctic_amplification_benchmark.py`, `bjerknes_benchmark.py`,
-  `aerosol_forcing_benchmark.py`, `meridional_heat_transport_benchmark.py`,
-  `covariance_benchmark.py`, `itcz_efe_benchmark.py`), all `--model <name>`,
-  outputs to `results/<benchmark>/`. Data loading via `DataFinder` in
-  `benchmark_utils.py` (local → Pangeo GCS `gs://cmip6/` → ESGF;
-  `load_experiment_ds()` for piControl / abrupt-4xCO2 / hist-aer).
-- `constants.py` / `utils.py` — variable→frequency map, obs data specs, GCS
-  project; `standardize_dims()`, `create_zarr()`.
-- `download_scripts/download_observations.py` — obs → zarr
-  (`observations/` or `gs://climatebench/observations/`); `clt`/`od550aer` need
-  `earthengine authenticate`; CERES needs a manual NetCDF download.
-- `app_data_prep/` — notebooks feeding the legacy
-  [ClimateBench web app](https://climate-analytics-lab.github.io/ClimateBench_app/index.html).
-- `esmvaltool/recipe_pr_rmse.yml` — hand-rolled recipe prototype, superseded by
-  the ClimateEval route.
-
-Known legacy bugs (fix only by porting, per plan §6): hard-coded
-`np.ones((1980,1))` in `itcz_efe_benchmark.py`; threshold/method deviations
-from the paper are itemised in `docs/metrics_reference.md` §"Cross-cutting
-discrepancies".
+The bespoke pipeline was retired piecewise across migration Phases 1–5
+(every deletion is one phase commit; see `git log`). The only survivors are
+`constants.py`, `utils.py` and `benchmark_scrips/benchmark_utils.py`
+(`DataFinder`: local → Pangeo GCS `gs://cmip6/` → ESGF), kept solely because
+`paleo_scripts/paleo_benchmark.py --use-picontrol` imports them (they need
+the legacy conda env: `conda env create -f env.yml`). Retire all three once
+the paleo pipeline loads piControl via ClimateEval. Note the intentional
+typo: `benchmark_scrips/`.

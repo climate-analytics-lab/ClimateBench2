@@ -161,18 +161,32 @@ def _cmd_leaderboard(args: argparse.Namespace) -> None:
             msg = f"Database not found: {path}"
             raise SystemExit(msg)
 
-    from climatebench2.leaderboard import build_scores_table
-
-    scores = build_scores_table(db_paths)
-    if scores.empty:
-        msg = "No metrics found in the given database(s)."
-        raise SystemExit(msg)
+    from climatebench2.leaderboard import (
+        build_scores,
+        build_scores_table,
+        render_html,
+    )
 
     if args.csv is not None:
-        scores.to_csv(args.csv, index=False)
+        summary = build_scores_table(db_paths)
+        if summary.empty:
+            msg = "No metrics found in the given database(s)."
+            raise SystemExit(msg)
+        summary.to_csv(args.csv, index=False)
         print(f"Wrote {args.csv}", file=sys.stderr)
-    else:
-        print(scores.to_string(index=False))  # noqa: T201
+        return
+
+    scores = build_scores(db_paths)
+    if all(
+        frame.empty
+        for frame in (scores.gates, scores.crps, scores.consistency, scores.tier3)
+    ):
+        msg = "No ClimateBench2 scores found in the given database(s)."
+        raise SystemExit(msg)
+    html = render_html(scores, source_names=[p.name for p in db_paths])
+    output = args.output or Path("climatebench2_leaderboard.html")
+    output.write_text(html, encoding="utf-8")
+    print(f"Wrote {output}", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -268,11 +282,19 @@ def main(argv: list[str] | None = None) -> None:
     )
     leaderboard.add_argument("db", type=Path, nargs="+", help="DuckDB .ddb file(s).")
     leaderboard.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="HTML output path (default: climatebench2_leaderboard.html).",
+    )
+    leaderboard.add_argument(
         "--csv",
         type=Path,
         default=None,
         metavar="FILE",
-        help="Write the scores table as CSV instead of printing it.",
+        help="Write the simple deterministic summary as CSV instead of HTML.",
     )
     leaderboard.set_defaults(func=_cmd_leaderboard)
 

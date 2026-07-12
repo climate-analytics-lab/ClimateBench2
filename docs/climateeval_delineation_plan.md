@@ -1,5 +1,13 @@
 # ClimateBench2 ⟷ ClimateEval — Delineation Plan
 
+> **Status (2026-07-12):** Phases 0–6 implemented, one commit per phase
+> (`git log --oneline --grep "Phase"`). Outstanding: numerical parity
+> spot-checks vs archived `results/` CSVs on a data-connected machine;
+> precip-buoyancy (I.3c); ENSO teleconnection obs references; perfect-model
+> suite wiring (functions landed, CESM-LE data path pending); the
+> `constants.py`/`utils.py`/`benchmark_utils.py` island kept for
+> `paleo_scripts --use-picontrol`.
+
 **Purpose.** Turn ClimateBench2 (CB2) into a *thin protocol layer* that runs on top of
 [ClimateEval](https://github.com/climate-federation/ClimateEval), so CB2 owns only the
 scientific protocol (which tests, which thresholds, how to score) and a leaderboard —

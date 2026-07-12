@@ -31,10 +31,14 @@ pip install -e ../ClimateEval && pip install -e . --no-deps
 ```bash
 # Score a model: point at CMOR-compliant NetCDF output (file, flat dir, or DRS tree)
 climatebench2 score /path/to/model/cmor/Amon --name MyModel
+# Tier I gates need the auxiliary experiments:
+climatebench2 score model/Amon --name MyModel \
+    --experiment picontrol=/path/piControl --experiment 4xco2=/path/abrupt-4xCO2 \
+    --experiment histaer=/path/hist-aer
 # → MyModel_climatebench2/: one DuckDB results database per suite
 
-# Build the leaderboard from one or more models' results
-climatebench2 leaderboard MyModel_climatebench2/*.ddb
+# Build the leaderboard (static HTML) from one or more models' results
+climatebench2 leaderboard MyModel_climatebench2/*.ddb -o leaderboard.html
 ```
 
 Per-model interactive reports remain available through ClimateEval:
@@ -45,30 +49,31 @@ Per-model interactive reports remain available through ClimateEval:
 ```
 climatebench2/           # the installable package
 ├── diags/               # CB2 protocol diagnostics (plug into ClimateEval suites)
-├── suites/              # CB2 suite YAMLs (ClimateEval suite format)
+├── suites/              # CB2 suite YAMLs — Tier I/II/III (see suites/README.md)
 ├── thresholds.yml       # single source of truth for every pass/fail bound
-├── leaderboard/         # scores table / leaderboard renderer
+├── scoring.py           # CRPS-ESS, ensemble-consistency, EOF, proxy, LE-spread engine
+├── physics.py           # pure Tier I physics (numpy only)
+├── baselines.py         # climatology persistence, two-layer EBM × pattern scaling
+├── leaderboard/         # .ddb results → static HTML leaderboard
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 docs/                    # delineation plan, metrics reference
+paleo_scripts/           # Tier III data pipeline (download/process/benchmark)
+tests/                   # engine + diagnostics tests (see tests/README.md)
 ```
 
 ## Status
 
-Phase 0 of the [migration plan](docs/climateeval_delineation_plan.md#6-migration--phased-retire-as-parity):
-the package scaffold is in place and `climatebench2 score` runs stock
-ClimateEval suites. The CB2 tier suites, the probabilistic scoring engine
-(CRPS-with-ESS, ensemble-consistency), and the baselines land in Phases 1–6.
+Phases 0–6 of the [migration plan](docs/climateeval_delineation_plan.md#6-migration--phased-retire-as-parity)
+are implemented: tier suites, the probabilistic scoring engine, the Tier I
+physics gates, baselines, Tier III paleo protocol, and the leaderboard.
+Remaining: numerical parity spot-checks against the archived `results/` CSVs
+and first full data-connected runs; ENSO teleconnection obs-amplitude
+references and the precip-buoyancy check (I.3c) are still open
+(`thresholds.yml` marks every TODO).
 
-## Legacy code (being retired)
+## Legacy remnant
 
-The original bespoke pipeline — `benchmark_scrips/`, `download_scripts/`,
-`constants.py`, `utils.py`, `esmvaltool/`, `paleo_scrips/`, `app_data_prep/` —
-still works (see `CLAUDE.md` for commands) and is deleted piecewise as each
-check reaches parity on the ClimateEval-backed path. Do not add new
-functionality there.
-
-```bash
-# legacy environment, only needed for the legacy scripts
-conda env create -f env.yml
-conda activate backend_env
-```
+`constants.py`, `utils.py` and `benchmark_scrips/benchmark_utils.py`
+(`DataFinder`) remain only because `paleo_scripts/paleo_benchmark.py
+--use-picontrol` imports them; they retire together once the paleo pipeline
+loads piControl via ClimateEval. Do not add new functionality there.

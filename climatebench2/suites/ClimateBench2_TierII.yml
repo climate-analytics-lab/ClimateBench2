@@ -4,12 +4,13 @@
 # against the protocol's observational references, with the CMIP6 historical
 # ensemble carried along as comparison (the MME baseline of the protocol).
 #
-# Phase-1 scope: deterministic metrics only (weighted RMSE/pearson/EMD).
-# The probabilistic scoring layer (CRPS-ESS, ensemble-consistency) wraps
-# these outputs from Phase 2 (delineation plan §6).
+# Scoring: the time-series diagnostics use the CB2 regime-(a) wrappers
+# (CRPS with effective-sample-size correction, plus the pooled CMIP6-MME
+# baseline row); the trend consistency diagnostic applies the regime-(b)
+# ensemble-consistency test to the warming rate (GMST trend et al.).
 
 - name: annual_mean_timeseries
-  diagnostic: climateeval.diags.simple.AnnualMeanTimeSeries
+  diagnostic: climatebench2.diags.ScoredAnnualMeanTimeSeries
   variables: &core_variables
     - id: tas
       var_name: tas
@@ -47,6 +48,10 @@
       reference_data: climateeval.data.ESACCICloud
       other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
 
+- name: trend_consistency
+  diagnostic: climatebench2.diags.TrendConsistency
+  variables: *core_variables
+
 - name: annual_cycle
   diagnostic: climateeval.diags.simple.AnnualCycle
   variables: *core_variables
@@ -62,7 +67,7 @@
 # --- Ocean -----------------------------------------------------------------
 
 - name: sst
-  diagnostic: climateeval.diags.simple.AnnualMeanTimeSeries
+  diagnostic: climatebench2.diags.ScoredAnnualMeanTimeSeries
   variables:
     - &tos
       id: tos

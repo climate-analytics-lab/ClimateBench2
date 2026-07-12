@@ -22,10 +22,18 @@ Every diagnostic subclasses ``climateeval.diags._base.Diagnostic`` (usually via
 from __future__ import annotations
 
 from climatebench2.diags.pass_fail import ECSGate, ENSOGate, GateCheck, GateMixin
+from climatebench2.diags.tier2_scores import (
+    ScoredAnnualMeanTimeSeries,
+    ScoredMonthlyMeanTimeSeries,
+    TrendConsistency,
+)
 
 __all__ = [
     "ECSGate",
     "ENSOGate",
     "GateCheck",
     "GateMixin",
+    "ScoredAnnualMeanTimeSeries",
+    "ScoredMonthlyMeanTimeSeries",
+    "TrendConsistency",
 ]

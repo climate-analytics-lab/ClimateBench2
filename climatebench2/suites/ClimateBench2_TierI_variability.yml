@@ -1,0 +1,14 @@
+# ClimateBench v2 — Tier I: coupled-variability gates (cube-based).
+# Runs on the model's monthly output cubes (piControl per the paper, >= 100
+# yr; the check itself is experiment-agnostic). Split from the complex
+# ClimateBench2_TierI suite because Suite.get_database passes one data
+# object to every diagnostic (cubes here, experiment dict there).
+
+- name: enso_gate                     # I.5a/b — sigma(Nino3.4) + band-power ratio
+  diagnostic: climatebench2.diags.ENSOGate
+  variables:
+    - id: tos_nino34
+      var_name: tos
+      frequency: mon
+      reference_data: climateeval.data.ESACCISST
+      other_data: [climateeval.data.NOAAERSSTv5, climateeval.data.HadISST]

@@ -23,7 +23,6 @@ import pandas as pd
 from scipy import signal
 
 from climateeval.diags._base import DiagnosticOutput
-from climateeval.diags.complex import ECS
 from climateeval.diags.simple import Nino34
 
 from climatebench2._thresholds import get_threshold
@@ -165,11 +164,6 @@ def band_power_ratio(
 # ---------------------------------------------------------------------------
 
 
-def _ecs_checks() -> tuple[GateCheck, ...]:
-    lo, hi = get_threshold("tier1.ecs.range")
-    return (GateCheck(check_id="ecs_gate", column="ecs", lower=lo, upper=hi),)
-
-
 def _enso_checks(column: str) -> tuple[GateCheck, ...]:
     amp_lo, amp_hi = get_threshold("tier1.enso.amplitude_range")
     ratio_min = get_threshold("tier1.enso.band_power_ratio_min")
@@ -188,17 +182,6 @@ def _enso_checks(column: str) -> tuple[GateCheck, ...]:
             lower=ratio_min,
         ),
     )
-
-
-class ECSGate(GateMixin, ECS):
-    """Tier I check I.6c: ECS from Gregory regression within [1, 7] K.
-
-    Runs ClimateEval's ``ECS`` complex diagnostic (abrupt-4xCO2 + piControl,
-    150-yr Gregory regression) unchanged and gates the resulting ECS against
-    ``tier1.ecs.range``.
-    """
-
-    _gate_checks = _ecs_checks()
 
 
 class ENSOGate(GateMixin, Nino34):

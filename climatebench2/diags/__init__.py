@@ -21,7 +21,21 @@ Every diagnostic subclasses ``climateeval.diags._base.Diagnostic`` (usually via
 
 from __future__ import annotations
 
-from climatebench2.diags.pass_fail import ECSGate, ENSOGate, GateCheck, GateMixin
+from climatebench2.diags.pass_fail import ENSOGate, GateCheck, GateMixin
+from climatebench2.diags.tier1_physics import (
+    AerosolForcingGate,
+    ArcticAmplificationGate,
+    BjerknesGate,
+    CB2ComplexDiagnostic,
+    CCScalingGate,
+    ClearSkyFeedbackGate,
+    ClosureGate,
+    ECSGate,
+    EnergyBalanceGate,
+    ITCZEFEGate,
+    LandOceanWarmingGate,
+    MeridionalHeatTransportGate,
+)
 from climatebench2.diags.tier2_scores import (
     ScoredAnnualMeanTimeSeries,
     ScoredMonthlyMeanTimeSeries,
@@ -29,10 +43,21 @@ from climatebench2.diags.tier2_scores import (
 )
 
 __all__ = [
+    "AerosolForcingGate",
+    "ArcticAmplificationGate",
+    "BjerknesGate",
+    "CB2ComplexDiagnostic",
+    "CCScalingGate",
+    "ClearSkyFeedbackGate",
+    "ClosureGate",
     "ECSGate",
     "ENSOGate",
+    "EnergyBalanceGate",
     "GateCheck",
     "GateMixin",
+    "ITCZEFEGate",
+    "LandOceanWarmingGate",
+    "MeridionalHeatTransportGate",
     "ScoredAnnualMeanTimeSeries",
     "ScoredMonthlyMeanTimeSeries",
     "TrendConsistency",

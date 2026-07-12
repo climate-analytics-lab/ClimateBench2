@@ -92,6 +92,12 @@ tier1:
     slope_rel_tolerance: 0.50          # ±50%
     corr_min: 0.9
 
+  # (extra, code-only — pending paper reconciliation, metrics_reference.md #13)
+  bjerknes:
+    corr_max: -0.3                     # decadal AMET-OMET anti-correlation, 40-70N
+  cc_scaling:
+    slope_range: [5.0, 9.0]            # % / K (Held & Soden 2006: 7 ± 2)
+
 tier2:
   # Scoring window and baselines (metrics_reference.md Tier II preamble)
   observation_period_start: 2015

@@ -29,7 +29,11 @@ from typing import Any
 # Heavy climateeval subsystems (ESMValCore/iris/dask, ~5 s to import) are
 # imported lazily inside the command functions, mirroring climateeval's CLI.
 
-DEFAULT_SUITES = ["ClimateBench2_TierI", "ClimateBench2_TierII"]
+DEFAULT_SUITES = [
+    "ClimateBench2_TierI",
+    "ClimateBench2_TierI_variability",
+    "ClimateBench2_TierII",
+]
 DEFAULT_TIMERANGE = "19790101/20141231"
 
 
@@ -48,20 +52,46 @@ def _resolve_suite(name: str) -> str:
     return name
 
 
+def _parse_experiments(specs: list[str] | None) -> dict[str, Path]:
+    """Parse repeated ``--experiment KEY=PATH`` options."""
+    experiments: dict[str, Path] = {}
+    for spec in specs or []:
+        key, sep, path = spec.partition("=")
+        if not sep or not key or not path:
+            msg = f"--experiment expects KEY=PATH, got '{spec}'"
+            raise SystemExit(msg)
+        experiments[key.strip().lower()] = Path(path)
+    return experiments
+
+
 def _cmd_score(args: argparse.Namespace) -> None:
     if not args.model.exists():
         msg = f"Model path not found: {args.model}"
         raise SystemExit(msg)
+    experiment_paths = _parse_experiments(args.experiment)
+    for key, path in experiment_paths.items():
+        if not path.exists():
+            msg = f"Experiment path not found: {key}={path}"
+            raise SystemExit(msg)
 
     print("Loading ClimateEval (this can take a few seconds)…", file=sys.stderr)
     from climateeval._loader import load_cmor_dir
     from climateeval.data import DataSourceInformation
+    from climateeval.diags.complex._base import ComplexDiagnostic
     from climateeval.suites import Suite
 
     cubes = load_cmor_dir(args.model, timerange=args.timerange)
     if not cubes:
         msg = f"No NetCDF data found in {args.model}"
         raise SystemExit(msg)
+
+    # Experiment dict for the complex (Tier I) suites. Experiments are loaded
+    # in full (no timerange cut — piControl/abrupt-4xCO2 need their length);
+    # the model's own cubes serve as "historical" unless overridden.
+    experiments: dict[str, Any] = {"historical": cubes}
+    for key, path in experiment_paths.items():
+        experiments[key] = load_cmor_dir(path)
+        print(f"Loaded experiment '{key}' from {path}", file=sys.stderr)
 
     info = DataSourceInformation(
         name=args.name,
@@ -85,19 +115,35 @@ def _cmd_score(args: argparse.Namespace) -> None:
     db_paths: list[Path] = []
     for suite_name in suite_names:
         resolved = _resolve_suite(suite_name)
-        db_path = out_dir / f"{Path(resolved).stem}.ddb"
-        db_path.unlink(missing_ok=True)
-        Path(str(db_path) + ".wal").unlink(missing_ok=True)
         suite = Suite(
             resolved,
             diagnostic_kwargs=diagnostic_kwargs,
             variable_kwargs={"timerange": args.timerange},
         )
+        # Complex (experiment-based) suites take the experiment dict; simple
+        # suites take the model cubes. Suite.get_database passes one data
+        # object to every diagnostic, so suites are homogeneous by design.
+        needs_experiments = any(
+            isinstance(diag, ComplexDiagnostic)
+            for diag in suite._get_diagnostics().values()
+        )
+        if needs_experiments and not experiment_paths:
+            print(
+                f"Skipping suite '{Path(resolved).stem}': needs --experiment "
+                f"KEY=PATH inputs (e.g. picontrol=DIR, 4xco2=DIR, histaer=DIR)",
+                file=sys.stderr,
+            )
+            continue
+        data = experiments if needs_experiments else cubes
+
+        db_path = out_dir / f"{Path(resolved).stem}.ddb"
+        db_path.unlink(missing_ok=True)
+        Path(str(db_path) + ".wal").unlink(missing_ok=True)
         print(
             f"Running suite '{Path(resolved).stem}' (timerange {args.timerange})",
             file=sys.stderr,
         )
-        suite.get_database(cubes, info, database_resource=f"duckdb://{db_path}")
+        suite.get_database(data, info, database_resource=f"duckdb://{db_path}")
         print(f"Wrote database {db_path}", file=sys.stderr)
         db_paths.append(db_path)
 
@@ -164,6 +210,17 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     score.add_argument("--name", default="model", help="Model name (provenance).")
+    score.add_argument(
+        "--experiment",
+        action="append",
+        metavar="KEY=PATH",
+        help=(
+            "CMOR output of an auxiliary experiment for the Tier I gates; "
+            "repeatable. Keys: picontrol, 4xco2, histaer (historical defaults "
+            "to the MODEL data). Suites needing experiments are skipped if "
+            "none are given."
+        ),
+    )
     score.add_argument(
         "--suite",
         action="append",

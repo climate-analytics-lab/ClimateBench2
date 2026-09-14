@@ -51,7 +51,22 @@ fixed the data paths for a real CMIP6 run: a per-suite registry in `_cli.py` loa
 `historical` experiment in full for the complex suites, feeds the variability suite the
 `picontrol` experiment, scores the Tier II suites over the reserved post-2015 test
 window derived from `tier2.test_window_start`, and ingests several ensemble members
-(`--member`, DRS auto-discovery) into one database per suite. The legacy
+(`--member`, DRS auto-discovery) into one database per suite. **Gap item 5 (work
+package 5)** then brought the three **re-specced Tier I physics** checks to the
+2026-09 paper (`bbf7d43`, `8f8a36a`): I.5c is the pattern-correlation test against
+HadISST/GPCP, I.3c exists at last as `PrecipBuoyancyGate`, and I.7 uses the decadal
+window centred on 2015 with parallel-segment drift removal — so the Tier I suite now
+carries a diagnostic for **every** row of the paper's Table 1, and two of them
+(I.3c, I.5c) fetch observations through ClimateEval DataSources.
+
+**Open ClimateEval PRs (2026-09).** Four upstream PRs are in flight, each
+unblocking something recorded below: **#44** a multi-member historical+SSP2-4.5
+comparison generator (`E_ref` and every Tier II skill number, #10/#13);
+**#45** hist-aer / amip / amip-4xCO2 / PMIP4 DataSource generators (running
+I.4a/b, I.7 and Tier III against archived data rather than submission-supplied
+directories); **#46** accepting `window_length = 1` in `Nino34` (retires CB2's
+`ENSOGate._preprocess` override, I.5a); **#47** sea-ice **extent** (#15). The
+legacy
 `benchmark_scrips/*.py` scripts that earlier revisions of this document audited were
 deleted in migration Phases 1–5; **every status entry below refers to
 `climatebench2/`**, and the only legacy survivors are `constants.py`, `utils.py` and
@@ -104,24 +119,25 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 | I.2b | Atmospheric energy budget | \|⟨Q_rad⟩ − (⟨L·P⟩+⟨SHF⟩)\| < 2 W/m² | Req. | ✅ the paper's arrangement, `Q_rad = sfc_net_rad − TOA_net`; an Earth-like column (LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m²) now closes to ≈ 0 | `ClosureGate`, `physics.atmospheric_energy_residual` |
 | I.3a | Clear-sky LW feedback β = ∂rlutcs/∂Ts | global-mean gridpoint slope within ±25% of 2.2 W/m²/K, historical | Req. | ✅ gridpoint regression of **deseasonalised monthly anomalies** (`anomalies(period="month")`) of `rlutcs` on `ts`, ±25% of 2.2 | `ClearSkyFeedbackGate`, `physics.gridpoint_regression_slope` |
 | I.3b | Midlatitude geostrophic balance | spatial ρ(u, u_g) at 850 hPa daily, 30–60°, > 0.9. **Skipped (N/A) for models with no dynamical representation** | Req. (N/A allowed) | ✅ per spec (daily `ua`/`zg` at 850 hPa, optional `ps` orography mask, pooled 30–60° both hemispheres); N/A now **declarable** (`score --not-applicable geostrophic_balance` → `applicable = 0`); untested on real daily data | `diags.tier1_extended.GeostrophicBalanceGate` |
-| I.3c | Tropical precipitation–buoyancy | monthly P′ vs column-MSE′ slope, 20S–20N, ±30% of GPCP/ERA5 | Req. | ❌ missing — the legacy log(pr)-vs-prw proxy was retired with the scripts and nothing replaced it | — |
+| I.3c | Tropical precipitation–buoyancy | monthly P′ vs column-MSE′ slope, 20S–20N, ±30% of GPCP/ERA5 | Req. | ✅ new gate: ∫(c_p·ta + g·zg + L_v·hus) dp/g over the available `plev`, monthly anomalies over 20S–20N, pooled slope, gated at ±30% of the GPCP/ERA5 slope (computed at run time, else the stored `reference_slope` — **null until Duncan pins it**, in which case the model slope is reported without a gate row) | `diags.tier1_extended.PrecipBuoyancyGate`, `physics.moist_static_energy` / `mass_weighted_column_integral` / `pooled_regression_slope` |
 | I.4a | GFMIP SST patch experiments | Δλ = ΔR_EP/ΔTs_EP − ΔR_WP/ΔTs_WP > 0.5 W/m²/K — **Extended** | Ext. | ✅ per spec; needs submission-provided `amip`/`patch_ep`/`patch_wp`; tagged `requirement: extended`, so it is reported for credit but outside the entry ticket | `GFMIPPatchGate` |
 | I.4b | amip-4xCO2 ERF | 6.5–9.0 W/m² | Req. | ✅ (TOA-net difference amip-4xCO2 − amip; no land-warming correction, none asked) | `Amip4xCO2ERFGate` |
-| I.5a | ENSO amplitude | σ(Niño-3.4) ∈ [0.5, 1.4] K | Req. | ✅ σ of the **unsmoothed** deseasonalised monthly index (`ENSOGate._rolling_window_length = 1`), now computed on the **piControl experiment in full** (`--experiment picontrol=DIR`; the CLI warns loudly and falls back to the submission's own output if none is given) | `diags.pass_fail.ENSOGate` |
+| I.5a | ENSO amplitude | σ(Niño-3.4) ∈ [0.5, 1.4] K | Req. | ✅ σ of the **unsmoothed** deseasonalised monthly index (`ENSOGate._rolling_window_length = 1`), computed on the **piControl experiment in full** (confirmed 2026-09-14: `_cli.SUITE_REGISTRY` gives `ClimateBench2_TierI_variability` `source="picontrol"`, `window="full"`; the CLI warns loudly and falls back to the submission's own output if none is given). Remaining note: the unsmoothed index relies on CB2's `_preprocess` override until **ClimateEval PR #46** merges | `diags.pass_fail.ENSOGate` |
 | I.5b | ENSO spectrum | power(2–7 yr)/power(1–2 yr) > 1.5 | Req. | ✅ Welch PSD **integrated** over each band (`np.trapezoid`), so 1.5 means what the paper says (white noise now scores ≈ 0.71, not ≈ 1.0) | `pass_fail.band_power_ratio` |
-| I.5c | ENSO teleconnections | gridpoint regression of `ts` and `pr` on standardized Niño-3.4, 30S–30N; centred spatial correlation of modelled vs observed regression patterns > 0.7 (R² > 0.5), vs HadISST/ERA5 and GPCP | Req. | 🟡 implements the **superseded** scalar criterion (tropical ta500 regression > 0, Maritime-Continent pr < 0, sign only, no observations) | `diags.tier1_extended.ENSOTeleconnectionsGate` |
+| I.5c | ENSO teleconnections | gridpoint regression of `ts` and `pr` on standardized Niño-3.4, 30S–30N; centred spatial correlation of modelled vs observed regression patterns > 0.7 (R² > 0.5), vs HadISST/ERA5 and GPCP | Req. | ✅ the paper's pattern test: standardised unsmoothed piControl index, per-gridpoint regression of monthly `ts`/`pr` anomalies over 30S–30N, the same for HadISST `tos` + GPCP `pr` over 1979–2014, centred cos-weighted pattern correlation gated at 0.7 — rows `enso_teleconnection_ts`, `enso_teleconnection_pr`. No observations reachable → model pattern summary, logged reason, no gate row | `diags.tier1_extended.ENSOTeleconnectionsGate`, `physics.banded_pattern_correlation` |
 | I.5d | MJO Wheeler–Kiladis | east/west power ratio (k=1–3, 30–90 d) > 1.5 — **Extended** | Ext. | ✅ (2-D FFT east/west ratio, k = 1–3, 30–90 d, ±15°, daily `pr`); tagged `requirement: extended` — reported, outside the entry ticket | `MJOGate`, `physics.mjo_east_west_ratio` |
 | I.6a | Land–ocean warming ratio | ratio ∈ [1.2, 1.6] (**strict** — resolved 2026-09); a4x last 50 yr | Req. | ✅ one strict-range gate row `land_ocean_warming`; thin wrapper over `climateeval.diags.complex.LandOceanWarmingRatio` (⬆ done) | `LandOceanWarmingGate` |
 | I.6b | Arctic amplification | (ΔT>66.5N)/(ΔT global) ≥ 1.5; a4x last 50 yr | Req. | ✅ thin wrapper over `climateeval.diags.complex.ArcticAmplification` (⬆ done) | `ArcticAmplificationGate` |
 | I.6c | ECS (Gregory, 150 yr) | ∈ [1, 7] K | Req. | ✅ gate wrapper over ClimateEval's `ECS` (the template for the ⬆ rows) | `ECSGate` |
-| I.7 | Aerosol forcing (hist-aer) | 2015 aerosol ERF ∈ [−2.0, −0.5] W/m²; ΔT(2015) < 0 — **Required** (promoted from Extended) | Req. | 🟡 ERF = ΔN − λ_Gregory·ΔT ✓, range ✓, cooling ✓; but "2015" = mean of the **last 30 yr** of hist-aer (paper: decadal mean centred on 2015) and anomalies vs the piControl long-term mean — **no parallel-segment drift removal** (paper App. B.8) | `AerosolForcingGate`, `physics.aerosol_erf` |
+| I.7 | Aerosol forcing (hist-aer) | 2015 aerosol ERF ∈ [−2.0, −0.5] W/m²; ΔT(2015) < 0 — **Required** (promoted from Extended) | Req. | ✅ ERF = ΔN − λ_Gregory·ΔT, range, cooling; "2015" is now the **decadal mean** `tier1.aerosol_forcing.window` = 2010–2019, slid back (keeping its length) to the end of a hist-aer record that stops in 2014 and emitted as `window_first/last_year`; drift removed with the **parallel piControl segment** from `branch_time_in_parent`/`parent_time_units`, falling back to the long-term mean with a warning (`parallel_segment` flag) | `AerosolForcingGate`, `physics.aerosol_erf` / `clip_window_to_record` / `parallel_control_window` |
 | I.8a | Meridional heat transport | OMET peak 1.5–2.0 PW near 15–20°; AMET peak 4–5 PW near ~45° | Req. | ✅ thresholds per paper (15–20°, 45 ± 5°); thin wrapper over `climateeval.diags.complex.MeridionalHeatTransport`, search bands from `thresholds.yml` (⬆ done) | `MeridionalHeatTransportGate` |
 | I.8b | ITCZ–EFE relationship | 12-month climatology; slope within ±50% of ~3°/PW; r > 0.9 | Req. | ✅ 12-month climatology, slope ±50% of 3°/PW, \|r\| > 0.9; the hard-coded-1980 bug is gone | `ITCZEFEGate`, `physics.itcz_efe_regression` |
 | (extra) | Bjerknes compensation 40–70N | not in paper's Tier I list as specced | extra | ✅ vs its own spec; tagged `requirement: extra` and **excluded from the entry ticket** (fixed 2026-09-14, gap item 2) | `BjerknesGate` |
 | (extra) | Clausius–Clapeyron scaling | not in paper's Tier I list as specced | extra | ✅ vs its own spec; tagged `requirement: extra`, excluded from the entry ticket | `CCScalingGate` |
 
-**Wiring (updated 2026-09-14, gap item 2).** The 16 experiment-based gates plus the two
-extras live in `climatebench2/suites/ClimateBench2_TierI.yml` (16 gate entries, plus
+**Wiring (updated 2026-09-14, gap items 2 and 5).** The experiment-based gates plus the
+two extras live in `climatebench2/suites/ClimateBench2_TierI.yml` (17 gate entries
+since I.3c's `precip_buoyancy` joined them, plus
 the non-gating `internal_variability` σ_int diagnostic of Tier II, which rides there
 because that is where the piControl experiment is loaded in full) and run from
 one experiment dict; ENSO amplitude/spectrum run on cubes in
@@ -141,7 +157,21 @@ check has no row at all (the full Required set comes from the gate classes'
 `_gate_checks` via `pass_fail.gate_requirements`, so a gate that never ran is visible as
 a hole rather than silently ignored), and ✗ as soon as an applicable Required check
 fails. Neither daily-data gate (I.3b, I.5d) nor the fixed-SST gates (I.4a/b) has been
-exercised on real CMIP6 output yet; only the unit tests (synthetic cubes) cover them.
+exercised on real CMIP6 output yet; only the unit tests (synthetic cubes) cover them,
+and the same is true of the two observation-fed gates added in work package 5 (I.3c,
+I.5c), whose reference branch has never been run against real GPCP/HadISST/ERA5 files.
+
+**Observations inside Tier I (new, gap item 5).** I.3c and I.5c are the only Tier I
+checks that compare against *data* rather than a constant, and they take that data the
+way the rest of CB2 does — a ClimateEval DataSource, a `Variable` carrying a
+`timerange`, `download_missing_data` from the CLI. Their windows
+(`tier1.precip_buoyancy.obs_window`, `tier1.enso.teleconnection_obs_window`, both
+1979–2014) start where GPCP does and stop before the reserved post-2015 test period, so
+Tier I never sees the Tier II target. Both degrade identically when the products cannot
+be fetched and `fail_on_missing_data` is False (the CLI default): the model's own
+statistic is written to `raw_output`, the reason is logged, and **no gate row** is
+emitted — which the leaderboard renders as "—" and the entry ticket as ⚠ incomplete,
+never as a pass.
 
 ---
 
@@ -352,19 +382,42 @@ integral; requires `ta`, `zg`/`hus` profiles or a column proxy). Compare the slo
 same regression computed from GPCP precipitation and ERA5 column MSE.
 **Pass: model slope within ±30% of the observed slope.**
 
-**Status: ❌ missing.** No diagnostic; the retired script's climatological
-log(pr)-vs-`prw` spatial fit was not carried over (it was not the paper's statistic).
-What is needed: a `CB2ComplexDiagnostic` on the `historical` key that (i) builds the
-mass-weighted column integral of `c_p·ta + g·zg + L_v·hus` from monthly pressure-level
-data (all three are in ClimateEval's registry with an `alevel` coordinate;
-`esmvalcore.preprocessor.extract_levels` + a numpy trapezoid over `plev`), (ii) forms
-monthly anomalies of P and ⟨h⟩ over 20S–20N and pools a regression over time and space,
-and (iii) compares to an **observational reference slope** from GPCP
-(`climateeval.data.GPCP`) and ERA5 pressure-level `ta`/`hus`/`zg`
-(`climateeval.data.ERA5Monthly` supports these). Compute the reference slope once and
-store it as `tier1.precip_buoyancy.reference_slope` in `thresholds.yml`, as is already
-done for the 2.2 W/m²/K clear-sky value, rather than re-deriving it per run.
-`tier1.precip_buoyancy.rel_tolerance_vs_obs = 0.30` is already present.
+**Status: ✅ (2026-09-14, gap item 5)** —
+`diags/tier1_extended.py::PrecipBuoyancyGate` (`historical` key,
+`requirement: required`, suite entry `precip_buoyancy`).
+- ✅ **Column MSE.** `ta`, `zg` and `hus` (all three in ClimateEval's registry with an
+  `alevel` coordinate) are regridded to 2°, cut to 20S–20N, put on their *common*
+  pressure levels with `esmvalcore.preprocessor.extract_levels`, combined into
+  `h = c_p·ta + g·zg + L_v·hus` (`physics.moist_static_energy`; `c_p`, `R_d` and the
+  virtual-temperature factor join `L_v` and `g` as module constants) and integrated
+  with `physics.mass_weighted_column_integral` (`np.trapezoid` over `plev`, ÷ g). The
+  integral spans only the levels the monthly Amon data carry (`plev19`), so it is a
+  *partial* column — which is why the reference must be truncated the same way.
+- ✅ **The statistic.** Monthly anomalies of ⟨h⟩ (`physics.deseasonalised_anomalies`,
+  the numpy counterpart of `anomalies(period="month")` for a field CB2 derives itself
+  and never holds as a cube) and of `pr` (the ESMValCore preprocessor, on the cube),
+  then `physics.pooled_regression_slope` over time *and* space. Units: mm day⁻¹ per
+  MJ m⁻², so the number is O(0.1–1) instead of O(1e-7); the gate is a ratio, so the
+  scaling cancels. No cos-weighting inside the pool — over 20S–20N the weight varies
+  between 0.94 and 1.
+- 🟡 **The reference slope.** `_observed_slope` computes the same statistic from GPCP
+  `pr` and ERA5 `ta`/`hus`/`zg` over `tier1.precip_buoyancy.obs_window` = 1979–2014
+  when those data are obtainable, and falls back to the stored
+  `tier1.precip_buoyancy.reference_slope` — **null, TODO(Duncan)**: pin it once the
+  reference has been computed once, as was done for the 2.2 W/m²/K clear-sky constant.
+  With neither available the model slope is emitted and no gate row is written.
+- ⚠ **Upstream gap.** `climateeval.data.ERA5.VARIABLE_MAPPING` has `ta` and `hus` but
+  **no `zg`** (no `geopotential` entry), so the reference column falls back to a
+  hydrostatic geopotential integrated from ERA5 `ta`/`hus`
+  (`physics.hydrostatic_height`). This is defensible for *anomalies* — the missing
+  surface term is constant in time — but adding `zg` to ERA5 upstream would remove the
+  approximation. The fallback is logged when it happens.
+- Gate row `precip_buoyancy` on `|slope_model/slope_ref − 1| ≤
+  `rel_tolerance_vs_obs` = 0.30`; `precip_buoyancy_slope`,
+  `precip_buoyancy_slope_ref` and `precip_buoyancy_reference_from_obs` are emitted.
+- Tested on synthetic cubes with a column whose MSE anomaly is known analytically and
+  a `pr` field that responds differently outside 25S–25N, so a gate that forgot the
+  tropical band would fail.
 
 ```python
 h_col = column_integral(cp*ta + g*zg + Lv*hus)               # J/m2, monthly
@@ -450,12 +503,15 @@ diagnostic with `_rolling_window_length = 1`: regrid to 2°, `extract_region`
 190–240°E × 5S–5N, `anomalies(period="month")`, area mean — i.e. the paper's
 *unsmoothed* monthly anomalies, without the operational ONI 3-month running mean.
 (iris refuses a rolling window shorter than two points, so `ENSOGate._preprocess`
-reproduces the upstream chain minus that one step; upstream-PR candidate: accept
-`window_length = 1` as a no-op, after which only the ClassVar is needed.) It runs in `ClimateBench2_TierI_variability.yml` on
+reproduces the upstream chain minus that one step; **ClimateEval PR #46** makes
+`window_length = 1` a no-op upstream, and once it merges the override goes and only the
+ClassVar is needed — the code comment names the PR.) It runs in
+`ClimateBench2_TierI_variability.yml` on
 the model's monthly `tos` cubes (variable id `tos_nino34`) with ESACCI-SST as reference
 and ERSSTv5/HadISST as additional data — the gate is applied to the observational series
 too, which sanity-checks the thresholds. `ENSOTeleconnectionsGate` recomputes the same
-index inside a complex diagnostic on the `picontrol` key.
+unsmoothed index inside a complex diagnostic on the `picontrol` key and **standardises**
+it (I.5c regresses per σ of Niño-3.4).
 
 **(a) Amplitude.**
 - Spec: **σ(Niño-3.4) ∈ [0.5, 1.4] K**.
@@ -467,8 +523,15 @@ index inside a complex diagnostic on the `picontrol` key.
   the Tier II cubes, so the ≥ 100 yr control the paper specifies is what is gated —
   with a loud warning and a fallback to the submission's own output when no
   `--experiment picontrol=DIR` is given (the observational reference series are
-  unaffected: no timerange is applied to this suite).
-- Status: ✅ statistic, ✅ input record.
+  unaffected: no timerange is applied to this suite). Re-confirmed 2026-09-14 with
+  work package 5: `_cli.SUITE_REGISTRY["ClimateBench2_TierI_variability"]` is
+  `SuiteSpec(shape="cubes", source="picontrol", window="full")`, and
+  `tests/test_suites.py::test_suite_registry_matches_the_actual_diagnostics` keeps the
+  registry honest about the suite's data shape.
+- Status: ✅ statistic, ✅ input record. One note remains: the unsmoothed index needs
+  CB2's `ENSOGate._preprocess` override until **ClimateEval PR #46**
+  (https://github.com/climate-federation/ClimateEval/pull/46) merges, after which the
+  `_rolling_window_length = 1` ClassVar alone suffices.
 
 **(b) Spectral shape.**
 - Spec: **ratio of spectral power in the 2–7 yr band to the 1–2 yr band > 1.5**.
@@ -500,23 +563,38 @@ single statistic and avoids two ad-hoc regional indices.
   evaluated against **HadISST/ERA5** (temperature) and **GPCP** (precipitation).
 - Extratropical teleconnections (e.g. PNA) are explicitly **not** used as pass/fail
   criteria — poorly constrained even in long ensembles (Deser et al. 2017).
-- Code: `ENSOTeleconnectionsGate` still implements the **superseded** criterion —
-  `physics.regression_on_index` of the tropical-mean (30S–30N) **`ta` at 500 hPa**
-  anomaly and of the Maritime-Continent (90–150E, 10S–10N) `pr` anomaly on the raw
-  (un-standardised) index, gated **sign-only** (`teleconnection_t_min = 0`,
-  `teleconnection_pr_max = 0`); the factor-2 references
-  (`teleconnection_reference_t/pr`) are `null` and were never wired. No observations
-  enter.
-- Rewrite plan: (1) standardise the index and regress monthly `ts` and `pr` anomalies
-  on it at every 2° grid point over 30S–30N (`physics.gridpoint_regression_slope`
-  already does the per-point OLS); (2) the same for the references — HadISST (or ERA5
-  `ts`) and GPCP over the satellite era — computed once and cached, or pulled as
-  reference DataSources inside the complex diagnostic; (3) centred cos-weighted pattern
-  correlation (`physics.midlatitude_pattern_correlation` generalised to an arbitrary
-  band) gated at a new `tier1.enso.teleconnection_pattern_corr_min = 0.7`, one row per
-  field. Retire `teleconnection_obs_factor`, `teleconnection_t_min`,
-  `teleconnection_pr_max`, `teleconnection_reference_*` from `thresholds.yml`.
-- Status: 🟡 (implements the old spec).
+- Code (rewritten 2026-09-14, gap item 5): `ENSOTeleconnectionsGate` (`picontrol`)
+  1. builds the **standardised** unsmoothed Niño-3.4 index from the model's `tos`
+     (`physics.standardised`; same box and deseasonalisation as I.5a);
+  2. regresses monthly anomalies of `ts` and of `pr` on it at every 2° grid point over
+     30S–30N (`physics.gridpoint_regression_slope`, the index broadcast over the map);
+  3. does the same for the observations, and scores each field with
+     `physics.banded_pattern_correlation` — the centred, cos-weighted correlation of
+     the two patterns, generalised from `midlatitude_pattern_correlation` to an
+     arbitrary latitude band (which is now a one-line wrapper over it, so I.3b is
+     unchanged) — gated at
+     `tier1.enso.teleconnection_pattern_corr_min = 0.7`. Rows
+     `enso_teleconnection_ts` and `enso_teleconnection_pr`; the model's own
+     `ts_pattern_rms`, `pr_pattern_rms`, `nino34_std` and the obs window used
+     (`teleconnection_obs_first/last_year`) are emitted alongside.
+- **Observational products.** *Temperature*: **HadISST** `tos` — the paper offers
+  HadISST *or* ERA5, and ClimateEval's `ERA5.VARIABLE_MAPPING` has no `ts`/skin
+  temperature (an upstream gap; `tas` is available but is a different field). HadISST
+  is SST-only, so its regression pattern is missing over land; the pattern correlation
+  drops non-finite pairs, which masks the model's `ts` to exactly the same ocean
+  points — the "mask land consistently in model and obs" the criterion needs, with no
+  separate land mask. *Precipitation*: **GPCP** `pr`. The **observed index is taken
+  from HadISST**, so both observed patterns are regressed on one index (GPCP carries
+  no SST), and the two products are aligned on their common (year, month) steps.
+  Window: `tier1.enso.teleconnection_obs_window` = 1979–2014.
+- **Model window.** The model patterns come from the piControl control run, the
+  observed ones from the satellite era: a pattern correlation is scale-free and ENSO
+  teleconnections are an internal-variability property, so the two need not be
+  contemporaneous (they cannot be — piControl has no calendar in common with 1979).
+- The four stale keys (`teleconnection_obs_factor`, `teleconnection_t_min`,
+  `teleconnection_pr_max`, `teleconnection_reference_t/pr`) are **gone** from
+  `thresholds.yml`.
+- Status: ✅.
 
 ```python
 n34 = (nino34 - nino34.mean()) / nino34.std()              # standardized index
@@ -529,8 +607,9 @@ for mod_f, obs_f in [(ts_model, ts_obs), (pr_model, pr_obs)]:
 ```
 
 Output: `metrics` rows `enso_amplitude`, `enso_spectral_ratio` (variability suite) and
-`enso_teleconnection_t`, `enso_teleconnection_pr` (Tier I suite), each with
-`value`/`passes`.
+`enso_teleconnection_ts`, `enso_teleconnection_pr` (Tier I suite), each with
+`value`/`passes`. The two teleconnection rows are absent — not failed — when the
+observational products cannot be fetched and `fail_on_missing_data` is False.
 
 ### I.5d MJO (Wheeler–Kiladis)
 
@@ -672,31 +751,45 @@ the model's own abrupt-4xCO2 Gregory regression (unit efficacy), ΔN and ΔT as 
 piControl segment** before forming anomalies. Online double-call or fixed-SST ERF
 estimates are preferred where a model provides them (extended output).
 
-**Status: 🟡** — `diags/tier1_physics.py::AerosolForcingGate` (`picontrol`, `4xco2`,
-`histaer` keys):
+**Status: ✅ (2026-09-14, gap item 5)** — `diags/tier1_physics.py::AerosolForcingGate`
+(`picontrol`, `4xco2`, `histaer` keys):
 - ✅ λ from a fresh 150-yr Gregory regression of the a4x run
   (`physics.gregory_regression`, `tier1.ecs.n_years`); `ERF = ΔN − λ·ΔT`
   (`physics.aerosol_erf`) — the correct form for the negative Gregory slope; gate rows
   `aerosol_erf` at `tier1.aerosol_forcing.erf_range = [−2.0, −0.5]` and
-  `aerosol_cooling` (`delta_t_end < 0`); `lambda_4x` emitted.
-- 🟡 "2015" is the mean over the **last 30 yr** of whatever hist-aer record is supplied
-  (`_end_period_years = 30`, a class constant not in `thresholds.yml`). The paper now
-  asks for a **decadal mean centred on 2015** — decide the window for records ending in
-  2014 (DAMIP hist-aer ends 2014 or 2020 depending on the model) and encode it as
-  `tier1.aerosol_forcing.window_years`.
-- 🟡 Anomalies are relative to the piControl **long-term mean**; App. B.8 requires the
-  **parallel piControl segment** (branch-time aligned) to remove drift. That needs the
-  `branch_time_in_parent` attribute and a segment selector — a small ClimateEval-side
-  helper would be the natural home, since `ECS` has the same need.
+  `aerosol_cooling` (`delta_t_end < 0`); `lambda_4x`, `delta_n_end` emitted.
+- ✅ **The decadal window.** `tier1.aerosol_forcing.window = [2010, 2019]` (the class
+  constant `_end_period_years = 30` is gone). DAMIP `hist-aer` ends in 2014 for many
+  models, so `physics.clip_window_to_record` keeps the window's *length* and slides it
+  back to the end of the record supplied (1850–2014 → 2005–2014); a record shorter
+  than the window is used whole. The clip is logged as a warning and the window
+  actually used is emitted as `window_first_year` / `window_last_year`.
+- ✅ **Parallel-segment drift removal.** The hist-aer cubes' CMIP6
+  `branch_time_in_parent` / `parent_time_units` attributes give the piControl calendar
+  year the run branched from (decoded with `cf_units.Unit`, on the child's own
+  calendar); `physics.parallel_control_window` maps the evaluation window onto the
+  concurrent control years and the anomalies are taken against *that* segment's means.
+  When the branch metadata is absent, or the implied segment falls outside the control
+  record, the long-term mean is used with a warning. Which one was used is emitted as
+  `parallel_segment` (1/0). *Attribute survival (checked against ClimateEval `main`):*
+  `load_cmor_dir` runs `equalise_attributes` over the time-split files of **one
+  variable**, which drops only attributes that differ between them (`creation_date`,
+  `tracking_id`) — the run-level branch attributes are identical across a run's files
+  and survive, and `get_prepared_cube` copies the cube rather than rebuilding it.
 - ⚠ Paper sign nit (for the manuscript, not the code): App. B.8 writes
   `F_aer = ΔN + λΔT`, which is correct only if λ denotes the positive feedback magnitude.
   With λ = the Gregory slope (negative, as the same sentence says) the correct form is
-  `F = ΔN − λΔT`, which is what the code does.
+  `F = ΔN − λΔT`, which is what the code does. **Still open, paper-side.**
+- Not done here: an **online double-call or fixed-SST** aerosol ERF, which App. B.8
+  prefers where a model provides it (extended output). CB2 has no key for such a run.
 
 ```python
 lam = gregory(a4x_dT, a4x_dN).slope                       # W/m2/K from abrupt-4xCO2 (negative)
-dT_end = (histaer_gmean_tas_annual - pi_parallel_tas)[2010:2020].mean()   # code: last 30 yr, pi long-term mean
-dN_end = (histaer_gmean_N_annual  - pi_parallel_N  )[2010:2020].mean()
+first, last = clip_window(2010, 2019, histaer_years)      # -> 2005-2014 for a run ending 2014
+pi_seg = parallel_control_window((first, last),           # branch_time_in_parent
+                                 branch_year, histaer_years[0])
+dT_end = histaer_gmean_tas_annual[first:last].mean() - pi_tas[pi_seg].mean()
+dN_end = histaer_gmean_N_annual[first:last].mean()   - pi_N[pi_seg].mean()
 ERF = dN_end - lam * dT_end
 passes = (dT_end < 0) and (-2.0 <= ERF <= -0.5)
 ```
@@ -1571,7 +1664,7 @@ as on data.
 
 | Tier | Specced diagnostics | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|
-| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras; all tagged Required / Extended / extra, entry ticket over the Required group only | 15 — I.1, I.2a, I.2b, I.3a, I.3b, I.4a, I.4b, I.5a, I.5b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 2 — I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
+| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras; all tagged Required / Extended / extra, entry ticket over the Required group only | **18 — every Table-1 row**: I.1, I.2a, I.2b, I.3a, I.3b, **I.3c**, I.4a, I.4b, I.5a, I.5b, **I.5c**, I.5d, I.6a, I.6b, I.6c, **I.7**, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 0 | 0 — but six gates (I.3b, I.3c, I.4a, I.4b, I.5c, I.5d) have only ever run on synthetic cubes, I.3c's stored reference slope is null, and I.5c has no ERA5 temperature reference upstream |
 | II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | **fair CRPS with the M = 1 rule; member stacking by model name; ESS correction; moving-block bootstrap; observational-uncertainty draws with a real σ_obs; CMIP6-median `E_ref` with leave-one-out; regime (b) as fair CRPS on the reference's fixed pre-2015 EOF basis; σ_int from piControl chunks in the consistency test; the reference's pre-test record carried past the test-window cut; one label per model across the tiers; the skill table in the leaderboard**; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval | climatology baseline scored as a distribution (CB2 interpretation, ⚠) and only for regime (a); every σ_obs value a provisional protocol constant, no observational error field (⚠); the regime-(b) bootstrap axis and the model-anomaly definition are CB2 readings (⚠); Gaussian consistency null, trend only; sign-only Pinatubo & hemispheric asymmetry; TXx reference still a monthly placeholder; sea-ice area not extent | realized warming level & blending; the 1950-start trend row; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; a regime-(b) climatology baseline; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval) — without it `E_ref` and every skill number stay empty** |
 | III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | monsoon gate | site-consistency fraction for the three periods — disconnected from the pipeline's NetCDFs, tas-only, DA products instead of raw proxies; LE-spread functions | fair CRPS with block pseudo-members; raw SST proxy compilations; perfect-model suite and data |
 
@@ -1590,18 +1683,29 @@ as on data.
    2026-09-14:** the unsmoothed monthly index (`_rolling_window_length = 1`, gap item 1)
    *and* the right record — the CLI's suite registry feeds
    `ClimateBench2_TierI_variability` the `picontrol` experiment in full (gap item 4),
-   with a warning and a fallback to the submission's own output when none is given.
+   re-confirmed with gap item 5. *Residual:* the unsmoothed index needs CB2's
+   `ENSOGate._preprocess` override until **ClimateEval PR #46** merges.
 5. ~~I.5b band-power ratio uses mean PSD per band~~ — **DONE (2026-09-14):** integrated
    power (`np.trapezoid`) per band, so the 1.5 bound means what the paper says.
-6. I.5c implements the superseded scalar criterion (ta500 / Maritime-Continent sign
+6. ~~I.5c implements the superseded scalar criterion (ta500 / Maritime-Continent sign
    checks); the pattern-correlation test and its HadISST/ERA5/GPCP reference patterns do
-   not exist; four stale keys in `thresholds.yml`.
+   not exist; four stale keys in `thresholds.yml`.~~ **DONE (2026-09-14, gap item 5,
+   `8f8a36a`):** the standardised-index gridpoint regression over 30S–30N, the
+   HadISST/GPCP reference patterns, the centred cos-weighted pattern correlation gated
+   at 0.7 with one row per field, and the four stale keys deleted. *Open:* ClimateEval
+   exposes no ERA5 `ts`, so the temperature reference is HadISST alone (SST-only, land
+   masked pairwise), and the reference branch has never run against real files.
 7. ~~I.6a emits both the `> 1` and the `[1.2, 1.6]` checks~~ — **DONE (2026-09-14, gap
    item 0):** one strict-range check `land_ocean_warming` on
    `tier1.land_ocean_warming.range`; `required_min`/`expected_range` removed.
-8. I.7 "2015" = last-30-yr mean (paper: decadal mean centred on 2015); no parallel-segment
-   drift removal. Paper-side: App. B.8 writes `F = ΔN + λΔT` with a negative Gregory λ —
-   sign should read `ΔN − λΔT` (code is right).
+8. ~~I.7 "2015" = last-30-yr mean (paper: decadal mean centred on 2015); no
+   parallel-segment drift removal.~~ **DONE (2026-09-14, gap item 5, `8f8a36a`):**
+   `tier1.aerosol_forcing.window = [2010, 2019]`, clipped to the hist-aer record with a
+   warning and emitted; drift removed with the branch-time-aligned piControl segment,
+   with the long-term mean as a logged fallback and a `parallel_segment` flag.
+   *Still open, paper-side:* App. B.8 writes `F = ΔN + λΔT` with a negative Gregory λ —
+   sign should read `ΔN − λΔT` (code is right). *Also not done:* the online
+   double-call / fixed-SST aerosol ERF App. B.8 prefers where a model provides it.
 9. ~~**Fair vs empirical CRPS** — `scoring.crps_ensemble` uses the `M²` spread
    normalisation; M = 1 falls through to |x − y| instead of being undefined.~~
    **DONE (2026-09-14, gap item 3, `a4c5948`):** `scoring.crps_fair` normalises the
@@ -1793,12 +1897,34 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    (historical + ssp245 concatenation, `ensemble: "r*i1p1f1"`, open-ended timerange) in
    ClimateEval — until it lands the CMIP6 comparison rows for the test window are empty
    and the CLI says so, so Tier II numbers are only interpretable in-sample.
-5. **Re-specced Tier I physics**: I.5c pattern-correlation teleconnections with
-   HadISST/ERA5/GPCP reference patterns (#6); I.3c precip–buoyancy (new, with a stored
-   GPCP/ERA5 reference slope); I.7 decadal window and parallel-segment drift removal
-   (#8, helper *upstream* next to `ECS`); I.3a monthly anomalies (#3); I.5a on the
-   piControl experiment (#4). Exercise I.3b/I.5d/I.4a/b on real daily and fixed-SST
-   output.
+5. **Re-specced Tier I physics** — **DONE 2026-09-14 (`bbf7d43` + `8f8a36a`,
+   work package 5).**
+   - **I.5c** (#6) is the paper's pattern test: standardised unsmoothed piControl
+     Niño-3.4, per-gridpoint regression of monthly `ts`/`pr` anomalies over 30S–30N,
+     the same for HadISST `tos` + GPCP `pr` over
+     `tier1.enso.teleconnection_obs_window` = 1979–2014 (the observed index taken from
+     HadISST so both observed patterns share one), centred cos-weighted pattern
+     correlation (`physics.banded_pattern_correlation`) gated at the new
+     `teleconnection_pattern_corr_min = 0.7` — rows `enso_teleconnection_ts` /
+     `enso_teleconnection_pr`; the four stale keys are gone.
+   - **I.3c** is new: `PrecipBuoyancyGate` in the Tier I suite — the mass-weighted
+     column integral of `c_p·ta + g·zg + L_v·hus` over the available `plev`, monthly
+     anomalies of P and ⟨h⟩ over 20S–20N, pooled slope (mm day⁻¹ per MJ m⁻²), gated at
+     ±30% of the GPCP/ERA5 slope computed at run time or of the stored
+     `tier1.precip_buoyancy.reference_slope`.
+   - **I.7** (#8) uses `tier1.aerosol_forcing.window` = 2010–2019, clipped to the
+     hist-aer record and reported, and removes drift with the branch-time-aligned
+     piControl segment (long-term mean as a logged fallback). The segment selector
+     lives in `physics` for now; it is still the natural *upstream* helper next to
+     `ECS`, which has the same need.
+   - **I.3a** (#3) and **I.5a** (#4) were already done in gap items 1 and 4; I.5a's
+     piControl input was re-confirmed here.
+
+   *Still open here:* pin `tier1.precip_buoyancy.reference_slope` (TODO(Duncan)); add
+   `zg` (and `ts`) to ClimateEval's ERA5 mapping so I.3c's reference column needs no
+   hydrostatic fallback and I.5c can use ERA5 for temperature; exercise
+   I.3b/I.5d/I.4a/b — and now the I.3c/I.5c observational branches — on real daily,
+   fixed-SST and satellite data.
 6. **Tier II missing diagnostics**: realized warming level + 1950-start trend +
    blending; the ETCCDI set and Perkins score on a 1° conservative grid; sea-ice extent
    (*upstream* variant of `SeaIceArea*`, #15); seasonal-cycle triplet and the SST–CRE

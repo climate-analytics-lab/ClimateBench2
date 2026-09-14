@@ -141,7 +141,15 @@ CRPS), the realized-warming-level statistic, the pattern-scaling baseline, and
 wiring Tier III to the paleo pipeline's NetCDF outputs. Every σ_obs value in
 `thresholds.yml` is provisional and needs Duncan's ruling.
 Required/Extended/extra tagging of the Tier I gates, declared N/A and the
-Required-only entry ticket landed on 2026-09-14 (gap item 2). ClimateEval is pinned at `b0e941c`, which provides the
+Required-only entry ticket landed on 2026-09-14 (gap item 2). The same day
+(gap item 5) the three re-specced Tier I checks landed: I.5c is now the paper's
+pattern-correlation test against HadISST/GPCP, I.3c (precipitation–buoyancy)
+exists at last, and I.7 uses the decadal window centred on 2015 with
+parallel-piControl-segment drift removal — so Tier I has a diagnostic for every
+row of the paper's Table 1. Two of them fetch observations (over 1979–2014,
+never the reserved test window); without network access they report the model's
+own statistic and write no gate row, and I.3c's stored reference slope still
+needs pinning. ClimateEval is pinned at `b0e941c`, which provides the
 land–ocean, Arctic and meridional-heat-transport diagnostics upstream; CB2's
 copies have been replaced by thin gate wrappers that add only the protocol's
 thresholds.

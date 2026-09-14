@@ -24,7 +24,7 @@ protocol constants from `thresholds.yml`, so their suite entries keep
 
 | Suite | Data shape | Contents |
 |---|---|---|
-| `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | 16 physical-consistency gates: ECS, energy balance, closures, clear-sky β, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ + the Bjerknes and C–C extras — **plus** `internal_variability`, which is not a gate: it reports the piControl σ_int the Tier II consistency test needs, and rides here because this is where the control is loaded in full |
+| `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | 17 physical-consistency gates: ECS, energy balance, closures, clear-sky β, precip–buoyancy, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ + the Bjerknes and C–C extras — **plus** `internal_variability`, which is not a gate: it reports the piControl σ_int the Tier II consistency test needs, and rides here because this is where the control is loaded in full |
 | `ClimateBench2_TierI_variability` | cubes (monthly `tos`) | ENSO amplitude + spectral-shape gates |
 | `ClimateBench2_TierII` | cubes (monthly) | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4, plus `reference_baseline` / `sst_baseline` (the reference's pre-test 1985–2014 record) and `eof_projection` / `sst_eof_projection` (the regime-(b) coefficients on the reference's fixed pre-2015 EOF basis) |
 | `ClimateBench2_TierII_daily` | cubes (daily/hourly) | TXx block maxima (daily `tasmax`), pr intensity PDF, diurnal cycle |
@@ -40,6 +40,16 @@ over the finished databases (and `climatebench2 leaderboard --rescore`
 re-runs) — members arrive as separate data sources, so a model's fair CRPS
 can only be formed once every member has run, and the regime-(c) consistency
 test additionally needs the σ_int rows from the Tier I database.
+
+Two Tier I gates fetch **observations** through ClimateEval DataSources rather
+than working from the submission alone: `precip_buoyancy` (I.3c — the GPCP/ERA5
+reference slope over `tier1.precip_buoyancy.obs_window`) and
+`enso_teleconnections` (I.5c — the HadISST/GPCP regression patterns over
+`tier1.enso.teleconnection_obs_window`). Both windows end in 2014, so neither
+touches the reserved post-2015 test period. When the products cannot be fetched
+(no network, no CDS key) and `fail_on_missing_data` is False, each emits the
+model's own statistic, logs the reason and writes **no gate row** — the
+scorecard's "not run" hole rather than a spurious pass or fail.
 
 Two Tier II entries deliberately reach **back past the suite's test-window cut**,
 by loading their reference through a copy of the `Variable` carrying a different

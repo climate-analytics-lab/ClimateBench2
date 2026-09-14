@@ -37,6 +37,10 @@ climatebench2 score model/Amon --name MyModel \
     --experiment histaer=/path/hist-aer
 # → MyModel_climatebench2/: one DuckDB results database per suite
 
+# Several ensemble members (auto-discovered from a DRS tree, or named explicitly):
+climatebench2 score model/Amon --name MyModel \
+    --member r1i1p1f1=/path/r1i1p1f1 --member r2i1p1f1=/path/r2i1p1f1
+
 # A test the submission cannot meet by construction (e.g. an emulator with no
 # dynamics) is declared, not silently skipped — it is recorded as n/a:
 climatebench2 score emulator_output --name MyEmulator \
@@ -52,6 +56,20 @@ scored only if every applicable one passes — while **Extended** checks are rep
 additional credit and **extra** checks are non-protocol sanity checks. The entry ticket
 is ⚠ (incomplete) while a Required check has no result at all, so a missing experiment
 can never be mistaken for a pass.
+
+Each suite is given the data shape and time window the protocol asks for, so
+there is no single global slice of the submission:
+
+| Suite | Gets | Window |
+|---|---|---|
+| `ClimateBench2_TierI`, `_TierII_events`, `_TierIII` | an experiment dict (`historical` = the submission unless `--experiment historical=DIR`) | every experiment in **full** |
+| `ClimateBench2_TierI_variability` | the `picontrol` experiment (ENSO wants ≥ 100 yr of control) | full |
+| `ClimateBench2_TierII`, `_TierII_daily` | the model's cubes, once per ensemble member | the reserved post-2015 test window, `tier2.test_window_start` → last complete year |
+
+`--timerange` overrides the window of the cube-based suites only. Note that
+ClimateEval's CMIP6 comparison generator is still hard-wired to 1979–2014 and
+`r1i1p1f1`, so the CMIP6 comparison rows stay empty over the test window until an
+SSP2-4.5 generator lands upstream — `score` warns about this rather than failing.
 
 Per-model interactive reports remain available through ClimateEval:
 `climateeval report MyModel_climatebench2/*.ddb`.
@@ -81,9 +99,10 @@ physics gates, baselines, Tier III paleo protocol, and the leaderboard.
 The implementation was re-audited against the 2026-09 paper draft on
 2026-09-14: see the status tables and the prioritized gap list in
 [docs/metrics_reference.md](docs/metrics_reference.md). Headline open items
-are re-aligning the scoring engine to fair CRPS, multi-member ingestion, a
-post-2015 multi-member CMIP6 reference in ClimateEval, and wiring Tier III to
-the paleo pipeline's NetCDF outputs. Required/Extended/extra tagging of the
+are re-aligning the scoring engine to fair CRPS (including stacking the
+ingested ensemble members into one forecast), a post-2015 multi-member CMIP6
+reference in ClimateEval, and wiring Tier III to the paleo pipeline's NetCDF
+outputs. Required/Extended/extra tagging of the
 Tier I gates, declared N/A and the Required-only entry ticket landed on
 2026-09-14 (gap item 2). ClimateEval is pinned at `b0e941c`, which provides the
 land–ocean, Arctic and meridional-heat-transport diagnostics upstream; CB2's

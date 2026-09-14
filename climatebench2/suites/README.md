@@ -8,7 +8,12 @@ dotted class path. A suite here shadows a ClimateEval suite of the same name
 
 `Suite.get_database` passes **one data object to every diagnostic**, so
 suites are homogeneous by data shape: *complex* suites take an experiment
-dict (`--experiment KEY=PATH`), *simple* suites take the model's cubes.
+dict (`--experiment KEY=PATH`), *simple* suites take cubes. Which of the two a
+suite gets — and over which time window — is declared in the CLI's suite
+registry (`_cli.SUITE_REGISTRY`): experiments always load in full, the
+variability suite takes `picontrol`, and the Tier II suites take the model's
+cubes over the post-2015 test window (`tier2.test_window_start`), once per
+ensemble member (`--member LABEL=PATH`, or DRS auto-discovery).
 CB2 complex diagnostics accept a superset of their required keys and skip
 (with a warning) when their experiments are absent
 (`climatebench2.diags.SupersetExperimentMixin`) — including the thin gate

@@ -85,3 +85,37 @@ def test_complex_gates_accept_the_not_applicable_kwarg() -> None:
         assert diagnostics
         for name, diag in diagnostics.items():
             assert diag.declared_not_applicable == (name == "geostrophic_balance")
+
+
+def test_suite_registry_matches_the_actual_diagnostics() -> None:
+    """The CLI's data-shape registry must agree with what each suite holds."""
+    from climateeval.diags.complex._base import ComplexDiagnostic
+
+    from climatebench2._cli import SUITE_REGISTRY
+
+    for suite_name, spec in SUITE_REGISTRY.items():
+        diagnostics = Suite(_resolve_suite(suite_name))._get_diagnostics()
+        is_complex = [
+            isinstance(diag, ComplexDiagnostic) for diag in diagnostics.values()
+        ]
+        assert any(is_complex) == (spec.shape == "experiments"), suite_name
+        # Suites are homogeneous by data shape (Suite.get_database passes one
+        # data object to every diagnostic).
+        assert all(is_complex) == any(is_complex), suite_name
+
+
+def test_unregistered_suites_are_classified_by_probing() -> None:
+    from climateeval.diags.complex._base import ComplexDiagnostic
+
+    from climatebench2._cli import _suite_spec
+
+    tier1 = Suite(_resolve_suite("ClimateBench2_TierI"))._get_diagnostics()
+    spec = _suite_spec("SomeOtherSuite", tier1, ComplexDiagnostic)
+    assert spec.shape == "experiments"
+    assert "not in the CB2 suite registry" in spec.note
+
+    variability = Suite(
+        _resolve_suite("ClimateBench2_TierI_variability"),
+    )._get_diagnostics()
+    spec = _suite_spec("SomeOtherSuite", variability, ComplexDiagnostic)
+    assert (spec.shape, spec.window) == ("cubes", "historical")

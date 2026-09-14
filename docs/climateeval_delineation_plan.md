@@ -113,7 +113,12 @@ the same environment. The wiring, all confirmed against ClimateEval `main`:
    one schema regardless of which diagnostic produced a score.
 4. **Run path.** CB2 exposes `climatebench2 score <model_dir>` (thin CLI) →
    `Suite("ClimateBench2_TierI", …).get_database(...)` for each tier → one `.ddb` →
-   CB2 leaderboard renderer. No ClimateEval source is modified. Protocol standing is
+   CB2 leaderboard renderer. No ClimateEval source is modified. A small registry in
+   `_cli.py` (`SUITE_REGISTRY`) decides what each suite is handed — experiment dict vs
+   cubes, which experiment, which window — so the protocol's windows (piControl in full
+   for the variability gates, the post-2015 test window for Tier II) live in CB2 and not
+   in a global `--timerange`; `Suite.get_database(append=True)` accumulates one run per
+   ensemble member into the same database. Protocol standing is
    carried in the data, not the code path: each gate's `requirement` tag
    (`thresholds.yml`) and its `applicable` flag (`score --not-applicable NAME`) travel
    as `metrics` columns, so the leaderboard can compute the entry ticket over the

@@ -1,0 +1,380 @@
+"""Tests for the `climatebench2 score` data paths (no data required).
+
+The CLI decides, per suite, *what shape* of data a suite gets and *which time
+window* it is cut to (metrics_reference.md §II.0, gap item 4). These tests
+cover that plumbing — the registry, the derived Tier II test window, member
+discovery and argument parsing — without loading a single cube.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+import pytest
+
+from climatebench2._cli import (
+    DEFAULT_SUITES,
+    DEFAULT_TIMERANGE,
+    SUITE_REGISTRY,
+    SuiteSpec,
+    _parse_members,
+    _resolve_suite,
+    build_parser,
+    default_tier2_timerange,
+    discover_members,
+    suite_timerange,
+)
+from climatebench2._thresholds import get_threshold
+
+
+# ---------------------------------------------------------------------------
+# Suite registry and windows
+# ---------------------------------------------------------------------------
+
+
+def test_registry_covers_every_default_suite() -> None:
+    for suite_name in DEFAULT_SUITES:
+        assert suite_name in SUITE_REGISTRY, suite_name
+
+
+def test_registry_shapes_match_the_protocol() -> None:
+    """Tier I/events/paleo take experiment dicts; Tier II takes model cubes."""
+    assert SUITE_REGISTRY["ClimateBench2_TierI"].shape == "experiments"
+    assert SUITE_REGISTRY["ClimateBench2_TierII_events"].shape == "experiments"
+    assert SUITE_REGISTRY["ClimateBench2_TierIII"].shape == "experiments"
+
+    # ENSO amplitude/spectrum: the piControl experiment, in full (paper I.5)
+    variability = SUITE_REGISTRY["ClimateBench2_TierI_variability"]
+    assert (variability.shape, variability.source, variability.window) == (
+        "cubes",
+        "picontrol",
+        "full",
+    )
+    assert not variability.per_member
+
+    for name in ("ClimateBench2_TierII", "ClimateBench2_TierII_daily"):
+        spec = SUITE_REGISTRY[name]
+        assert (spec.shape, spec.source, spec.window) == ("cubes", "model", "tier2")
+        assert spec.per_member  # cube suites run once per ensemble member
+
+
+def test_default_tier2_window_is_derived_from_thresholds() -> None:
+    """<test_window_start>0101 / <last complete year>1231."""
+    start = int(get_threshold("tier2.test_window_start"))
+    assert start == 2015
+    assert default_tier2_timerange(dt.date(2026, 9, 14)) == "20150101/20251231"
+    assert default_tier2_timerange(dt.date(2031, 1, 1)) == "20150101/20301231"
+    # Never inverted, even before the window has completed a year
+    assert default_tier2_timerange(dt.date(2015, 6, 1)) == "20150101/20151231"
+
+
+def test_suite_timerange_per_shape_and_override() -> None:
+    tier2 = SUITE_REGISTRY["ClimateBench2_TierII"]
+    variability = SUITE_REGISTRY["ClimateBench2_TierI_variability"]
+    tier1 = SUITE_REGISTRY["ClimateBench2_TierI"]
+    other = SuiteSpec(shape="cubes")  # unregistered cube suite
+
+    assert suite_timerange(tier2) == default_tier2_timerange()
+    assert suite_timerange(other) == DEFAULT_TIMERANGE
+    # Experiment-based suites and the piControl suite are never cut
+    assert suite_timerange(tier1) is None
+    assert suite_timerange(variability) is None
+
+    # --timerange overrides the cube windows, but not a control's own calendar
+    assert suite_timerange(tier2, "19790101/20141231") == "19790101/20141231"
+    assert suite_timerange(other, "19790101/20141231") == "19790101/20141231"
+    assert suite_timerange(variability, "19790101/20141231") is None
+    assert suite_timerange(tier1, "19790101/20141231") is None
+
+
+def test_tier2_window_starts_after_the_climatology_baseline() -> None:
+    """The test window must not overlap the pre-test baseline (1985–2014)."""
+    _y0, y1 = get_threshold("tier2.climatology_baseline_period")
+    assert int(get_threshold("tier2.test_window_start")) == int(y1) + 1
+
+
+# ---------------------------------------------------------------------------
+# Ensemble members
+# ---------------------------------------------------------------------------
+
+
+def test_parse_members_and_errors() -> None:
+    parsed = _parse_members(["r1i1p1f1=/data/r1", "r2i1p1f1=/data/r2"])
+    assert list(parsed) == ["r1i1p1f1", "r2i1p1f1"]
+    assert str(parsed["r2i1p1f1"]) == "/data/r2"
+    with pytest.raises(SystemExit, match="LABEL=PATH"):
+        _parse_members(["r1i1p1f1"])
+
+
+def _drs_tree(root, experiment: str, variants: list[str]) -> None:  # noqa: ANN001
+    """A CMIP6-like DRS tree: <exp>/<variant>/Amon/tas/gn/v1/*.nc."""
+    for variant in variants:
+        leaf = root / experiment / variant / "Amon" / "tas" / "gn" / "v1"
+        leaf.mkdir(parents=True, exist_ok=True)
+        (leaf / f"tas_Amon_M_{experiment}_{variant}_gn_185001-201412.nc").touch()
+
+
+def test_discover_members_finds_sibling_variants(tmp_path) -> None:  # noqa: ANN001
+    root = tmp_path / "MyModel"
+    _drs_tree(root, "historical", ["r1i1p1f1", "r2i1p1f1", "r10i1p1f1"])
+    found = discover_members(root)
+    assert list(found) == ["r10i1p1f1", "r1i1p1f1", "r2i1p1f1"]  # sorted by name
+    assert found["r2i1p1f1"] == root / "historical" / "r2i1p1f1"
+
+
+def test_discover_members_ignores_single_member_and_flat_trees(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    single = tmp_path / "Single"
+    _drs_tree(single, "historical", ["r1i1p1f1"])
+    assert discover_members(single) == {}
+
+    flat = tmp_path / "Flat"
+    flat.mkdir()
+    (flat / "tas_Amon_M_historical_r1i1p1f1_gn_185001-201412.nc").touch()
+    assert discover_members(flat) == {}
+
+    assert discover_members(tmp_path / "missing") == {}
+
+
+def test_discover_members_does_not_mix_experiments(tmp_path) -> None:  # noqa: ANN001
+    """Variant names repeat across experiments; only one parent is used."""
+    root = tmp_path / "MyModel"
+    _drs_tree(root, "historical", ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"])
+    _drs_tree(root, "piControl", ["r1i1p1f1"])
+    found = discover_members(root)
+    assert list(found) == ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"]
+    assert all(path.parent.name == "historical" for path in found.values())
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+
+def test_score_arguments_parse() -> None:
+    args = build_parser().parse_args(
+        [
+            "score",
+            "/path/model",
+            "--name",
+            "MyModel",
+            "--member",
+            "r1i1p1f1=/path/r1",
+            "--member",
+            "r2i1p1f1=/path/r2",
+            "--not-applicable",
+            "geostrophic_balance",
+            "--experiment",
+            "picontrol=/path/pi",
+        ],
+    )
+    assert args.member == ["r1i1p1f1=/path/r1", "r2i1p1f1=/path/r2"]
+    assert args.not_applicable == ["geostrophic_balance"]
+    assert args.experiment == ["picontrol=/path/pi"]
+    # No global window any more: each suite gets its protocol default
+    assert args.timerange is None
+    assert args.suite is None
+
+
+def test_timerange_is_an_explicit_override() -> None:
+    args = build_parser().parse_args(
+        ["score", "/path/model", "--timerange", "20150101/20241231"],
+    )
+    assert args.timerange == "20150101/20241231"
+
+
+def test_tier2_events_suite_is_packaged_and_default() -> None:
+    resolved = _resolve_suite("ClimateBench2_TierII_events")
+    assert resolved.endswith("ClimateBench2_TierII_events.yml")
+    assert "ClimateBench2_TierII_events" in DEFAULT_SUITES
+
+
+# ---------------------------------------------------------------------------
+# End-to-end plumbing: which data, which window, which member, per suite
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def recorded_score(tmp_path, monkeypatch):  # noqa: ANN001, ANN201
+    """Run `climatebench2 score` with the data layer stubbed out."""
+    pytest.importorskip("climateeval")
+
+    import climateeval._loader as loader
+    from climateeval.suites import Suite
+
+    from climatebench2._cli import main
+
+    loads: list[tuple[str, str | None]] = []
+    runs: list[dict] = []
+
+    def fake_load(path, *, timerange=None, **_kwargs):  # noqa: ANN001, ANN202
+        loads.append((str(path), timerange))
+        return [f"cubes:{path}:{timerange}"]
+
+    def fake_get_database(self, data, information, **kwargs):  # noqa: ANN001, ANN202
+        runs.append(
+            {
+                "suite": self.name,
+                "data": data,
+                "variant": information.variant,
+                "append": kwargs.get("append", False),
+                "timerange": next(
+                    (
+                        variable.timerange
+                        for diag in self._get_diagnostics().values()
+                        for variable in getattr(diag, "_variables", ())
+                    ),
+                    None,
+                ),
+            },
+        )
+        return None
+
+    monkeypatch.setattr(loader, "load_cmor_dir", fake_load)
+    monkeypatch.setattr(Suite, "get_database", fake_get_database)
+
+    def run(argv: list[str]) -> tuple[list, list]:
+        main(["score", *argv, "--out", str(tmp_path / "out")])
+        return loads, runs
+
+    return run
+
+
+def test_score_feeds_each_suite_its_protocol_window(  # noqa: PLR0915
+    tmp_path,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+) -> None:
+    model = tmp_path / "MyModel"
+    _drs_tree(model, "historical", ["r1i1p1f1", "r2i1p1f1"])
+    picontrol = tmp_path / "piControl"
+    picontrol.mkdir()
+
+    loads, runs = recorded_score(
+        [
+            str(model),
+            "--name",
+            "MyModel",
+            "--experiment",
+            f"picontrol={picontrol}",
+            "--suite",
+            "ClimateBench2_TierI",
+            "--suite",
+            "ClimateBench2_TierI_variability",
+            "--suite",
+            "ClimateBench2_TierII",
+        ],
+    )
+    by_suite = {run["suite"]: run for run in runs}
+
+    # Tier I: the experiment dict, historical loaded in FULL (no timerange),
+    # and run once for the model (not once per member).
+    tier1 = by_suite["ClimateBench2_TierI"]
+    assert set(tier1["data"]) == {"historical", "picontrol"}
+    assert tier1["data"]["historical"] == [
+        f"cubes:{model / 'historical' / 'r1i1p1f1'}:None",
+    ]
+    assert (str(model / "historical" / "r1i1p1f1"), None) in loads
+
+    # Variability: the piControl experiment, in full — not the model cubes
+    variability = by_suite["ClimateBench2_TierI_variability"]
+    assert variability["data"] == [f"cubes:{picontrol}:None"]
+    assert variability["timerange"] == "*"  # no cut
+
+    # Tier II: model cubes cut to the derived post-2015 test window, once per
+    # member, appending into the one database
+    tier2_runs = [run for run in runs if run["suite"] == "ClimateBench2_TierII"]
+    window = default_tier2_timerange()
+    assert len(tier2_runs) == 2
+    assert [run["variant"] for run in tier2_runs] == ["r1i1p1f1", "r2i1p1f1"]
+    assert [run["append"] for run in tier2_runs] == [False, True]
+    assert {run["timerange"] for run in tier2_runs} == {window}
+    assert (str(model / "historical" / "r2i1p1f1"), window) in loads
+
+
+def test_score_timerange_overrides_only_the_cube_suites(
+    tmp_path,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+) -> None:
+    model = tmp_path / "Model"
+    model.mkdir()
+    picontrol = tmp_path / "piControl"
+    picontrol.mkdir()
+
+    _loads, runs = recorded_score(
+        [
+            str(model),
+            "--experiment",
+            f"picontrol={picontrol}",
+            "--timerange",
+            "19790101/20141231",
+            "--suite",
+            "ClimateBench2_TierII",
+            "--suite",
+            "ClimateBench2_TierI_variability",
+        ],
+    )
+    by_suite = {run["suite"]: run for run in runs}
+    assert by_suite["ClimateBench2_TierII"]["timerange"] == "19790101/20141231"
+    assert by_suite["ClimateBench2_TierI_variability"]["timerange"] == "*"
+
+
+def test_score_falls_back_to_model_cubes_without_picontrol(
+    tmp_path,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+    capsys,  # noqa: ANN001
+) -> None:
+    model = tmp_path / "Model"
+    model.mkdir()
+
+    _loads, runs = recorded_score(
+        [str(model), "--suite", "ClimateBench2_TierI_variability"],
+    )
+    assert runs[0]["data"] == [f"cubes:{model}:None"]
+    assert "wants the piControl experiment" in capsys.readouterr().err
+
+
+def test_score_skips_a_complex_suite_with_no_runnable_gate(
+    tmp_path,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+    capsys,  # noqa: ANN001
+) -> None:
+    """Tier III needs paleo experiments; Tier II events only needs historical."""
+    model = tmp_path / "Model"
+    model.mkdir()
+
+    _loads, runs = recorded_score(
+        [
+            str(model),
+            "--suite",
+            "ClimateBench2_TierIII",
+            "--suite",
+            "ClimateBench2_TierII_events",
+        ],
+    )
+    assert [run["suite"] for run in runs] == ["ClimateBench2_TierII_events"]
+    assert "Skipping suite 'ClimateBench2_TierIII'" in capsys.readouterr().err
+    assert set(runs[0]["data"]) == {"historical"}
+
+
+def test_explicit_members_win_over_discovery(
+    tmp_path,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+) -> None:
+    model = tmp_path / "MyModel"
+    _drs_tree(model, "historical", ["r1i1p1f1", "r2i1p1f1"])
+    other = tmp_path / "extra_member"
+    other.mkdir()
+
+    _loads, runs = recorded_score(
+        [str(model), "--member", f"r9i1p1f1={other}", "--suite", "ClimateBench2_TierII"],
+    )
+    assert [run["variant"] for run in runs] == ["r9i1p1f1"]
+    assert runs[0]["data"] == [f"cubes:{other}:{default_tier2_timerange()}"]
+
+
+def test_missing_member_path_is_an_error() -> None:
+    from climatebench2._cli import main
+
+    with pytest.raises(SystemExit, match="Member path not found"):
+        main(["score", ".", "--member", "r1i1p1f1=/definitely/not/here"])

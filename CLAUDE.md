@@ -67,6 +67,10 @@ pip install .                       # installs climateeval (pinned) + climateben
 climatebench2 score /path/to/model/cmor/Amon --name MyModel   # → MyModel_climatebench2/*.ddb
 climatebench2 score MODEL --name MyEmulator --not-applicable geostrophic_balance
 #   declare a Tier I gate inapplicable: recorded as n/a, not a fail (paper §7.1)
+climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --member r2i1p1f1=DIR
+#   per-suite data paths (_cli.SUITE_REGISTRY): experiments load in FULL for the
+#   complex suites, the variability suite takes piControl, the Tier II suites take
+#   the post-2015 test window (tier2.test_window_start), once per ensemble member
 climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scores table
 climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report
 

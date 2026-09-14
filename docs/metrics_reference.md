@@ -33,7 +33,12 @@ every gate block in `thresholds.yml` carries a `requirement:` tag
 `applicable` columns, a submission can *declare* a test inapplicable
 (`score --not-applicable NAME`), the Pinatubo and hemispheric-asymmetry diagnostics
 moved out of the Tier I suite into `ClimateBench2_TierII_events`, and the leaderboard
-computes the entry ticket over the Required group alone. The legacy
+computes the entry ticket over the Required group alone. **Gap item 4 (CB2 side)** then
+fixed the data paths for a real CMIP6 run: a per-suite registry in `_cli.py` loads the
+`historical` experiment in full for the complex suites, feeds the variability suite the
+`picontrol` experiment, scores the Tier II suites over the reserved post-2015 test
+window derived from `tier2.test_window_start`, and ingests several ensemble members
+(`--member`, DRS auto-discovery) into one database per suite. The legacy
 `benchmark_scrips/*.py` scripts that earlier revisions of this document audited were
 deleted in migration Phases 1–5; **every status entry below refers to
 `climatebench2/`**, and the only legacy survivors are `constants.py`, `utils.py` and
@@ -89,7 +94,7 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 | I.3c | Tropical precipitation–buoyancy | monthly P′ vs column-MSE′ slope, 20S–20N, ±30% of GPCP/ERA5 | Req. | ❌ missing — the legacy log(pr)-vs-prw proxy was retired with the scripts and nothing replaced it | — |
 | I.4a | GFMIP SST patch experiments | Δλ = ΔR_EP/ΔTs_EP − ΔR_WP/ΔTs_WP > 0.5 W/m²/K — **Extended** | Ext. | ✅ per spec; needs submission-provided `amip`/`patch_ep`/`patch_wp`; tagged `requirement: extended`, so it is reported for credit but outside the entry ticket | `GFMIPPatchGate` |
 | I.4b | amip-4xCO2 ERF | 6.5–9.0 W/m² | Req. | ✅ (TOA-net difference amip-4xCO2 − amip; no land-warming correction, none asked) | `Amip4xCO2ERFGate` |
-| I.5a | ENSO amplitude | σ(Niño-3.4) ∈ [0.5, 1.4] K | Req. | ✅ σ of the **unsmoothed** deseasonalised monthly index (`ENSOGate._rolling_window_length = 1`); 🟡 the variability suite is still fed the CLI's historical cubes (1979–2014 default), not ≥ 100 yr piControl — a later CLI work package | `diags.pass_fail.ENSOGate` |
+| I.5a | ENSO amplitude | σ(Niño-3.4) ∈ [0.5, 1.4] K | Req. | ✅ σ of the **unsmoothed** deseasonalised monthly index (`ENSOGate._rolling_window_length = 1`), now computed on the **piControl experiment in full** (`--experiment picontrol=DIR`; the CLI warns loudly and falls back to the submission's own output if none is given) | `diags.pass_fail.ENSOGate` |
 | I.5b | ENSO spectrum | power(2–7 yr)/power(1–2 yr) > 1.5 | Req. | ✅ Welch PSD **integrated** over each band (`np.trapezoid`), so 1.5 means what the paper says (white noise now scores ≈ 0.71, not ≈ 1.0) | `pass_fail.band_power_ratio` |
 | I.5c | ENSO teleconnections | gridpoint regression of `ts` and `pr` on standardized Niño-3.4, 30S–30N; centred spatial correlation of modelled vs observed regression patterns > 0.7 (R² > 0.5), vs HadISST/ERA5 and GPCP | Req. | 🟡 implements the **superseded** scalar criterion (tropical ta500 regression > 0, Maritime-Continent pr < 0, sign only, no observations) | `diags.tier1_extended.ENSOTeleconnectionsGate` |
 | I.5d | MJO Wheeler–Kiladis | east/west power ratio (k=1–3, 30–90 d) > 1.5 — **Extended** | Ext. | ✅ (2-D FFT east/west ratio, k = 1–3, 30–90 d, ±15°, daily `pr`); tagged `requirement: extended` — reported, outside the entry ticket | `MJOGate`, `physics.mjo_east_west_ratio` |
@@ -441,11 +446,14 @@ index inside a complex diagnostic on the `picontrol` key.
 - Spec: **σ(Niño-3.4) ∈ [0.5, 1.4] K**.
 - Code: `std(ddof=1)` of the index, gated at `tier1.enso.amplitude_range`
   = [0.5, 1.4] (row `enso_amplitude`). ✅ The index is now the unsmoothed monthly one
-  (the 3-month running mean lowered σ by roughly 5–10%). 🟡 One deviation left: the
-  variability suite receives the same cubes as Tier II — the historical run cut to the
-  CLI `--timerange` (default 1979–2014, i.e. 36 yr) — not the ≥ 100 yr piControl the
-  paper specifies. Feeding it the `picontrol` experiment is a CLI work package.
-- Status: ✅ statistic, 🟡 input record.
+  (the 3-month running mean lowered σ by roughly 5–10%). ✅ The input record is right
+  too since 2026-09-14 (gap item 4): the CLI's suite registry feeds
+  `ClimateBench2_TierI_variability` the **`picontrol` experiment in full** rather than
+  the Tier II cubes, so the ≥ 100 yr control the paper specifies is what is gated —
+  with a loud warning and a fallback to the submission's own output when no
+  `--experiment picontrol=DIR` is given (the observational reference series are
+  unaffected: no timerange is applied to this suite).
+- Status: ✅ statistic, ✅ input record.
 
 **(b) Spectral shape.**
 - Spec: **ratio of spectral power in the 2–7 yr band to the 1–2 yr band > 1.5**.
@@ -901,7 +909,7 @@ gone.
 | Ensemble-consistency test — complementary | (c) | 🟡 `ensemble_consistency` (Gaussian z, σ² = var_ens + σ_int² + σ_obs²) wired only through `TrendConsistency`; `sigma_internal` hard-wired 0 (`chunked_statistic_std` exists, never called), `sigma_obs` a kwarg defaulting to 0; no Mahalanobis / empirically calibrated null / variance-explained truncation | `scoring.py`, `tier2_scores.TrendConsistency` |
 | Skill score S = 1 − E/E_ref, E_ref = CMIP6 median, leave-one-out | — | 🟡 leaderboard shows skill vs the **Climatology** row only; the `CMIP6-MME` row is a **pooled** r1i1p1f1 mixture (the form ruled out above); no leave-one-out | `leaderboard/_crps_table_html`, `tier2_scores._ScoredTimeSeriesMixin` |
 | Moving-block-bootstrap CIs; observational-uncertainty draws | (a)/(b) | ❌ | — |
-| Multi-member submissions | — | ❌ `load_cmor_dir` yields one member, the CLI has no `--member`, `Suite` passes one `data_id`; every "ensemble" scored today has **M = 1** | `_cli.py`, `tier2_scores.py` |
+| Multi-member submissions | — | 🟡 ingestion done (2026-09-14, gap item 4): `--member LABEL=PATH` and DRS `r*i*p*f*` auto-discovery run every cube suite once per member, appending rows with distinct `data_id`s (`variant`). **Scoring still treats each member as its own M = 1 "ensemble"** — stacking a model's members into one fair-CRPS forecast is gap item 3 | `_cli.py`, `tier2_scores.py` |
 | tas monthly/annual anomalies | (a) | 🟡 scored vs **HadCRUT5 only** (paper: GISS, Berkeley Earth, HadCRUT, NOAA GlobalTemp — ClimateEval has no DataSource for the other three); no GSAT blending correction; HadCRUT5 error field not used as σ_obs | `ScoredAnnualMeanTimeSeries` + `climateeval.data.HadCRUT5` |
 | tas daily extremes (TXx, TNn, TX90p, warm-spell duration) | (b) | 🟡 only a TXx-like global-mean annual block maximum (`ScoredAnnualMaxTimeSeries`) on daily **`tasmax`** (id `tasmax_txx`, ✅ 2026-09-14), against a **placeholder `ERA5Monthly` reference** (wrong frequency) — no daily obs DataSource (Berkeley daily, HadGHCND) exists; TNn/TX90p/WSDI ❌ | `ClimateBench2_TierII_daily.yml` |
 | Perkins skill score (daily T and wet-day pr PDFs, 1 mm/day, ~1° conservative regrid, moving-baseline anomalies) | — | ❌ (ClimateEval `Histogram` yields EMD, not the protocol statistic; regridding is linear to 2°) | — |
@@ -914,21 +922,31 @@ gone.
 | Surface fluxes (pattern/seasonal-cycle scoring; FLUXNET/OceanSITES/BSRN sites) | (b) | ❌ (Extended; no obs DataSource; no site machinery) | — |
 | Cloud properties (LWP, fraction, CTT/CTP) | (a)/(b) | 🟡 `clt` vs ESACCI-Cloud scored; `clwvi`/`clivi` not in the suite (ESACCICloud carries them); CTT/CTP ❌ | suite |
 | prw | (a) | 🟡 vs `ERA5Monthly` (paper: RSS primary, ERA5 as reference) — acceptable pending an RSS DataSource | suite |
-| Realized warming level 2015+ vs 1985–2014 (primary); 1950–present trend; test-period trend (secondary); GSAT blending | (a)/(c) | ❌ — `TrendConsistency` tests the OLS trend of **whatever window is loaded** (CLI default 1979–2014 → no test window at all); no warming-level statistic, no 1950 start, no blending correction | `TrendConsistency` |
+| Realized warming level 2015+ vs 1985–2014 (primary); 1950–present trend; test-period trend (secondary); GSAT blending | (a)/(c) | ❌ — `TrendConsistency` tests the OLS trend of whatever window is loaded; ✅ that window is now the post-2015 test window by default (2026-09-14, gap item 4), but there is still no warming-level statistic, no 1950 start and no blending correction | `TrendConsistency` |
 | Pinatubo response | (b) | 🟡 `PinatuboResponseGate`: global-mean `rsds`/`tas` anomalies Jul 1991–Dec 1993 vs `tier2.climatology_baseline_period` (✅ now [1985, 2014]), **sign-only** gates; no BSRN/obs magnitude comparison, no co-variation test. ✅ moved out of the Tier I suite into `ClimateBench2_TierII_events` and tagged `requirement: diagnostic` (2026-09-14), so it no longer touches the entry ticket | `diags/tier2_diagnostics.py`, `suites/ClimateBench2_TierII_events.yml` |
 | Hemispheric asymmetry | (b) | 🟡 `HemisphericAsymmetryGate`: NH−SH `tas` trend over `tier2.hemispheric_asymmetry.era` (✅ [1950, 1985], no longer a hard-coded class constant) and zonal-mean-pr-maximum latitude trend, **sign-only** gates; no HadCRUT/Berkeley comparison. ✅ in `ClimateBench2_TierII_events`, tagged `requirement: diagnostic` (2026-09-14) | `tier2_diagnostics.py`, `suites/ClimateBench2_TierII_events.yml` |
 | Seasonal cycle: land annual T range; SST–low-cloud covariance; seasonal CRE–SST feedback | (b) | ❌ (ClimateEval `AnnualCycle` runs deterministically for the core variables; none of the three protocol statistics is computed) | — |
 | Diurnal cycle (first-harmonic amplitude/phase of pr and CRE, local solar time) | (b) | 🟡 ClimateEval `DiurnalCycle` of hourly pr vs `ERA5Hourly`, deterministic; `physics.first_harmonic` exists, unwired; CRE diurnal ❌; IMERG / CERES-SYN DataSources ❌ | `ClimateBench2_TierII_daily.yml` |
 | Held-out vs in-sample labelling | — | ❌ leaderboard has no such column | `leaderboard/` |
 | Baselines | — | 🟡 **Climatology** row wired (`_climatology_row`) from `tier2.climatology_baseline_period` (✅ now [1985, 2014] — no longer overlapping the reserved test window); **pattern scaling**: `baselines.two_layer_ebm` + `pattern_scaling_forecast` are pure functions — unwired, uncalibrated (Geoffroy-2013 defaults in `tier2.ebm`), no ERF series or CMIP6-MMM pattern in the package; **CMIP6 MME**: pooled (see skill-score row) | `baselines.py`, `tier2_scores.py` |
-| **CMIP6 reference ensemble for the test window** | — | ❌ ClimateEval's `CMIP6HistoricalR1I1P1F1` generator is hard-wired to `ensemble: r1i1p1f1` and `timerange: 19790101/20141231`; there is **no SSP2-4.5 or historical+SSP2-4.5 generator and no multi-member variant**, so neither a per-model fair CRPS of the CMIP6 reference (≥ 2 members) nor any post-2015 CMIP6 comparison can be assembled — an upstream `CMIP6HistoricalSSP245` generator with `ensemble: "r*i1p1f1"` is the blocking dependency | `climateeval/data/_cmip6_generators.py` |
+| **CMIP6 reference ensemble for the test window** | — | ❌ (*upstream*) ClimateEval's `CMIP6HistoricalR1I1P1F1` generator is hard-wired to `ensemble: r1i1p1f1` and `timerange: 19790101/20141231`; there is **no SSP2-4.5 or historical+SSP2-4.5 generator and no multi-member variant**, so neither a per-model fair CRPS of the CMIP6 reference (≥ 2 members) nor any post-2015 CMIP6 comparison can be assembled — an upstream `CMIP6HistoricalSSP245` generator with `ensemble: "r*i1p1f1"` is the blocking dependency. CB2 now runs the Tier II suites on the test window regardless and warns that the comparison rows will be empty until it lands | `climateeval/data/_cmip6_generators.py` |
 
 ## II.0 Machinery as built (`climatebench2/scoring.py`, `diags/tier2_scores.py`, `baselines.py`, `leaderboard/`)
 
 **Data & preprocessing (ClimateEval).** `climatebench2 score MODEL` calls
-`climateeval._loader.load_cmor_dir` (NetCDF file, flat directory or DRS tree;
-`--timerange`, default `19790101/20141231`) and hands the cubes to each CB2 suite via
-`climateeval.suites.Suite.get_database`, which writes one DuckDB per suite
+`climateeval._loader.load_cmor_dir` (NetCDF file, flat directory or DRS tree) and hands
+each CB2 suite the data *shape* and window the protocol asks for, from the CLI's suite
+registry (`_cli.SUITE_REGISTRY`, ✅ 2026-09-14, gap item 4): the Tier I / Tier II-events
+/ Tier III suites get an experiment dict whose `historical` entry is the submission
+loaded **in full**; `ClimateBench2_TierI_variability` gets the **piControl** experiment
+in full (falling back to the model's own output with a loud warning); the Tier II suites
+get the model's cubes cut to the **post-2015 test window**
+(`tier2.test_window_start = 2015` → `20150101/<last complete year>1231`), which
+`--timerange` overrides. Ensemble members come from `--member LABEL=PATH` or from
+auto-discovered sibling `r*i*p*f*` directories in a DRS tree, and each cube suite runs
+once per member (`DataSourceInformation(variant=LABEL)`, appending into the one DuckDB
+per suite). The data then go to `climateeval.suites.Suite.get_database`, which writes
+one DuckDB per suite
 (`raw_output`, `metrics`, `variables`, `data_sources`; `climatebench2 leaderboard`
 reads them with `climateeval.report._db.read_database`). Reference and comparison data
 are ClimateEval DataSources named in the suite YAML (`reference_data:` /
@@ -1041,7 +1059,8 @@ term**.
 *Status: ❌.* `TrendConsistency` (§II.0) tests the OLS trend of the loaded window
 against the pooled CMIP6 trend distribution with σ_int = 0; there is no warming-level
 statistic, no fixed 1985–2014 baseline, no 1950-start trend, no multi-product obs
-spread, and no blending correction. `scoring.chunked_statistic_std(…, "mean")` is the
+spread, and no blending correction. (The window it sees is at least the right one since
+2026-09-14: the Tier II suites default to `20150101/<last complete year>1231`.) `scoring.chunked_statistic_std(…, "mean")` is the
 ready-made σ_int for the level statistic once a piControl series reaches the diagnostic.
 
 ```python
@@ -1314,7 +1333,7 @@ as on data.
 
 | Tier | Specced diagnostics | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|
-| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras; all tagged Required / Extended / extra, entry ticket over the Required group only | 14 — I.1, I.2a, I.2b, I.3a, I.3b, I.4a, I.4b, I.5b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 3 — I.5a (statistic ✅, but run on historical cubes not ≥ 100 yr piControl), I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
+| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras; all tagged Required / Extended / extra, entry ticket over the Required group only | 15 — I.1, I.2a, I.2b, I.3a, I.3b, I.4a, I.4b, I.5a, I.5b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 2 — I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
 | II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | ESS correction; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval; climatology-baseline row on the correct 1985–2014 pre-test window; static leaderboard | empirical (not fair) CRPS; single-member scoring; Gaussian consistency test without σ_int; pooled MME; sign-only Pinatubo & hemispheric asymmetry; TXx reference still a monthly placeholder; sea-ice area not extent; single obs product per variable | reference-EOF fair-CRPS scoring; block bootstrap; obs-uncertainty draws; CMIP6-median skill score; realized warming level & blending; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval)** |
 | III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | monsoon gate | site-consistency fraction for the three periods — disconnected from the pipeline's NetCDFs, tas-only, DA products instead of raw proxies; LE-spread functions | fair CRPS with block pseudo-members; raw SST proxy compilations; perfect-model suite and data |
 
@@ -1329,9 +1348,11 @@ as on data.
    warning and reported through `n_years`.
 3. ~~I.3a regresses annual means~~ — **DONE (2026-09-14):** deseasonalised monthly
    anomalies (`anomalies(period="month")`) for both `rlutcs` and `ts`.
-4. I.5a — σ is now of the **unsmoothed** monthly index (`_rolling_window_length = 1`,
-   **done** 2026-09-14); *still open:* the variability suite is fed the historical cubes
-   (36 yr by default) rather than ≥ 100 yr piControl (CLI work package).
+4. ~~I.5a — σ of a smoothed index, computed on the historical cubes~~ — **DONE
+   2026-09-14:** the unsmoothed monthly index (`_rolling_window_length = 1`, gap item 1)
+   *and* the right record — the CLI's suite registry feeds
+   `ClimateBench2_TierI_variability` the `picontrol` experiment in full (gap item 4),
+   with a warning and a fallback to the submission's own output when none is given.
 5. ~~I.5b band-power ratio uses mean PSD per band~~ — **DONE (2026-09-14):** integrated
    power (`np.trapezoid`) per band, so the 1.5 bound means what the paper says.
 6. I.5c implements the superseded scalar criterion (ta500 / Maritime-Continent sign
@@ -1356,11 +1377,20 @@ as on data.
 12. Aggregated-diagnostic scoring is the old model-variability-EOF z-test
     (`field_consistency`, unwired); the paper wants reference-EOF fair CRPS with
     standardised coefficients and a block bootstrap.
-13. **Test window never loaded** — the CLI default `--timerange 19790101/20141231`
-    applies to every suite; ClimateEval's `CMIP6HistoricalR1I1P1F1` is hard-wired to the
-    same window and to r1i1p1f1, and there is no SSP2-4.5 generator — the post-2015
-    multi-member CMIP6 reference cannot be built with today's ClimateEval.
-14. Single-member ingestion end-to-end (no `--member`, one `data_id` per model).
+13. **Test window** — ~~the CLI default `--timerange 19790101/20141231` applies to
+    every suite~~ **CB2 side DONE 2026-09-14 (gap item 4):** each suite gets its own
+    window from `_cli.SUITE_REGISTRY`, and the Tier II suites default to
+    `20150101/<last complete year>1231` derived from `tier2.test_window_start`;
+    `--timerange` is now only an explicit override. *Still open (upstream):*
+    ClimateEval's `CMIP6HistoricalR1I1P1F1` is hard-wired to 1979–2014 and r1i1p1f1 and
+    there is no SSP2-4.5 generator, so the post-2015 CMIP6 reference rows are empty —
+    the CLI says so rather than failing.
+14. Multi-member submissions — **ingestion DONE 2026-09-14 (gap item 4):** `--member
+    LABEL=PATH` plus `r*i*p*f*` DRS auto-discovery, one run per member per cube suite
+    with distinct `data_id`s appended into the same database (complex suites run once,
+    on the first member). *Still open:* the scoring layer treats each member as its own
+    M = 1 ensemble — stacking members by model name into one fair-CRPS forecast is gap
+    item 3.
 15. Sea ice: ClimateEval computes area, the paper scores extent (15 % threshold).
 16. TXx now uses daily `tasmax` (registry variable, suite id `tasmax_txx`; **done**
     2026-09-14 with gap item 0) but still against an `ERA5Monthly` placeholder
@@ -1413,7 +1443,7 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    experiments moved into the shared `SupersetExperimentMixin`, so `ECSGate` gets it
    too. This was the first concrete "retire as parity is reached" step of
    delineation-plan §7.
-1. ~~**Fix the gates that are wrong as written**~~ — **DONE 2026-09-14 (this commit).**
+1. ~~**Fix the gates that are wrong as written**~~ — **DONE 2026-09-14 (`a030496`).**
    I.2b identity (#1); I.1 last-100-yr slice with `evaluation_years` (#2); I.3a monthly
    anomalies (#3); I.5a unsmoothed index (#4, statistic only); I.5b integrated power
    (#5); `thresholds.yml` clean-up — `min_years` TODO and `required_min`/`expected_range`
@@ -1421,7 +1451,7 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    and the new `tier2.hemispheric_asymmetry.era` (#11). *Still open here:* the four
    stale ENSO-teleconnection keys, which go with the I.5c rewrite (#6, item 5), and the
    aerosol-forcing window (#8, item 5).
-2. ~~**Entry-ticket semantics**~~ — **DONE 2026-09-14.** `requirement:` tags in
+2. ~~**Entry-ticket semantics**~~ — **DONE 2026-09-14 (`5d600d3`).** `requirement:` tags in
    `thresholds.yml` for every gate block (required / extended / extra / diagnostic) read
    through `pass_fail.gate_requirement`; `requirement` + `applicable` columns on every
    gate row; declared N/A via `climatebench2 score --not-applicable NAME`
@@ -1433,15 +1463,28 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    Required passed, N/A allowed), ✗ (an applicable Required failed), ⚠ (a Required check
    has no row), — for cells that were never run (#17).
 3. **Scoring engine to the 2026-09 spec** (blocking for any Tier II number): fair CRPS
-   with the M = 1 rule (#9); multi-member ingestion — `--member` / DRS variant discovery
-   in `_cli.py` feeding a member dimension into the scored diagnostics (#14); `E_ref` =
-   median per-model fair CRPS with leave-one-out once the paper settles #10;
+   with the M = 1 rule (#9); **stack the ingested members** — `--member` / DRS discovery
+   now writes one `data_id` per member (gap item 4), so what is left is grouping those
+   rows by model name into a member dimension inside the scored diagnostics (#14);
+   `E_ref` = median per-model fair CRPS with leave-one-out once the paper settles #10;
    reference-EOF fair-CRPS for fields, block bootstrap, observational-uncertainty draws
    (#12); wire `chunked_statistic_std` as σ_int through a `picontrol` path.
-4. **Test-window data path** (blocking; *upstream*): Tier II `--timerange` default to
-   2015–present; a `CMIP6HistoricalSSP245` DataSource generator (historical + ssp245
-   concatenation, `ensemble: "r*i1p1f1"`, open-ended timerange) in ClimateEval (#13).
-   Until it lands, Tier II can only be run in-sample.
+4. **Test-window data path** — **CB2 side DONE 2026-09-14 (this commit).** A per-suite
+   registry in `_cli.py` gives every suite the data shape and window the protocol asks
+   for: the experiment-based suites load `historical` (and every other experiment) in
+   **full**, so the aerosol-era, Pinatubo, clear-sky and ITCZ–EFE gates see the whole
+   record instead of the old 1979–2014 slice; `ClimateBench2_TierI_variability` takes
+   the `picontrol` experiment in full (#4); the Tier II suites take the model cubes over
+   `20150101/<last complete year>1231`, derived from the new
+   `tier2.test_window_start = 2015` (#13); `--timerange` remains an explicit override
+   for the cube suites. Multi-member ingestion landed with it: `--member LABEL=PATH`
+   and `r*i*p*f*` DRS auto-discovery, one run per member with
+   `DataSourceInformation(variant=LABEL)` appended into the same per-suite DuckDB
+   (`Suite.get_database(append=True)`), complex suites once per model (#14).
+   *Still open (upstream, blocking):* a `CMIP6HistoricalSSP245` DataSource generator
+   (historical + ssp245 concatenation, `ensemble: "r*i1p1f1"`, open-ended timerange) in
+   ClimateEval — until it lands the CMIP6 comparison rows for the test window are empty
+   and the CLI says so, so Tier II numbers are only interpretable in-sample.
 5. **Re-specced Tier I physics**: I.5c pattern-correlation teleconnections with
    HadISST/ERA5/GPCP reference patterns (#6); I.3c precip–buoyancy (new, with a stored
    GPCP/ERA5 reference slope); I.7 decadal window and parallel-segment drift removal

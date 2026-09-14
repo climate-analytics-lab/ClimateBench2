@@ -102,3 +102,81 @@ def test_tier3_diagnostics_importable_and_wired() -> None:
     assert issubclass(PaleoProxyConsistencyGate, CB2ComplexDiagnostic)
     (check,) = MidHoloceneMonsoonGate._gate_checks
     assert check.lower == 0.5  # mm/day, tier3.midholocene_monsoon
+
+
+# ---------------------------------------------------------------------------
+# Block pseudo-members and the Tier III fair CRPS (WP7)
+# ---------------------------------------------------------------------------
+
+
+def test_nonoverlapping_blocks_drops_spinup_and_remainder() -> None:
+    # 250 yr, 100 yr spin-up, 30 yr blocks -> 5 blocks (150 yr), 0 left over
+    blocks = scoring.nonoverlapping_blocks(250, 30, spinup=100)
+    assert [(b.start, b.stop) for b in blocks] == [
+        (100, 130),
+        (130, 160),
+        (160, 190),
+        (190, 220),
+        (220, 250),
+    ]
+    # a 20-yr remainder is dropped, never scored as a short block
+    assert len(scoring.nonoverlapping_blocks(270, 30, spinup=100)) == 5
+    # too short for even one block
+    assert scoring.nonoverlapping_blocks(120, 30, spinup=100) == []
+    assert scoring.nonoverlapping_blocks(10, 30) == []
+    with pytest.raises(ValueError, match="block_length"):
+        scoring.nonoverlapping_blocks(100, 0)
+
+
+def test_block_climatologies_are_per_block_means_over_the_leading_axis() -> None:
+    # A field whose value is its year index: block means are the block centres
+    years = np.arange(10, dtype=float)
+    field = years[:, None, None] * np.ones((1, 2, 3))
+    members = scoring.block_climatologies(field, 4, spinup=2)
+    assert members.shape == (2, 2, 3)  # years 2-5 and 6-9
+    np.testing.assert_allclose(members[:, 0, 0], [3.5, 7.5])
+
+    # NaNs inside a block are ignored, not propagated
+    field[3, 0, 0] = np.nan
+    members = scoring.block_climatologies(field, 4, spinup=2)
+    assert members[0, 0, 0] == pytest.approx((2 + 4 + 5) / 3)
+    # no blocks at all -> an empty (0, ...) array, not an error
+    assert scoring.block_climatologies(field, 40).shape == (0, 2, 3)
+
+
+def test_proxy_crps_rewards_the_right_ensemble_and_drops_bad_sites() -> None:
+    rng = np.random.default_rng(3)
+    n_sites = 60
+    truth = rng.normal(0, 3, n_sites)
+    sigma = np.full(n_sites, 1.0)
+    proxy = truth + rng.normal(0, 1.0, n_sites)
+    good = truth[None, :] + rng.normal(0, 1.0, (8, n_sites))
+    bad = good + 6.0
+
+    score_good, per_site = scoring.proxy_crps(good, proxy, sigma, seed=1)
+    score_bad, _ = scoring.proxy_crps(bad, proxy, sigma, seed=1)
+    assert score_good.score < score_bad.score
+    assert per_site.shape == (n_sites,)
+    # sites are an unordered axis: r1 is NaN and T_eff is the site count
+    assert np.isnan(score_good.r1)
+    assert score_good.t_eff == n_sites
+    assert score_good.n_members == 8
+
+    # a site with no proxy value (or no sigma) is dropped from both
+    proxy[0] = np.nan
+    sigma[1] = np.nan
+    score, per_site = scoring.proxy_crps(good, proxy, sigma, seed=1)
+    assert np.isnan(per_site[0]) and np.isnan(per_site[1])
+    assert score.n_time == n_sites - 2
+
+    with pytest.raises(ValueError, match="no valid proxy sites"):
+        scoring.proxy_crps(good, np.full(n_sites, np.nan), sigma)
+
+
+def test_proxy_crps_uses_the_proxy_sigma_as_observational_uncertainty() -> None:
+    """A larger proxy error must not make a good model look better."""
+    members = np.array([[0.0, 0.1], [0.2, -0.1], [-0.1, 0.05]])
+    proxy = np.zeros(2)
+    tight, _ = scoring.proxy_crps(members, proxy, np.full(2, 0.01), seed=7)
+    loose, _ = scoring.proxy_crps(members, proxy, np.full(2, 5.0), seed=7)
+    assert loose.score > tight.score

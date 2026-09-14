@@ -688,6 +688,127 @@ def proxy_site_consistency(
     return fraction, z
 
 
+def nonoverlapping_blocks(
+    n_steps: int,
+    block_length: int,
+    *,
+    spinup: int = 0,
+) -> list[slice]:
+    """Non-overlapping blocks of the **equilibrated** portion of a run.
+
+    The protocol's pseudo-ensemble rule for a single-member equilibrium
+    experiment (metrics_reference.md §III.1, paper §5.1): drop the first
+    ``spinup`` steps, then chop what remains into consecutive blocks of
+    ``block_length`` steps. A trailing remainder shorter than one block is
+    dropped rather than scored as a short block — every pseudo-member must
+    average the same number of years, or their spread would mix sampling
+    noise with block length.
+
+    Returns the blocks **latest-first is not implied**: they are in record
+    order, and the count is ``(n_steps − spinup) // block_length``, which the
+    caller checks against the protocol's minimum of two (fair CRPS is
+    undefined for one member).
+    """
+    usable = int(n_steps) - int(spinup)
+    length = int(block_length)
+    if length < 1:
+        msg = f"block_length must be >= 1, got {block_length}"
+        raise ValueError(msg)
+    n_blocks = max(usable // length, 0)
+    start = int(spinup)
+    return [
+        slice(start + i * length, start + (i + 1) * length) for i in range(n_blocks)
+    ]
+
+
+def block_climatologies(
+    values: np.ndarray,
+    block_length: int,
+    *,
+    spinup: int = 0,
+) -> np.ndarray:
+    """Per-block means along the leading (time) axis.
+
+    ``values`` is ``(n_steps, …)`` — an annual-mean field, a site series, a
+    scalar series; the result is ``(n_blocks, …)``, one climatology per
+    :func:`nonoverlapping_blocks` block. These are the protocol's
+    **pseudo-members** once the piControl climatology is subtracted, which
+    the caller does (the control mean is common to every block, so
+    subtracting it shifts them all equally and leaves the spread untouched).
+
+    NaNs are ignored within a block (``np.nanmean``), so a field masked over
+    land or ice keeps those points masked rather than poisoning the block.
+    """
+    array = np.asarray(values, dtype=float)
+    blocks = nonoverlapping_blocks(array.shape[0], block_length, spinup=spinup)
+    if not blocks:
+        return np.empty((0, *array.shape[1:]), dtype=float)
+    with np.errstate(invalid="ignore"):
+        return np.stack([np.nanmean(array[b], axis=0) for b in blocks])
+
+
+def proxy_crps(
+    members_at_sites: np.ndarray,
+    proxy_values: np.ndarray,
+    proxy_sigma: np.ndarray,
+    *,
+    n_draws: int = 100,
+    seed: int = 0,
+) -> tuple[CRPSScore, np.ndarray]:
+    """Tier III primary score: fair CRPS against proxies, meaned over sites.
+
+    Per site, the fair CRPS of the model's pseudo-ensemble against the proxy
+    value, with the **proxy uncertainty as the observational variance term**
+    — the same common-draw treatment as Tier II
+    (:func:`crps_fair_with_obs_draws`), so the two tiers' CRPS numbers are
+    formed the same way (metrics_reference.md §III.1).
+
+    The variable-level score is the **equal-weight mean over sites**: a proxy
+    network is a set of point measurements, not an area sample, so
+    cos-latitude weighting would be meaningless (it weights grid cells, not
+    cores). Sites are treated as an unordered axis, so the standard error is
+    ``std / sqrt(n_sites)`` (:func:`crps_independent_summary`) — which
+    **ignores spatial correlation between nearby sites** and is therefore
+    optimistic; a documented CB2 reading, not a protocol statement.
+
+    Parameters
+    ----------
+    members_at_sites:
+        ``(n_members, n_sites)`` — the pseudo-ensemble sampled at the sites.
+    proxy_values, proxy_sigma:
+        ``(n_sites,)`` — the proxy anomaly and its 1σ uncertainty.
+    n_draws, seed:
+        Observational-uncertainty draws (``tier2.obs_uncertainty``).
+
+    Returns
+    -------
+    :
+        ``(summary, per-site CRPS)``. Sites with a non-finite proxy value,
+        σ or model value are dropped from both.
+    """
+    members = np.atleast_2d(np.asarray(members_at_sites, dtype=float))
+    proxy = np.asarray(proxy_values, dtype=float)
+    sigma = np.asarray(proxy_sigma, dtype=float)
+    valid = (
+        np.isfinite(proxy)
+        & np.isfinite(sigma)
+        & np.isfinite(members).all(axis=0)
+    )
+    if not valid.any():
+        msg = "no valid proxy sites"
+        raise ValueError(msg)
+    crps_sites = crps_fair_with_obs_draws(
+        members[:, valid],
+        proxy[valid],
+        obs_sigma=sigma[valid],
+        n_draws=n_draws,
+        seed=seed,
+    )
+    full = np.full(proxy.shape, np.nan)
+    full[valid] = crps_sites
+    return crps_independent_summary(crps_sites, members.shape[0]), full
+
+
 def sample_at_sites(
     field: np.ndarray,
     lats: np.ndarray,

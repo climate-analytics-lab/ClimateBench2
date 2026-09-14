@@ -378,3 +378,55 @@ def test_missing_member_path_is_an_error() -> None:
 
     with pytest.raises(SystemExit, match="Member path not found"):
         main(["score", ".", "--member", "r1i1p1f1=/definitely/not/here"])
+
+
+# ---------------------------------------------------------------------------
+# The Tier II scoring pass (gap item 3)
+# ---------------------------------------------------------------------------
+
+
+def test_score_runs_the_scoring_pass_unless_disabled(
+    tmp_path,  # noqa: ANN001
+    monkeypatch,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+) -> None:
+    """`score` finishes by stacking the ingested members into fair CRPS."""
+    scored: list[list] = []
+    monkeypatch.setattr(
+        "climatebench2._cli.run_scoring_pass",
+        lambda paths: scored.append(list(paths)),
+    )
+    model = tmp_path / "Model"
+    model.mkdir()
+    recorded_score([str(model), "--suite", "ClimateBench2_TierII"])
+    assert len(scored) == 1
+    assert [p.name for p in scored[0]] == ["ClimateBench2_TierII.ddb"]
+
+    scored.clear()
+    recorded_score([str(model), "--suite", "ClimateBench2_TierII", "--no-score"])
+    assert scored == []
+
+
+def test_leaderboard_rescore_flag_reruns_the_pass(
+    tmp_path,  # noqa: ANN001
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    from climatebench2._cli import main
+
+    db_path = tmp_path / "ClimateBench2_TierII.ddb"
+    db_path.write_bytes(b"")
+    scored: list[list] = []
+    monkeypatch.setattr(
+        "climatebench2._cli.run_scoring_pass",
+        lambda paths: scored.append(list(paths)),
+    )
+    monkeypatch.setattr(
+        "climatebench2.leaderboard.build_scores_table",
+        lambda paths: __import__("pandas").DataFrame({"model": ["M"]}),
+    )
+    main(["leaderboard", str(db_path), "--rescore", "--csv", str(tmp_path / "s.csv")])
+    assert [p.name for p in scored[0]] == ["ClimateBench2_TierII.ddb"]
+
+    scored.clear()
+    main(["leaderboard", str(db_path), "--csv", str(tmp_path / "s.csv")])
+    assert scored == []

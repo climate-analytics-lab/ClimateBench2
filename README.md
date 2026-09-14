@@ -48,7 +48,24 @@ climatebench2 score emulator_output --name MyEmulator \
 
 # Build the leaderboard (static HTML) from one or more models' results
 climatebench2 leaderboard MyModel_climatebench2/*.ddb -o leaderboard.html
+# Re-run the Tier II scoring pass over existing databases (idempotent):
+climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb
 ```
+
+**Tier II scoring is a pass over the finished databases, not a diagnostic.**
+Ensemble members are ingested as separate data sources, so a model's fair CRPS
+can only be formed once every member has run: `score` therefore runs
+`climatebench2.scoring_pass` after the suites (`--no-score` skips it,
+`leaderboard --rescore` re-runs it). The pass groups the raw series by model
+*name* — stripping the variant via the `data_sources` table — scores each
+model's stacked ensemble with the **fair (Ferro) CRPS**, adds an
+ESS-corrected standard error and a moving-block-bootstrap interval, and writes
+the headline skill `S = 1 − E/E_ref` with `E_ref` the **median** fair CRPS
+across the CMIP6 reference models, leaving out any comparison model of the
+submission's own name. A single-member submission is reported as
+`n/a (single member)`: fair CRPS is undefined for a deterministic forecast.
+Rows are appended to each diagnostic's own `metrics` table with
+`scorer = 'climatebench2'`, and re-running replaces them.
 
 The Tier I scorecard is grouped by each gate's `requirement` tag
 (`climatebench2/thresholds.yml`): **Required** checks form the entry ticket — a model is
@@ -81,9 +98,10 @@ climatebench2/           # the installable package
 ├── diags/               # CB2 protocol diagnostics (plug into ClimateEval suites)
 ├── suites/              # CB2 suite YAMLs — Tier I/II/III (see suites/README.md)
 ├── thresholds.yml       # single source of truth for every pass/fail bound
-├── scoring.py           # CRPS-ESS, ensemble-consistency, EOF, proxy, LE-spread engine
+├── scoring.py           # fair CRPS, ESS + block bootstrap, consistency, EOF, proxy
+├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
 ├── physics.py           # pure Tier I physics (numpy only)
-├── baselines.py         # climatology persistence, two-layer EBM × pattern scaling
+├── baselines.py         # climatology pseudo-members, two-layer EBM × pattern scaling
 ├── leaderboard/         # .ddb results → static HTML leaderboard
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 docs/                    # delineation plan, metrics reference
@@ -98,13 +116,16 @@ are implemented: tier suites, the probabilistic scoring engine, the Tier I
 physics gates, baselines, Tier III paleo protocol, and the leaderboard.
 The implementation was re-audited against the 2026-09 paper draft on
 2026-09-14: see the status tables and the prioritized gap list in
-[docs/metrics_reference.md](docs/metrics_reference.md). Headline open items
-are re-aligning the scoring engine to fair CRPS (including stacking the
-ingested ensemble members into one forecast), a post-2015 multi-member CMIP6
-reference in ClimateEval, and wiring Tier III to the paleo pipeline's NetCDF
-outputs. Required/Extended/extra tagging of the
-Tier I gates, declared N/A and the Required-only entry ticket landed on
-2026-09-14 (gap item 2). ClimateEval is pinned at `b0e941c`, which provides the
+[docs/metrics_reference.md](docs/metrics_reference.md). The scoring-engine core is now on the
+2026-09 spec (gap item 3): fair CRPS with the M = 1 rule, stacked ensemble
+members, observational-uncertainty draws, the moving-block bootstrap and the
+median-of-per-model `E_ref` with leave-one-out. Headline open items are the
+reference-EOF fair CRPS for aggregated diagnostics and spatial fields, a
+post-2015 multi-member CMIP6 reference in ClimateEval (without which `E_ref`
+has nothing to average and the Tier II cells fall back to the raw CRPS), and
+wiring Tier III to the paleo pipeline's NetCDF outputs.
+Required/Extended/extra tagging of the Tier I gates, declared N/A and the
+Required-only entry ticket landed on 2026-09-14 (gap item 2). ClimateEval is pinned at `b0e941c`, which provides the
 land–ocean, Arctic and meridional-heat-transport diagnostics upstream; CB2's
 copies have been replaced by thin gate wrappers that add only the protocol's
 thresholds.

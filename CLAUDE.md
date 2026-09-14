@@ -29,7 +29,8 @@ climatebench2/
 ├── suites/              # CB2 suite YAMLs; may reference climatebench2.diags.* AND climateeval.diags.*
 ├── thresholds.yml       # EVERY pass/fail bound + each gate's `requirement:` tag
 │                        #   (required/extended/extra/diagnostic) — never hard-code one
-├── scoring.py           # pure CRPS-ESS / ensemble-consistency / EOF engine (numpy only)
+├── scoring.py           # pure fair-CRPS / bootstrap / consistency / EOF engine (numpy only)
+├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
 ├── physics.py           # pure Tier I physics functions (numpy only)
 ├── leaderboard/         # .ddb results → scores table (→ static HTML page, Phase 6)
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
@@ -71,7 +72,8 @@ climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --mem
 #   per-suite data paths (_cli.SUITE_REGISTRY): experiments load in FULL for the
 #   complex suites, the variability suite takes piControl, the Tier II suites take
 #   the post-2015 test window (tier2.test_window_start), once per ensemble member
-climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scores table
+climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scorecard (HTML)
+climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb  # re-run the Tier II pass
 climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report
 
 # Tests (ClimateEval pixi env + this repo on PYTHONPATH; see tests/README.md)

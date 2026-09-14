@@ -26,10 +26,18 @@ protocol constants from `thresholds.yml`, so their suite entries keep
 |---|---|---|
 | `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | 16 physical-consistency gates: ECS, energy balance, closures, clear-sky β, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ + the Bjerknes and C–C extras |
 | `ClimateBench2_TierI_variability` | cubes (monthly `tos`) | ENSO amplitude + spectral-shape gates |
-| `ClimateBench2_TierII` | cubes (monthly) | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4 with CRPS-ESS scoring, trend consistency, and the Climatology + CMIP6-MME baseline rows |
+| `ClimateBench2_TierII` | cubes (monthly) | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4, plus the trend-consistency diagnostic |
 | `ClimateBench2_TierII_daily` | cubes (daily/hourly) | TXx block maxima (daily `tasmax`), pr intensity PDF, diurnal cycle |
 | `ClimateBench2_TierII_events` | experiment dict (`historical`) | Pinatubo response and aerosol-era hemispheric asymmetry — Tier II aggregated diagnostics, reported but never part of the Tier I entry ticket |
 | `ClimateBench2_TierIII` | experiment dict (`picontrol` + `midholocene`/`lgm`/`lig127k`) | Mid-Holocene monsoon gate + proxy-site consistency per period |
+
+The `Scored*` diagnostics named by the Tier II suites are **thin subclasses of
+the ClimateEval time-series diagnostics**: they emit the raw series and
+ClimateEval's deterministic metrics only. The probabilistic score is added
+afterwards by `climatebench2.scoring_pass`, which `climatebench2 score` runs
+over the finished databases (and `climatebench2 leaderboard --rescore`
+re-runs) — members arrive as separate data sources, so a model's fair CRPS
+can only be formed once every member has run.
 
 Every threshold referenced by a diagnostic comes from
 [`../thresholds.yml`](../thresholds.yml) — never hard-coded, and that includes each

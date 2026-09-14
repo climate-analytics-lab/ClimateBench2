@@ -8,10 +8,17 @@ Subcommands
 ``climatebench2 score MODEL``
     Run the ClimateBench2 evaluation suites on a model's CMOR output via
     ClimateEval and write one DuckDB results database per suite (default:
-    the CB2 tier suites, which grow per the delineation plan §6).
+    the CB2 tier suites, which grow per the delineation plan §6), then run
+    the Tier II scoring pass over them (``--no-score`` skips it).
 ``climatebench2 leaderboard DB [DB ...]``
-    Build the ClimateBench2 leaderboard from result databases. Phase 0 ships
-    a scores table (stdout / CSV); the standalone HTML page lands in Phase 6.
+    Build the ClimateBench2 leaderboard from result databases;
+    ``--rescore`` re-runs the Tier II scoring pass over them first.
+
+The Tier II scores are a **post-processing pass**
+(:mod:`climatebench2.scoring_pass`), not a diagnostic: ensemble members are
+ingested as separate data sources, so a model's fair CRPS can only be formed
+once every member has run. The pass is idempotent — it replaces the rows it
+wrote before — so it is safe to re-run at any time.
 
 ClimateBench2 deliberately has no data-loading or report machinery of its
 own — ``score`` delegates to ClimateEval (``load_cmor_dir`` + ``Suite``), and
@@ -431,11 +438,13 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
         print(
             f"\nIngested {len(members)} members ({', '.join(members)}) into the "
             f"cube-based suites, each with its own data id; Tier I ran once on "
-            f"'{first_label or args.variant or args.name}'. Scoring still treats "
-            f"every data id separately — stacking the members of a model into one "
-            f"fair-CRPS ensemble is the next work package (gap item 3).",
+            f"'{first_label or args.variant or args.name}'. The scoring pass "
+            f"below stacks them into one fair-CRPS ensemble per model.",
             file=sys.stderr,
         )
+
+    if db_paths and not args.no_score:
+        run_scoring_pass(db_paths)
 
     print(
         f"\nDone. Score with:  climatebench2 leaderboard "
@@ -444,12 +453,32 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
     )
 
 
+def run_scoring_pass(db_paths: list[Path]) -> None:
+    """Run the Tier II scoring pass over the given databases, reporting to stderr.
+
+    Members are ingested as separate data sources, so the fair CRPS of a
+    model's ensemble can only be formed once every member has run — this is
+    that step (``climatebench2.scoring_pass``). It is idempotent: re-running
+    it replaces the scores it wrote before.
+    """
+    from climatebench2.scoring_pass import score_databases
+
+    print("\nScoring Tier II (fair CRPS over stacked members)…", file=sys.stderr)
+    for report in score_databases(db_paths):
+        print(f"  {report.summary()}", file=sys.stderr)
+        for message in report.messages:
+            print(f"  {message}", file=sys.stderr)
+
+
 def _cmd_leaderboard(args: argparse.Namespace) -> None:
     db_paths = [p.resolve() for p in args.db]
     for path in db_paths:
         if not path.exists():
             msg = f"Database not found: {path}"
             raise SystemExit(msg)
+
+    if args.rescore:
+        run_scoring_pass(db_paths)
 
     from climatebench2.leaderboard import (
         build_scores,
@@ -498,7 +527,9 @@ def build_parser() -> argparse.ArgumentParser:
             "--member r1i1p1f1=DIR --member r2i1p1f1=DIR\n"
             "      score several ensemble members into the same databases\n"
             "  climatebench2 leaderboard MyModel_climatebench2/*.ddb\n"
-            "      build the scores table from the results\n"
+            "      build the scorecard from the results\n"
+            "  climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb\n"
+            "      re-run the Tier II scoring pass first (idempotent)\n"
             "\n"
             "each suite gets the data shape and window the protocol asks for:\n"
             "  Tier I / TierII_events / TierIII  experiment dict, every "
@@ -609,6 +640,16 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help="Output directory (default: <name>_climatebench2/).",
     )
+    score.add_argument(
+        "--no-score",
+        action="store_true",
+        help=(
+            "Write the suite databases but skip the Tier II scoring pass "
+            "(fair CRPS over the stacked ensemble members, its bootstrap "
+            "interval and the skill against the CMIP6 median). Run it later "
+            "with `climatebench2 leaderboard --rescore DB ...`."
+        ),
+    )
     score.add_argument("--institute", default="", help="Institute (provenance).")
     score.add_argument("--exp", default="", help="Experiment (provenance).")
     score.add_argument("--variant", default="", help="Variant label (provenance).")
@@ -633,6 +674,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="FILE",
         help="Write the simple deterministic summary as CSV instead of HTML.",
+    )
+    leaderboard.add_argument(
+        "--rescore",
+        action="store_true",
+        help=(
+            "Re-run the Tier II scoring pass over the databases first, "
+            "replacing the scores in them. `climatebench2 score` already runs "
+            "the pass; use this on databases written with --no-score, on ones "
+            "written before the pass existed, or after changing "
+            "thresholds.yml. The pass is idempotent."
+        ),
     )
     leaderboard.set_defaults(func=_cmd_leaderboard)
 

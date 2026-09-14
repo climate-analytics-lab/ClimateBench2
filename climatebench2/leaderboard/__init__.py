@@ -11,10 +11,15 @@ protocol's presentation:
   is ✓ only when every Required check either passed or was declared N/A by
   the submission, ⚠ when a Required check produced no row at all, ✗ when an
   applicable Required check failed.
-- **Tier II scores** — CRPS (with ESS-corrected uncertainty) per variable,
-  reported as skill relative to the protocol baselines (climatology
-  persistence and the CMIP6 multi-model ensemble), plus the regime-(b)
-  consistency outcomes.
+- **Tier II scores** — the headline skill ``S = 1 − E/E_ref`` per model and
+  variable, where E is the model's **fair CRPS** over its stacked ensemble
+  members and E_ref the **median** fair CRPS across the CMIP6 reference
+  models (leave-one-out); the CRPS, its bootstrap interval and the ensemble
+  size are in the cell tooltip, the Climatology-baseline skill alongside.
+  The scores come from :mod:`climatebench2.scoring_pass`, which
+  ``climatebench2 score`` runs after the suites (and ``leaderboard
+  --rescore`` re-runs), so a database that has not been through the pass
+  shows no Tier II numbers.
 - **Tier III** — paleo proxy-site consistency fractions and the
   mid-Holocene monsoon gate.
 
@@ -28,6 +33,8 @@ from __future__ import annotations
 import html as html_module
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from climatebench2.scoring_pass import CLIMATOLOGY_DATA_ID, SCORER
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -117,7 +124,12 @@ def build_scores(db_paths: list[Path]) -> Scores:
                     is_gate = is_gate | (tagged["applicable"] == 0.0)
                 gates.append(tagged[is_gate])
             if "crps" in df.columns:
-                crps.append(tagged[tagged["crps"].notna()])
+                # Rows the scoring pass wrote are kept even with a NaN score:
+                # "n/a (single member)" is a result the scorecard must show.
+                keep = tagged["crps"].notna()
+                if "scorer" in tagged.columns:
+                    keep = keep | (tagged["scorer"] == SCORER)
+                crps.append(tagged[keep])
             if "p_value" in df.columns:
                 consistency.append(tagged[tagged["p_value"].notna()])
             metric_cols = [
@@ -381,54 +393,150 @@ def _event_flags_html(gates: pd.DataFrame) -> str:
     )
 
 
+#: The paper clips the displayed skill score at S = -1 (it is bounded above
+#: by 1, unbounded below, so a hopeless model would otherwise squash the
+#: whole column).
+SKILL_DISPLAY_FLOOR = -1.0
+
+
+def _number(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _skill_cell(row: pd.Series, clim_crps: float) -> str:
+    """One Tier II cell: headline skill, climatology skill, CRPS tooltip."""
+    import numpy as np
+
+    crps = _number(row.get("crps"))
+    reason = row.get("reason")
+    if not np.isfinite(crps):
+        note = str(reason) if isinstance(reason, str) and reason else "not scored"
+        return f"<td class='na' title='{_esc(note)}'>n/a<br><small>{_esc(note)}</small></td>"
+
+    skill = _number(row.get("skill"))
+    e_ref = _number(row.get("e_ref"))
+    n_ref = _number(row.get("n_ref_models"))
+    lo, hi = _number(row.get("crps_ci_lo")), _number(row.get("crps_ci_hi"))
+
+    tip = [f"fair CRPS {crps:.4g}"]
+    if np.isfinite(lo) and np.isfinite(hi):
+        tip.append(f"95% CI [{lo:.4g}, {hi:.4g}]")
+    se = _number(row.get("crps_se"))
+    if np.isfinite(se):
+        tip.append(f"SE {se:.3g}")
+    members = _number(row.get("n_members"))
+    if np.isfinite(members):
+        tip.append(f"M = {members:.0f}")
+    if np.isfinite(e_ref):
+        tip.append(f"E_ref {e_ref:.4g} (median of {n_ref:.0f} CMIP6 models)")
+
+    if np.isfinite(skill):
+        shown = max(skill, SKILL_DISPLAY_FLOOR)
+        text = f"{shown:+.2f}" + ("" if shown == skill else "▼")
+        cls = "num " + ("beats" if skill > 0 else "loses")
+    else:
+        # No CMIP6 comparison ensemble in this database (the post-2015
+        # generator is an upstream gap) — show the raw score instead.
+        text = f"{crps:.4g}"
+        cls = "num"
+        tip.append("no CMIP6 reference ensemble: showing the raw CRPS")
+
+    small = ""
+    if np.isfinite(clim_crps) and clim_crps > 0 and row.get("data_type") != "baseline":
+        small = f"<br><small>clim {1.0 - crps / clim_crps:+.2f}</small>"
+    return f"<td class='{cls}' title='{_esc('; '.join(tip))}'>{text}{small}</td>"
+
+
 def _crps_table_html(crps: pd.DataFrame) -> str:
     import numpy as np
-    import pandas as pd
 
     if crps.empty:
         return "<p class='na'>No Tier II CRPS scores in the given databases.</p>"
-    pivot = crps.pivot_table(
-        index="data_id",
-        columns="var_id",
-        values="crps",
-        aggfunc="mean",
-    )
-    baseline_ids = [
-        i
-        for i in pivot.index
-        if i in ("Climatology", "CMIP6-MME")
-        or (crps.loc[crps.data_id == i, "data_type"] == "baseline").any()
-    ]
-    model_ids = [i for i in pivot.index if i not in baseline_ids]
 
-    header = "".join(f"<th>{_esc(c)}</th>" for c in pivot.columns)
-    rows = []
-    clim = pivot.loc["Climatology"] if "Climatology" in pivot.index else None
-    for data_id in [*model_ids, *baseline_ids]:
-        row = pivot.loc[data_id]
-        is_baseline = data_id in baseline_ids
+    # One record per (model, variable); a variable scored by several
+    # diagnostics keeps the first row rather than averaging incomparable
+    # scores together. A submission that is *also* in the CMIP6 comparison
+    # ensemble (the leave-one-out case) is shown as the submission.
+    #: Which row wins a (model, variable) collision, and the row order of the
+    #: table: the submission first, then the comparison models, baselines last.
+    rank = {"to_benchmark": 0, "other": 1, "baseline": 2}
+    records: dict[tuple[str, str], pd.Series] = {}
+    for _, row in crps.iterrows():
+        key = (str(row["data_id"]), str(row["var_id"]))
+        kept = records.get(key)
+        if kept is None or rank.get(str(row.get("data_type")), 3) < rank.get(
+            str(kept.get("data_type")),
+            3,
+        ):
+            records[key] = row
+    variables = sorted({var for (_, var) in records})
+
+    def data_type(model: str) -> str:
+        return min(
+            (str(r.get("data_type")) for (m, _), r in records.items() if m == model),
+            key=lambda t: rank.get(t, 3),
+        )
+
+    models = sorted(
+        {model for (model, _) in records},
+        key=lambda m: (rank.get(data_type(m), 3), m),
+    )
+    clim = {
+        var: _number(records[CLIMATOLOGY_DATA_ID, var].get("crps"))
+        for var in variables
+        if (CLIMATOLOGY_DATA_ID, var) in records
+    }
+
+    header = "".join(f"<th>{_esc(v)}</th>" for v in variables)
+    body = []
+    for model in models:
         cells = []
-        for col, val in row.items():
-            if pd.isna(val):
+        for var in variables:
+            row = records.get((model, var))
+            if row is None:
                 cells.append("<td class='na'>—</td>")
                 continue
-            skill = ""
-            cls = "num"
-            if clim is not None and not is_baseline and np.isfinite(clim.get(col, np.nan)):
-                rel = 1.0 - val / clim[col]
-                mark = "beats" if rel > 0 else "loses"
-                cls = f"num {mark}"
-                skill = f" <small>({rel:+.0%})</small>"
-            cells.append(f"<td class='{cls}'>{val:.4g}{skill}</td>")
-        tr_cls = " class='baseline'" if is_baseline else ""
-        rows.append(
-            f"<tr{tr_cls}><td><strong>{_esc(data_id)}</strong></td>{''.join(cells)}</tr>",
+            cells.append(_skill_cell(row, clim.get(var, float("nan"))))
+        tr_cls = " class='baseline'" if data_type(model) == "baseline" else ""
+        body.append(
+            f"<tr{tr_cls}><td><strong>{_esc(model)}</strong></td>"
+            f"{''.join(cells)}</tr>",
         )
+
+    # How many CMIP6 models stand behind each E_ref (leave-one-out, so the
+    # largest value over the column is the size of the reference ensemble).
+    counts = []
+    for var in variables:
+        values = [
+            _number(r.get("n_ref_models"))
+            for (_, v), r in records.items()
+            if v == var
+        ]
+        finite = [v for v in values if np.isfinite(v)]
+        counts.append(
+            f"<td class='num'>{max(finite):.0f}</td>" if finite else "<td class='na'>0</td>",
+        )
+    body.append(
+        "<tr><td><em>CMIP6 models behind E_ref</em></td>" + "".join(counts) + "</tr>",
+    )
+
     return (
-        "<p>CRPS per variable (lower is better); the percentage is skill "
-        "relative to the climatology-persistence baseline.</p>"
+        "<p>Headline skill <strong>S = 1 − E/E_ref</strong> per variable, "
+        "where E is the <strong>fair CRPS</strong> of the model's ensemble and "
+        "E_ref the <strong>median</strong> fair CRPS across the CMIP6 "
+        "reference models (leave-one-out). S = 0 is median-CMIP6 performance, "
+        "S = 1 a perfect match; the score is bounded above but not below and "
+        f"the display is clipped at {SKILL_DISPLAY_FLOOR:+.0f} (▼). The small "
+        "figure is the same skill against the <em>Climatology</em> baseline. "
+        "Hover a cell for the CRPS, its bootstrap interval and the ensemble "
+        "size. <strong>n/a</strong> marks a model the protocol cannot score — "
+        "most often a single-member submission, for which fair CRPS is "
+        "undefined.</p>"
         f"<table><thead><tr><th>Model</th>{header}</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<tbody>{''.join(body)}</tbody></table>"
     )
 
 

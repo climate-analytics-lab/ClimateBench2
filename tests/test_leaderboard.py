@@ -32,14 +32,22 @@ def synthetic_db(tmp_path):  # noqa: ANN201
     )
     crps = pd.DataFrame(
         {
-            "data_id": ["GoodModel", "Climatology", "CMIP6-MME"],
-            "data_type": ["to_benchmark", "baseline", "baseline"],
-            "var_id": ["tas"] * 3,
-            "crps": [0.08, 0.20, 0.12],
-            "crps_se": [0.01] * 3,
-            "t_eff": [25.0] * 3,
-            "n_members": [1, 1, 12],
-            "n_time": [30] * 3,
+            "data_id": ["GoodModel", "SingleMember", "CMIP6_A", "Climatology"],
+            "data_type": ["to_benchmark", "to_benchmark", "other", "baseline"],
+            "var_id": ["tas"] * 4,
+            "scorer": ["climatebench2"] * 4,
+            "reason": ["", "single member", "", ""],
+            "crps": [0.08, np.nan, 0.12, 0.20],
+            "crps_se": [0.01, np.nan, 0.02, 0.03],
+            "crps_ci_lo": [0.06, np.nan, 0.10, 0.17],
+            "crps_ci_hi": [0.10, np.nan, 0.14, 0.23],
+            "t_eff": [25.0, np.nan, 25.0, 25.0],
+            "n_members": [5.0, 1.0, 3.0, 30.0],
+            "n_time": [30.0, 30.0, 30.0, 30.0],
+            "e_ref": [0.12, np.nan, np.nan, 0.12],
+            "n_ref_models": [4.0, np.nan, 3.0, 4.0],
+            # 1 - 0.08/0.12 = +0.33 vs the CMIP6 median
+            "skill": [1.0 - 0.08 / 0.12, np.nan, np.nan, 1.0 - 0.20 / 0.12],
         },
     )
     tier3 = pd.DataFrame(
@@ -64,7 +72,13 @@ def synthetic_db(tmp_path):  # noqa: ANN201
 def test_build_scores_collects_all_sections(synthetic_db) -> None:  # noqa: ANN001
     scores = build_scores([synthetic_db])
     assert set(scores.gates["data_id"]) == {"GoodModel", "BadModel"}
-    assert set(scores.crps["data_id"]) == {"GoodModel", "Climatology", "CMIP6-MME"}
+    # the NaN-CRPS "single member" row is kept: it is a result to show
+    assert set(scores.crps["data_id"]) == {
+        "GoodModel",
+        "SingleMember",
+        "CMIP6_A",
+        "Climatology",
+    }
     assert not scores.tier3.empty
     assert scores.consistency.empty
 
@@ -79,15 +93,32 @@ def test_render_html_gate_matrix_and_skill(synthetic_db) -> None:  # noqa: ANN00
     # Gate matrix: GoodModel all-pass, BadModel all-fail
     assert "✓" in html
     assert "✗" in html
-    # CRPS skill vs climatology: 1 - 0.08/0.20 = +60%
-    assert "+60%" in html
+    # Headline skill vs the CMIP6 median: 1 - 0.08/0.12 = +0.33
+    assert "+0.33" in html
+    # ... with the climatology skill alongside: 1 - 0.08/0.20 = +0.60
+    assert "clim +0.60" in html
+    # CRPS and its bootstrap interval are in the cell tooltip
+    assert "fair CRPS 0.08" in html
+    assert "95% CI [0.06, 0.1]" in html
+    # A single-member submission cannot be scored under fair CRPS
+    assert "single member" in html
+    # The size of the reference ensemble behind E_ref is shown
+    assert "CMIP6 models behind E_ref" in html
     # Tier III fraction
     assert "85%" in html
     # Baselines present and styled
     assert "Climatology" in html
-    assert "CMIP6-MME" in html
     # Self-contained: no external resources
     assert "http" not in html.split("</style>")[1]
+
+
+def test_render_html_clips_the_displayed_skill(synthetic_db) -> None:  # noqa: ANN001
+    """S is unbounded below; the paper clips the display at -1."""
+    scores = build_scores([synthetic_db])
+    scores.crps.loc[scores.crps["data_id"] == "GoodModel", "skill"] = -4.2
+    html = render_html(scores)
+    assert "-4.2" not in html
+    assert "-1.00▼" in html
 
 
 def test_render_html_empty_sections() -> None:

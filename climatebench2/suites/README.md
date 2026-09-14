@@ -11,9 +11,12 @@ suites are homogeneous by data shape: *complex* suites take an experiment
 dict (`--experiment KEY=PATH`), *simple* suites take cubes. Which of the two a
 suite gets — and over which time window — is declared in the CLI's suite
 registry (`_cli.SUITE_REGISTRY`): experiments always load in full, the
-variability suite takes `picontrol`, and the Tier II suites take the model's
-cubes over the post-2015 test window (`tier2.test_window_start`), once per
-ensemble member (`--member LABEL=PATH`, or DRS auto-discovery).
+variability suite takes `picontrol`, and the monthly Tier II suite takes the
+model's cubes over the post-2015 test window (`tier2.test_window_start`),
+once per ensemble member (`--member LABEL=PATH`, or DRS auto-discovery).
+`ClimateBench2_TierII_daily` is the one cube suite that takes **no window
+cut**: the paper computes its extremes, PDF and diurnal climatologies "over
+the full historical record", so every entry in it is in-sample.
 `SuiteSpec.per_member` is what decides that, and it is set for
 `ClimateBench2_TierII_events` too: its aggregated scalars are scored *across*
 the ensemble, so the suite runs once per member with **that member's own
@@ -33,8 +36,8 @@ protocol constants from `thresholds.yml`, so their suite entries keep
 | `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | 17 physical-consistency gates: ECS, energy balance, closures, clear-sky β, precip–buoyancy, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ + the Bjerknes and C–C extras — **plus** `internal_variability`, which is not a gate: it reports the piControl σ_int the Tier II consistency test needs, and rides here because this is where the control is loaded in full |
 | `ClimateBench2_TierI_variability` | cubes (monthly `tos`) | ENSO amplitude + spectral-shape gates |
 | `ClimateBench2_TierII` | cubes (monthly) | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4 — `tas`, `pr`, all-sky **and clear-sky** TOA (`rsut`/`rlut`/`rtnt`/`rsutcs`/`rlutcs`), `prw`, clouds (`clt`/`clwvi`/`clivi`), SST, sea ice, OHC (total, 0–2000 m **and 0–100 m**) — plus `reference_baseline` / `sst_baseline` (the reference's pre-test 1985–2014 record) and `eof_projection` / `sst_eof_projection` (the regime-(b) coefficients on the reference's fixed pre-2015 EOF basis) |
-| `ClimateBench2_TierII_daily` | cubes (daily/hourly) | TXx block maxima (daily `tasmax`), pr intensity PDF, diurnal cycle |
-| `ClimateBench2_TierII_events` | experiment dict (`historical`), **once per ensemble member** | The Tier II aggregated scalars of §II.1 — realized warming level (the protocol's primary test-window statistic) and the two GMST trends, the Pinatubo response, the aerosol-era hemispheric asymmetry. Reported and *scored*, never part of the Tier I entry ticket |
+| `ClimateBench2_TierII_daily` | cubes (daily/hourly), **full record**, once per member | `extremes` — the eight ETCCDI indices (TXx, TNn, TX90p, WSDI; Rx1day, Rx5day, R95pTOT, CDD) as a climatological mean and a decadal trend per land band, on the ~1° conservative grid; `perkins` — the PDF-overlap skill of daily `tas` anomalies and wet-day `pr` intensity; `diurnal_harmonic` — first-harmonic amplitude and (cos, sin) phase of the sub-daily `pr` climatology in local solar time; plus the older deterministic displays (TXx block maxima, pr intensity histogram, `DiurnalCycle`) |
+| `ClimateBench2_TierII_events` | experiment dict (`historical`), **once per ensemble member** | The Tier II aggregated scalars of §II.1 — realized warming level (the protocol's primary test-window statistic) and the two GMST trends, the Pinatubo response, the aerosol-era hemispheric asymmetry, and the three **seasonal-cycle metrics** (land annual temperature range; SST–low-cloud covariance and the seasonal cloud-radiative feedback over the five stratocumulus decks). Reported and *scored*, never part of the Tier I entry ticket |
 | `ClimateBench2_TierIII` | experiment dict (`picontrol` + `midholocene`/`lgm`/`lig127k`) | Mid-Holocene monsoon gate + proxy-site consistency per period |
 
 The `Scored*` diagnostics named by the Tier II suites (and `TrendConsistency`,
@@ -77,6 +80,48 @@ after the 1950–1985 aerosol era). GISTEMP, Berkeley Earth and NOAAGlobalTemp �
 the paper's other three GMST products — have no ClimateEval DataSource either,
 so `tas` has no inter-product observational spread yet; the pass picks them up
 automatically once they land upstream.
+
+The suite's three **seasonal-cycle metrics** use the same mixin with *several*
+products at once — ERA5 `tas` for the land annual temperature range,
+ESACCI-CLOUD `clt` + ESACCI-SST `tos` for the low-cloud covariance, CERES-EBAF
+`swcre` (a derived variable) + ESACCI-SST for the seasonal cloud-radiative
+feedback. The `reference` row is written under the primary product and every
+product read is registered in `data_sources`. All three are properties of the
+**1985–2014** climatology, so they are labelled in-sample; the window used is
+emitted as `seasonal_window_first/last_year` on the model side only, which
+keeps it provenance rather than a scored statistic.
+
+## The daily suite's references, and the one that does not exist
+
+`ClimateBench2_TierII_daily` is where the protocol's daily statistics live,
+and where the upstream observational gap bites hardest:
+
+- **the ETCCDI extremes have no reference at all.**
+  `ERA5.VARIABLE_MAPPING` has `tas` and `pr` but **no `tasmax`/`tasmin`**, and
+  `ERA5Hourly`'s CDS request is hard-wired to one year, so no ClimateEval
+  DataSource can supply daily temperature extremes however the `Variable` is
+  spelled. The `extremes` entry therefore carries **no `reference_data:`** and
+  its scalars are written, reported and left **unscored** — the scoring pass
+  skips a scalar whose reference has no value, exactly as it does for the
+  Pinatubo `rsds` dimming. **HadEX3** is the natural reference (an ESMValTool
+  CMORizer exists; only a DataSource is missing); Berkeley daily, HadGHCND,
+  IMERG and MSWEP have none. The `pr` indices *could* be scored against
+  `ERA5Hourly` through `daily_statistics`, and the suite carries that stanza
+  commented out rather than scoring a model against a single ERA5 year;
+- **the diurnal harmonic and the Perkins score are scored**, against
+  `ERA5Hourly` `pr`/`tas` — with the caveat that a `frequency: day` variable
+  looks in `<data_root>/ERA5/day/<var>`, which a staged daily ERA5 must fill.
+
+The extremes are *shaped* like a scored entry regardless: `ETCCDIExtremes` and
+`DiurnalHarmonic` are `ScalarTableDiagnostic`s, whose raw output is one row per
+data source with one column per named scalar — the aggregated-scalar table
+`scoring_pass.score_scalar_output` reads. The day a daily observational
+DataSource lands, the suite needs one `reference_data:` line and nothing else.
+
+The **Perkins score** is the exception to that shape: it is a *skill* in [0, 1],
+not an error, so it is written as a **metric** (`perkins_<season>`,
+`perkins_all`) and shown in the leaderboard's own distribution-skill table. It
+must never enter `E_ref` or the headline `S = 1 − E/E_ref`.
 
 Sea ice is scored as **area** (Σ siconc·A), which is what ClimateEval's
 `SeaIceArea*` diagnostics compute; the protocol asks for **extent** (Σ A where

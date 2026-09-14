@@ -32,7 +32,9 @@ climatebench2/
 ├── scoring.py           # pure fair-CRPS / bootstrap / consistency / EOF engine (numpy only)
 ├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
 ├── windows.py           # the protocol's time windows (test / 1985-2014 baseline / 1950-)
-├── physics.py           # pure Tier I physics functions (numpy only)
+├── physics.py           # pure Tier I physics + the ETCCDI indices (numpy only)
+├── baselines.py         # climatology pseudo-members, the calibrated two-layer EBM
+├── data/                # packaged protocol tables (the ERF series behind the EBM)
 ├── leaderboard/         # .ddb results → scores table (→ static HTML page, Phase 6)
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 ```
@@ -64,7 +66,11 @@ Key integration facts (verified against ClimateEval `main`):
   `raw_output` shapes — a **time series** (regime a), an **EOF-coefficient**
   table (regime b) and **aggregated scalars** with no time axis (§II.1) —
   and every row it writes carries a `held-out` / `in-sample` `window` label
-  from `tier2.window_labels`.
+  from `tier2.window_labels`. A CB2 **`ScalarTableDiagnostic`**
+  (`diags/tier2_daily.py`) is how a *simple* diagnostic writes that third
+  shape, so the suite's own `reference_data:` supplies the observed value.
+  A **skill** score that is not an error — the Perkins PDF overlap — is
+  written as a metric instead and never enters `E_ref`.
 - ClimateEval is a **third-party dependency** (DLR; `climate-federation` org),
   pinned by commit in `pyproject.toml`. Never vendor or patch it; contribute
   upstream via PR or keep the code here.
@@ -80,8 +86,10 @@ climatebench2 score MODEL --name MyEmulator --not-applicable geostrophic_balance
 #   declare a Tier I gate inapplicable: recorded as n/a, not a fail (paper §7.1)
 climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --member r2i1p1f1=DIR
 #   per-suite data paths (_cli.SUITE_REGISTRY): experiments load in FULL for the
-#   complex suites, the variability suite takes piControl, the Tier II suites take
-#   the post-2015 test window (tier2.test_window_start), once per ensemble member
+#   complex suites, the variability suite takes piControl, the monthly Tier II suite
+#   takes the post-2015 test window (tier2.test_window_start) once per ensemble
+#   member, and TierII_daily takes the FULL record (its extremes/PDF/diurnal
+#   climatologies are defined over it, so every entry there is in-sample)
 climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scorecard (HTML)
 climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb  # re-run the Tier II pass
 climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report

@@ -14,7 +14,7 @@ Tier III Table 3). Where the paper and this document disagree, **the paper is th
 truth**; open a PR against this file rather than diverging in code.
 
 **Implementation synchronisation.** Status entries were re-audited on **2026-09-14**
-against the `climatebench2/` package at commit `d6b0513` (migration Phase 6 of
+against the `climatebench2/` package at commit `74a4841` (migration Phase 6 of
 `docs/climateeval_delineation_plan.md`) and against **ClimateEval `main` @ `b0e941c`**
 (2026-09), which now contains the merged CB2 upstream PR #35 (`LandOceanWarmingRatio`,
 `ArcticAmplification`, `MeridionalHeatTransport` complex diagnostics; the
@@ -66,12 +66,27 @@ from HadCRUT5 corrected to a surface-air-temperature basis, the pass grew a
 generic **aggregated-scalar** regime and a **held-out / in-sample** label on every
 row, `ClimateBench2_TierII_events` runs **once per ensemble member**, and the
 Tier II suite gained clear-sky TOA, the condensed-water paths and OHC 0–100 m.
-(WP6b still owes the ETCCDI/Perkins extremes, the seasonal- and diurnal-cycle
-statistics and the pattern-scaling baseline.)
+**Work package 6b** (`ce509c3`, `d8df85b`, `74a4841`) then finished §II.1: the
+eight **ETCCDI extremes** on the ~1° conservative grid as a climatological mean
+and a decadal trend per land band (computed, but **unscored** — no ClimateEval
+DataSource supplies daily `tasmax`/`tasmin`), the **Perkins** PDF-overlap skill
+as a metric in its own leaderboard table, the three **seasonal-cycle** metrics
+(land annual temperature range; SST–low-cloud covariance and the seasonal
+cloud-radiative feedback over the stratocumulus decks), the **diurnal** first
+harmonic in local solar time with the phase scored as (cos, sin), and the
+**pattern-scaling baseline** for GMST-type series — a two-layer EBM driven by a
+packaged annual ERF table, one parameter calibrated on the observations through
+2014 and given pseudo-members so fair CRPS is defined for it. The daily suite
+now runs over the **full historical record** and is in-sample throughout.
 
-**Open ClimateEval PRs (2026-09).** Four upstream PRs are in flight, each
+**Open ClimateEval PRs (2026-09).** Several upstream PRs are in flight, each
 unblocking something recorded below: **#44** a multi-member historical+SSP2-4.5
-comparison generator (`E_ref` and every Tier II skill number, #10/#13);
+comparison generator (`E_ref` and every Tier II skill number, #10/#13 — and,
+with it, the CMIP6 multi-model-mean warming pattern the *spatial* half of the
+pattern-scaling baseline needs); **#48** ERA5 `zg`/`ts` (I.3c's hydrostatic
+fallback, I.5c's temperature reference); **#49** GISTEMP / Berkeley Earth /
+NOAAGlobalTemp / CRU sources (the inter-product σ_obs of the GMST scalars, and
+a land-only reference for the seasonal temperature range);
 **#45** hist-aer / amip / amip-4xCO2 / PMIP4 DataSource generators (running
 I.4a/b, I.7 and Tier III against archived data rather than submission-supplied
 directories); **#46** accepting `window_length = 1` in `Nino34` (retires CB2's
@@ -942,6 +957,17 @@ parallel headline numbers:
 - **pattern-scaling baseline** — multi-linear: global-mean temperature trajectory from a
   two-layer EBM calibrated to observations **through 2014**, multiplied by a fixed CMIP6
   multi-model-mean response pattern; the simplest defensible emulator.
+
+  ✅ **The GMST trajectory is wired and calibrated** (2026-09-14, work package 6b):
+  a packaged annual ERF table drives the EBM and **one** parameter is fitted by
+  least squares to the observed GMST through 2014. ⚠ Two things need Duncan:
+  the deterministic trajectory is given **pseudo-members** (the detrended
+  observed residuals of the 1985–2014 window displace it) for the same reason
+  the climatology is — fair CRPS is undefined at M = 1 — and the ERF table is a
+  **provisional interpolation of AR6 anchor values with no natural forcing**,
+  not the AR6 annual series. ❌ the multi-model-mean **pattern** needs CMIP6
+  baseline-window maps that arrive with upstream PR #44; until then the spatial
+  half emits a `reason` row.
 Individual CMIP6 models are also shown for context.
 
 **Scoring (RESTRUCTURED 2026-09).** **Fair CRPS is the primary probabilistic score
@@ -1075,8 +1101,12 @@ protocol's time windows), `diags/tier2_scores.py`
 `InternalVariability`), `diags/tier2_reference.py` (`ReferenceBaselineRecord`,
 `ReferenceEOFProjection` — the two entries that reach back past the test-window cut),
 `diags/tier2_diagnostics.py` (the aggregated scalars of §II.1: realized warming level,
-Pinatubo, hemispheric asymmetry, plus the `ObservedScalarMixin` that gives a complex
-diagnostic its observational `reference` rows), `baselines.py`,
+Pinatubo, hemispheric asymmetry, the three seasonal-cycle metrics, plus the
+`ObservedScalarMixin` that gives a complex diagnostic its observational `reference`
+rows), `diags/tier2_daily.py` (the daily statistics — the ETCCDI extremes, the
+Perkins PDF skill and the diurnal first harmonic — through `ScalarTableDiagnostic`,
+which is how a *simple* diagnostic writes the aggregated-scalar shape),
+`baselines.py`,
 `leaderboard/`. ✅ **Re-aligned to the 2026-09 fair-CRPS protocol on 2026-09-14** —
 gap item 3 for regime (a) and the skill score, gap item 3b for regime (b), σ_int and
 σ_obs. Nothing probabilistic exists in
@@ -1100,11 +1130,11 @@ gone.
 | **Several observational products per variable** | (a)/(b) | ✅ (2026-09-14, `a3ff255`) `data_sources.category` (`observation`/`reanalysis` vs `CMIP6`/`model`) tells an observational product in `other_data` — NOAA-ERSSTv5 and HadISST beside the ESACCI-SST reference, HadISST beside OSI-450 — from a comparison model. Such a product is **never scored as a forecast** and never enters `E_ref`; it gets a row saying `observational product (a term in sigma_obs, not scored)`, and its per-time-step spread against the reference is added in quadrature to σ_obs (paper: "observational uncertainty from the spread across … products") | `scoring_pass.is_observational`/`observational_sigma` |
 | Multi-member submissions | — | ✅ (2026-09-14, gap items 4 + 3, `a4cca38`/`732e860`; extended to the Tier II **events** suite by gap item 6, `5185c72`): `--member LABEL=PATH` and DRS `r*i*p*f*` auto-discovery run every **per-member** suite once per member — the cube suites, and now `ClimateBench2_TierII_events`, whose aggregated scalars are scored across the ensemble and which therefore takes *each member's own* record under the `historical` key (`SuiteSpec.per_member`; Tier I and Tier III stay once-per-model) — appending rows with distinct `data_id`s (`variant`); the scoring pass then **groups those rows by model name** (`data_sources` maps id → (name, variant)) and stacks the members on the times they share with the reference into one fair-CRPS forecast. `n_members` is reported per row | `_cli.py`, `scoring_pass.group_members`/`stack_members` |
 | tas monthly/annual anomalies | (a) | 🟡 scored vs **HadCRUT5 only** (paper: GISS, Berkeley Earth, HadCRUT, NOAA GlobalTemp — ClimateEval has no DataSource for the other three, so there is also no inter-product σ_obs term for `tas`; the pass's multi-product machinery needs no change to pick them up, only a suite entry, so this is purely an *upstream* gap); HadCRUT5 publishes a 200-member analysis ensemble but ClimateEval's CMORizer exposes only `tas`/`tasa` (and only `tas` is in the variable registry), so σ_obs falls back to the provisional 0.05 K constant. The GSAT **blending correction** is applied to the aggregated GMST scalars of §II.1 (gap item 6, `9d4b7a9`), not to the monthly series row | `ScoredAnnualMeanTimeSeries` + `climateeval.data.HadCRUT5` |
-| tas daily extremes (TXx, TNn, TX90p, warm-spell duration) | (b) | 🟡 only a TXx-like global-mean annual block maximum (`ScoredAnnualMaxTimeSeries`) on daily **`tasmax`** (id `tasmax_txx`, ✅ 2026-09-14), against a **placeholder `ERA5Monthly` reference** (wrong frequency) — no daily obs DataSource (Berkeley daily, HadGHCND) exists; TNn/TX90p/WSDI ❌ | `ClimateBench2_TierII_daily.yml` |
-| Perkins skill score (daily T and wet-day pr PDFs, 1 mm/day, ~1° conservative regrid, moving-baseline anomalies) | — | ❌ (ClimateEval `Histogram` yields EMD, not the protocol statistic; regridding is linear to 2°) | — |
+| tas daily extremes (TXx, TNn, TX90p, warm-spell duration) | scalars | ✅ **computed** (WP6b, `d8df85b`) — `diags.tier2_daily.ETCCDIExtremes`, suite entry `extremes`: conservative regrid to `tier2.extremes.grid` = 1°, the index per year per grid point, a cos-weighted mean over each `tier2.extremes.regions` land band, reduced to a **climatological mean + OLS trend per decade**; ❌ **unscored** — no ClimateEval DataSource supplies daily `tasmax`/`tasmin` (ERA5's `VARIABLE_MAPPING` has neither and `ERA5Hourly` downloads one hard-wired year), so the suite gives them no `reference_data:` and the pass skips a scalar with no observed value. **HadEX3** (ESMValTool CMORizer exists) is the natural reference. The old `tasmax_txx` block-maximum series stays as a deterministic display | `diags/tier2_daily.py`, `physics.annual_extreme`/`calendar_percentile`/`spell_duration_days` |
+| Perkins skill score (daily T and wet-day pr PDFs, 1 mm/day, ~1° conservative regrid, moving-baseline anomalies) | skill | ✅ (WP6b, `ce509c3` + `d8df85b`) `scoring.perkins_skill_score` = Σ min(f_m, f_o) over the pre-registered `tier2.perkins.bins`, renormalising so a density and a frequency agree; `diags.tier2_daily.PerkinsSkillScore` computes it per season for daily `tas` anomalies and wet-day (≥ 1 mm/day) `pr` intensity on the 1° conservative grid, against **ERA5Hourly**. It is a **skill, not an error**, so it is written as a *metric* (`perkins_<season>`, `perkins_all`) and shown in the leaderboard's own **distribution-skill table**, labelled in-sample — never in `E_ref` or `S = 1 − E/E_ref`. ⚠ the anomaly baseline is the fixed 1985–2014 monthly climatology, not a moving one | `scoring.py`, `diags/tier2_daily.py`, `leaderboard._distribution_table_html` |
 | ts (skin temperature) | (a) | ❌ — only `tos` vs ESACCI-SST (reference) with ERSSTv5/HadISST now recognised as **observational products**, not comparison models: they feed σ_obs through their spread and are reported `n/a` rather than ranked (2026-09-14). No CRU TS / HadSST DataSource | ClimateEval, `scoring_pass` |
 | pr anomalies | (a) | 🟡 vs **GPCP only** (IMERG, MSWEP ❌ in ClimateEval) | `ScoredAnnualMeanTimeSeries` + `GPCP` |
-| pr intensity PDF, Rx1day/Rx5day/R95pTOT/CDD | (b) | 🟡 `Histogram` of **hourly** pr vs `ERA5Hourly` (0–15 mm/day bins, global + 30S–30N) — deterministic EMD, not the daily wet-day Perkins score vs IMERG/MSWEP; the ETCCDI pr indices ❌ | `ClimateBench2_TierII_daily.yml` |
+| pr intensity PDF, Rx1day/Rx5day/R95pTOT/CDD | scalars + skill | ✅ **computed** (WP6b, `d8df85b`): all four ETCCDI precipitation indices in `ETCCDIExtremes` (Rx5day as the annual maximum 5-day running total; R95pTOT as the fraction of the **annual total** above the base-period wet-day 95th percentile; CDD truncated at the year boundary) plus the wet-day intensity PDF in the Perkins entry above. 🟡 the indices themselves stay **unscored** for the same missing-daily-reference reason, though `pr` *could* be referenced against `ERA5Hourly` through `daily_statistics` — the suite carries that stanza commented out rather than scoring against a single ERA5 year. The old hourly `Histogram`/EMD display remains | `diags/tier2_daily.py`, `physics.annual_max_running_sum`/`heavy_precipitation_fraction`/`max_consecutive_dry_days` |
 | TOA fluxes (LW/SW, all- and clear-sky) | (a) | ✅ (gap item 6, `9d4b7a9`) `rsut`, `rlut`, `rtnt` **and `rsutcs`/`rlutcs`** vs CERES-EBAF, all in `core_variables` so they are scored by the pass and carried through the annual-cycle, map, zonal-line, baseline and EOF entries alike | suite + `CERESEBAF` |
 | Sea ice extent, Sep/Feb minima, trends | (a)/(b) | 🟡 ClimateEval `SeaIceAreaAnnualCycle`/`SeaIceAreaTimeSeries` compute **area** (Σ siconc·A), the paper says **extent** (Σ A where siconc > 15 %) — the suite now carries a **commented-out** `SeaIceExtentTimeSeries` stanza against *upstream* PR #47 with the 15 % definition rather than mislabelling area as extent, and says so. ✅ the NH-Sep/SH-Feb minimum **series is scored** by the pass (gap item 6, `5185c72`): it is an annual series with a reference, and the per-variable reference fix is what let the SH half of the entry be scored at all. The annual-cycle entry stays deterministic (a `month_number` axis is neither regime) | `ClimateBench2_TierII.yml` |
 | OHC 0–100 m, 0–2000 m | (a) | ✅ (gap item 6, `9d4b7a9`) total column, **0–2000 m and 0–100 m** (`extract_volume`) vs EN4/IAP via `OceanHeatContentTimeSeries` on `phcint`; all three are annual series with a reference, so the pass scores them as regime (a) — verified, and reached only after the per-variable reference fix | suite |
@@ -1114,10 +1144,10 @@ gone.
 | Realized warming level 2015+ vs 1985–2014 (primary); 1950–present trend; test-period trend (secondary); GSAT blending | (a)/(c) | ✅ **all four** (gap item 6, `5185c72` + `9d4b7a9`): `diags.tier2_diagnostics.RealizedWarmingLevel` (`historical`, one run per member) emits `gmst_warming_level` — the mean global annual-mean `tas` from `tier2.test_window_start` to the record end minus the 1985–2014 mean, the paper's **primary** test-window scalar — plus `gmst_trend_test_window` (secondary) and `gmst_trend_1950` (`tier2.long_trend_start`), with the observed counterparts from HadCRUT5 **corrected to a SAT basis** by `tier2.gsat_blending_factor` and `tier2.gsat_blending_relative_uncertainty` of the change carried into each row's σ_obs. `scoring_pass.score_scalar_output` scores them with fair CRPS across the members *and* writes the consistency row §II.1 asks for, σ_int coming from `InternalVariability` through `tier2.scalar_consistency`. ⚠ the blending factor (1.09) and its 10 % uncertainty reading are provisional | `RealizedWarmingLevel`, `scoring_pass.score_scalar_output`, `InternalVariability` |
 | Pinatubo response | (a)/(c) | 🟡 `PinatuboResponseGate`: global-mean `rsds`/`tas` anomalies Jul 1991–Dec 1993 vs `tier2.climatology_baseline_period` ([1985, 2014]). ✅ the **`tas` magnitude is now scored** (gap item 6, `9d4b7a9`): the diagnostic emits the observed anomaly from HadCRUT5 over the same window and baseline, corrected to a SAT basis, as a `reference` row, and the pass takes the fair CRPS across the members plus a consistency row. The two sign flags survive as `requirement: diagnostic` gate rows, outside the entry ticket. ❌ still: the `rsds` dimming stays **model-only** (no BSRN or CERES-SYN DataSource, documented in the class and the suite), no joint [Δrsds, Δtas] co-variation test, no ENSO removal | `diags/tier2_diagnostics.py`, `suites/ClimateBench2_TierII_events.yml` |
 | Hemispheric asymmetry | (a)/(c) | 🟡 `HemisphericAsymmetryGate`: NH−SH `tas` trend over `tier2.hemispheric_asymmetry.era` ([1950, 1985]) and the zonal-mean-pr-maximum latitude trend. ✅ the **NH−SH trend is now scored against HadCRUT5** (gap item 6, `9d4b7a9`) over the same era, on a SAT basis (a multiplicative correction scales a hemispheric difference too), with the fair-CRPS and consistency rows the pass writes for any aggregated scalar; the two sign flags stay `requirement: diagnostic` gate rows. ❌ the ITCZ shift stays **model-only**: GPCP starts in 1979, after the aerosol era | `tier2_diagnostics.py`, `suites/ClimateBench2_TierII_events.yml` |
-| Seasonal cycle: land annual T range; SST–low-cloud covariance; seasonal CRE–SST feedback | (b) | ❌ (ClimateEval `AnnualCycle` runs deterministically for the core variables; none of the three protocol statistics is computed) | — |
-| Diurnal cycle (first-harmonic amplitude/phase of pr and CRE, local solar time) | (b) | 🟡 ClimateEval `DiurnalCycle` of hourly pr vs `ERA5Hourly`, deterministic; `physics.first_harmonic` exists, unwired; CRE diurnal ❌; IMERG / CERES-SYN DataSources ❌ | `ClimateBench2_TierII_daily.yml` |
+| Seasonal cycle: land annual T range; SST–low-cloud covariance; seasonal CRE–SST feedback | scalars | ✅ all three (WP6b, `d8df85b`) as complex diagnostics in the per-member events suite, scored by the aggregated-scalar regime: `LandAnnualTemperatureRange` (gridpoint max−min of the 12-month `tas` climatology, area-meaned over land; ERA5 reference — CRU once #49 lands), `SSTLowCloudCovariance` (`clt` on `tos` over the five `tier2.seasonal.stratocumulus_regions`, per deck and their mean; ESACCI-CLOUD + ESACCI-SST) and `SeasonalCloudRadiativeFeedback` (derived `swcre` on `tos`, same decks; CERES-EBAF + ESACCI-SST). All over the fixed 1985–2014 climatology window, labelled in-sample. ⚠ `clt` is the low-cloud proxy. `nbp` remains deferred by the paper | `diags/tier2_diagnostics.py`, `ObservedScalarMixin` (now multi-product) |
+| Diurnal cycle (first-harmonic amplitude/phase of pr and CRE, local solar time) | scalars | ✅ (WP6b, `ce509c3` + `d8df85b`) `diags.tier2_daily.DiurnalHarmonic`: regrid, `esmvalcore.preprocessor.local_solar_time` (the lon/15 h shift), the season's mean cycle over the day, area-mean per `tier2.diurnal.regions` band, then `physics.first_harmonic` — generalised from 12 points to any sub-daily sampling. Emits amplitude and the phase as **(cos, sin)** and no hour column at all (⚠ fair CRPS on an angle is ill-defined: 23 h and 1 h are not 22 h apart). Scored against **ERA5Hourly** `pr`, land and ocean as separate suite variables. 🟡 CRE diurnal is wired only where a model supplies 3-hourly TOA fluxes — no sub-daily observational CRE product exists upstream (CERES-SYN ❌, IMERG ❌) | `diags/tier2_daily.py`, `physics.first_harmonic`/`phase_components` |
 | Held-out vs in-sample labelling | — | ✅ (gap item 6, `5185c72`) `tier2.window_labels` in `thresholds.yml` maps a `var_id` (first) or a diagnostic (the suite entry name) to `held-out` / `in-sample`, with `held-out` the default; the pass stamps the label on **every** row it writes in all three regimes, a consistency row inheriting the label of the variable it tests; the leaderboard orders the skill table's columns **held-out first**, badges each one, and sorts the consistency table the same way | `thresholds.yml`, `scoring_pass.window_label`, `leaderboard.variable_windows` |
-| Baselines | — | 🟡 **Climatology** row wired as a *distribution* of the 1985–2014 values per calendar month (30 pseudo-members; ⚠ CB2 interpretation, see the Tier II preamble), scored on the test-window steps. ✅ the window is no longer missing (2026-09-14, `a3ff255`): `ReferenceBaselineRecord` writes the reference's pre-test monthly and annual record into the same database, and the pass builds the pseudo-members from it — the `reason` row now only appears for a database that really has no baseline record. **Pattern scaling**: `two_layer_ebm` + `pattern_scaling_forecast` remain pure functions, unwired and uncalibrated; `scoring_pass.PATTERN_SCALING_DATA_ID` is the declared hook. **CMIP6 MME**: pooled row deleted; the headline reference is the median of per-model scores. ❌ no climatology baseline for **regime (b)** yet: it would be the projections of each baseline year's own anomaly field, which the EOF diagnostic does not emit | `baselines.py`, `scoring_pass.py`, `diags/tier2_reference.py` |
+| Baselines | — | 🟡 **Climatology** row wired as a *distribution* of the 1985–2014 values per calendar month (30 pseudo-members; ⚠ CB2 interpretation, see the Tier II preamble), scored on the test-window steps, its window carried past the test cut by `ReferenceBaselineRecord` (`a3ff255`). ✅ **Pattern scaling is now scored for a GMST-type annual series** (WP6b, `ce509c3` + `74a4841`): the packaged annual ERF table (`climatebench2/data/erf_ar6_ssp245.csv`) drives `two_layer_ebm`, `calibrate_two_layer_ebm` fits **one** parameter (λ by default) by least squares to the observed GMST **through 2014** with both series reduced to anomalies about the 1985–2014 window, and `ebm_pseudo_members` displaces the trajectory by the detrended observed residuals of that window so fair CRPS is defined (⚠ CB2 interpretation, as for the climatology). The row is scored on the test window only, carries the fitted parameter in `value`, and is written for the variables of `tier2.pattern_scaling.variables` alone — a variable the EBM says nothing about gets no row, one that cannot be fitted gets a `reason`. ⚠ the ERF table is **provisional**: a linear interpolation of published AR6 anchor values with **no natural forcing**, not the AR6 annual series (TODO in its header). ❌ the **spatial** half (the normalized CMIP6-MMM warming pattern) emits a `reason` row naming upstream PR #44; ❌ no climatology baseline for **regime (b)**. **CMIP6 MME**: pooled row deleted; the headline reference is the median of per-model scores | `baselines.py`, `scoring_pass._pattern_scaling_row`/`_eof_pattern_scaling_row`, `climatebench2/data/` |
 | σ_int (piControl internal variability) | (c) | ✅ (2026-09-14, `a3ff255`) `InternalVariability` — a `CB2ComplexDiagnostic` on the `picontrol` key in the **Tier I** suite (that is where the control is loaded in full), tagged `tier2.internal_variability.requirement: diagnostic` and emitting **no** gate row. For the global-mean annual series of each core variable it finds it reports `chunked_statistic_std` of the window **mean** and the OLS **trend** at both scored window lengths — the test window and 1950–present (`tier2.long_trend_start`) — plus the lengths themselves, so the pass can match a σ_int to the record it is scoring. `score_databases` collects the rows across every database of a run, which is how the Tier I control reaches the Tier II test | `tier2_scores.InternalVariability`, `scoring_pass.collect_internal_variability` |
 | Row identity across tiers | — | ✅ (2026-09-14, `a3ff255`) Tier I gate rows carry the full `DataSourceInformation.id` (they are written per data source) while the scoring pass writes the model **name**, so one model used to appear twice on the scorecard. `leaderboard.build_scores` now maps every frame's `data_id` through the `data_sources` tables, and its gate/CRPS/consistency routing is per **row** rather than per column — the pass writes consistency rows (carrying both `passes` and `p_value`) into the same `metrics` tables as the gates | `leaderboard/_label_by_model` |
 | **CMIP6 reference ensemble for the test window** | — | ❌ (*upstream*) ClimateEval's `CMIP6HistoricalR1I1P1F1` generator is hard-wired to `ensemble: r1i1p1f1` and `timerange: 19790101/20141231`; there is **no SSP2-4.5 or historical+SSP2-4.5 generator and no multi-member variant**, so neither a per-model fair CRPS of the CMIP6 reference (≥ 2 members) nor any post-2015 CMIP6 comparison can be assembled — an upstream `CMIP6HistoricalSSP245` generator with `ensemble: "r*i1p1f1"` is the blocking dependency. CB2 now runs the Tier II suites on the test window regardless and warns that the comparison rows will be empty until it lands | `climateeval/data/_cmip6_generators.py` |
@@ -1373,12 +1403,21 @@ suite's missing variables (clear-sky TOA, `clwvi`/`clivi`, OHC 0–100 m) — to
 the per-variable-reference fix without which most of those suite variables were never
 scored at all.
 
+Added by **work package 6b** (`ce509c3`, `d8df85b`, `74a4841`): the eight **ETCCDI
+extremes** as aggregated scalars on the 1° conservative grid, the **Perkins**
+PDF-overlap skill as a metric with its own leaderboard table, the three
+**seasonal-cycle** metrics, the **diurnal** first harmonic in local solar time
+(phase as (cos, sin)), the **pattern-scaling baseline** for GMST-type series —
+ERF-driven, one parameter calibrated through 2014, pseudo-members so fair CRPS
+is defined — and the daily suite's move to the **full historical record**.
+
 Absent or misaligned: a **regime-(b) climatology baseline** (it would be the projections
 of each baseline year's own anomaly field, which the EOF diagnostic does not emit); the
-pattern-scaling baseline; a real observational **error field** (every σ_obs value is a
-provisional protocol constant — see the ⚠ in the status table — as is the GSAT blending
-factor); the ETCCDI/Perkins extremes, the seasonal-cycle triplet and the diurnal
-first-harmonic scoring (work package 6b); sea-ice **extent** rather than area; and —
+**spatial** half of pattern scaling (the CMIP6-MMM warming pattern, upstream PR #44 —
+a `reason` row says so); a real observational **error field** (every σ_obs value is a
+provisional protocol constant — see the ⚠ in the status table — as are the GSAT blending
+factor and the packaged ERF table); **a daily observational product**, without which the
+ETCCDI extremes are computed but unscored; sea-ice **extent** rather than area; and —
 **the binding constraint on every Tier II number** — the post-2015 multi-member CMIP6
 reference ensemble (an upstream ClimateEval gap: without it `E_ref` has no models with
 M ≥ 2 and the skill column is empty, in every regime).
@@ -1576,13 +1615,49 @@ cycle vs atmospheric-inversion products); (iii) SST–low-cloud seasonal covaria
 (regression of low-cloud fraction on SST over the seasonal cycle in stratocumulus
 regions). All aggregated diagnostics (§II.0(b)).
 
-*Status: ❌.* ClimateEval's `AnnualCycle` runs (deterministic RMSE/Pearson of the
-12-month climatology) for every core variable, but none of the three protocol
-statistics is computed. (ii) is deferred by the paper (no carbon-flux output requested);
-the paper's §5.2 now also names a **seasonal cloud-radiative feedback** (SST–CRE
-covariance) as an emergent-constraint diagnostic — `swcre`/`lwcre`/`netcre` are derived
-variables in ClimateEval's registry, so this is a small CB2 diagnostic once the (b)
-engine exists.
+*Status: ✅ (2026-09-14, work package 6b, `d8df85b`).* All three are complex
+diagnostics on the `historical` key in the **per-member** events suite, emitted as
+aggregated scalars and scored by `score_scalar_output` against observational
+`reference` rows:
+
+- **(i) `land_annual_temperature_range`** — `LandAnnualTemperatureRange`:
+  `mask_landsea(cube, "sea")`, the 12-month climatology, then **max − min at each
+  land grid point** and a cos-weighted area mean. The order matters: the range of
+  the *area-mean* cycle would cancel the hemispheres against each other and come
+  out several times too small. Reference **ERA5Monthly** `tas`
+  (`VARIABLE_MAPPING` has `2m_temperature`). ⚠ once upstream PR #49 lands, **CRU
+  TS** is the better land-only reference.
+- **(ii) `sst_low_cloud_slope_<deck>`** — `SSTLowCloudCovariance`: in each of the
+  five `tier2.seasonal.stratocumulus_regions` boxes (Californian, Peruvian,
+  Namibian, Canarian, Australian — ⚠ TODO(Duncan) to confirm), the 12-month
+  climatologies of `clt` and `tos` are area-averaged over the box and regressed
+  (12 points), giving one slope per deck plus their unweighted **mean**, which is
+  the headline number. References **ESACCI-CLOUD** + **ESACCI-SST**.
+  ⚠ **`clt` is the low-cloud proxy.** A genuine low-cloud fraction needs `cl`
+  with a level selection (or an ISCCP simulator), which needs a model-level
+  coordinate not every submission has and an observational product with a
+  matching level definition. In the decks total cover *is* essentially low cloud
+  — which is why the decks are the region the constraint is evaluated over — but
+  under cirrus the proxy is biased.
+- **(iii) `seasonal_swcre_slope_<deck>`** — `SeasonalCloudRadiativeFeedback`: the
+  same regression with **`swcre`** (a *derived* variable in ClimateEval's
+  registry, so neither CB2 nor the model has to difference fluxes) in place of
+  `clt`. References **CERES-EBAF** + **ESACCI-SST**. This is the §5.2
+  emergent-constraint diagnostic.
+
+All three are taken over the fixed `tier2.climatology_baseline_period`
+(1985–2014) so every submission and every product sees the same years, and are
+labelled **in-sample**; the window is emitted as
+`seasonal_window_first/last_year` on the *model* side only, which keeps it
+provenance rather than a scored statistic (the pass scores a scalar only where
+the reference carries a value). A record that does not cover the window is used
+whole with a warning — a seasonal cycle is far less window-sensitive than a
+trend. `ObservedScalarMixin` grew a per-fetch `source` argument and an
+`_observation_products` list for this: (ii) and (iii) regress **two** observed
+fields against each other, so the `reference` row is written under the primary
+product and every product read is registered in `data_sources`.
+(ii)′ the seasonal amplitude of land carbon uptake (`nbp`) stays deferred by the
+paper — no carbon-cycle output is requested of a submission.
 
 **Diurnal cycle.** Amplitude and phase (first harmonic fit) of 3-hourly tas and pr
 climatologies vs observational products; aggregated diagnostic (§II.0(b)) on amplitude
@@ -1592,10 +1667,38 @@ harm = fit_first_harmonic(clim_3hourly)   # A*cos(2*pi*t/24 - phi)
 test_consistency(A_obs, A_members); test_consistency(phi_obs, phi_members)  # circular
 ```
 
-*Status: 🟡* (Extended). ClimateEval `DiurnalCycle` of hourly `pr` vs `ERA5Hourly` in
-`ClimateBench2_TierII_daily.yml` (deterministic metrics only); `physics.first_harmonic`
-returns amplitude/phase of a 12-point cycle but is unwired and not in local solar time;
-CRE diurnal cycle, IMERG and CERES-SYN references ❌.
+*Status: ✅ (2026-09-14, work package 6b, `ce509c3` + `d8df85b`).*
+`diags/tier2_daily.py::DiurnalHarmonic`, suite entry `diurnal_harmonic`:
+
+1. regrid to `tier2.diurnal.grid`, then
+   **`esmvalcore.preprocessor.local_solar_time`** — the "shift each longitude
+   column by lon/15 h" the protocol asks for. Without it an area mean over the
+   tropics cancels the diurnal cycle almost exactly, which is the whole reason
+   the statistic is specified in LST;
+2. per season in `tier2.diurnal.seasons`, the mean cycle over the day
+   (`climate_statistics(..., "hour")`), area-averaged over each
+   `tier2.diurnal.regions` latitude band;
+3. `physics.first_harmonic`, **generalised from 12 points to any sampling**
+   (24 hourly, 8 three-hourly), giving amplitude and phase in the input's own
+   step.
+
+Columns are `<variable>_<region>_<season>_amplitude`, `…_phase_cos` and
+`…_phase_sin`. The land/sea contrast that makes the diagnostic worth computing
+is a **mask**, so the suite declares it per variable (`pr_land` / `pr_ocean`
+with `landsea_mask`), and the band comes from `thresholds.yml`.
+
+⚠ **CB2 interpretation — the phase is scored as (cos, sin), never as hours.**
+Fair CRPS is a distance on the real line, so it would call 23 h and 1 h 22
+hours apart, and the mean of an ensemble of angles is not the mean of its
+values. CB2 therefore scores the two components of the unit vector
+(`physics.phase_components`), each an ordinary number, and emits **no hour
+column at all** so nothing downstream can score the circular quantity by
+accident. The phase in hours is `atan2(sin, cos)·n/2π mod n`.
+
+Reference **ERA5Hourly** `pr` (IMERG ❌, CERES-SYN ❌ upstream), so this entry
+*is* scored. `swcre`/`netcre` join it wherever a model supplies 3-hourly TOA
+fluxes; they are not wired by default because no sub-daily observational CRE
+product exists upstream to score them against.
 
 **Daily tas extremes / pr intensity PDF.** Annual TXx/TNn-type block maxima or tail
 quantiles (tas), and daily-pr histogram/quantile comparison (e.g. CRPS on annual
@@ -1608,13 +1711,64 @@ skill score** on anomalies relative to a moving climatological baseline, wet day
 mm/day, pre-registered bin widths; everything after **conservative regridding of model
 and obs to a common ~1° grid**; labelled in-sample.
 
-*Status: 🟡.* `ScoredAnnualMaxTimeSeries` gives a global-mean TXx series from
-daily `tasmax` (registry variable since `b0e941c`; suite id `tasmax_txx`) against an
-`ERA5Monthly` placeholder reference — a daily obs product is the remaining gap;
-`Histogram` gives hourly-pr EMD vs ERA5Hourly. None of the eight
-ETCCDI indices, the Perkins score, the 1° conservative regrid or the daily obs products
-(Berkeley daily, HadGHCND, IMERG, MSWEP) exist. Also see the ClimateEval variable
-`prw`/`pr` `3hr` frequencies for the Extended sub-daily list (Table A2).
+*Status: ✅ computed, ❌ unscored (2026-09-14, work package 6b, `ce509c3` +
+`d8df85b`).* `diags/tier2_daily.py::ETCCDIExtremes`, suite entry `extremes` in
+`ClimateBench2_TierII_daily`, which now runs over the **full historical record**
+(`_cli.SUITE_REGISTRY` gives it `window: full`) because that is what the paper
+computes these over, and is therefore labelled in-sample throughout.
+
+Per suite variable (daily `tasmax`, `tasmin`, `pr`, each `landsea_mask:
+land_only` — ETCCDI indices are station-derived **land** indices, and masking is
+ClimateEval's job):
+
+1. **conservative regrid** to `tier2.extremes.grid` = `1x1` with
+   `regrid_scheme: area_weighted` — the paper's "conservative regridding of
+   model and obs to a common ~1 degree grid";
+2. the index **per year, per grid point**, in pure numpy
+   (`climatebench2.physics`, unit-tested on arrays whose answer is known by
+   construction): `annual_extreme` (TXx/TNn), `calendar_percentile` +
+   `exceedance_fraction` (TX90p), `spell_duration_days` (WSDI, spells found over
+   the whole record so New Year does not break one in two, days counted in their
+   own year), `annual_max_running_sum` (Rx1day/Rx5day),
+   `wet_day_percentile` + `heavy_precipitation_fraction` (R95pTOT) and
+   `max_consecutive_dry_days` (CDD, truncated at the year boundary);
+3. a cos-weighted mean over each `tier2.extremes.regions` latitude band
+   (global / tropical / NH- and SH-extratropical land);
+4. that annual regional series reduced to a **climatological mean** and an
+   **OLS trend per decade** — the two scalars per (index, region), written in the
+   aggregated-scalar shape `score_scalar_output` reads.
+
+⚠ **Choices to confirm.** The TX90p/WSDI threshold is the base-period
+(`tier2.extremes.base_period` = 1985–2014) percentile **per calendar month**, not
+per calendar day: the ETCCDI calendar-day form needs a 5-day window and Zhang et
+al.'s bootstrap to avoid an inhomogeneity at the base-period edge, which a
+monthly threshold sidesteps at the cost of a slightly smoother annual cycle of
+the threshold. R95pTOT divides by the **annual total** precipitation (the
+reading of "fraction of annual precipitation"), not the wet-day total. A record
+that does not overlap the base period falls back to its own record for the
+thresholds, with a loud warning, because the alternative is no index at all.
+
+❌ **No observational reference exists, so these are reported model-only and
+unscored.** `ERA5.VARIABLE_MAPPING` has `tas` and `pr` but **no `tasmax`/`tasmin`**,
+and `ERA5Hourly`'s CDS request is hard-wired to a single year, so no ClimateEval
+DataSource can serve daily temperature extremes however the `Variable` is
+spelled. The `extremes` entry therefore carries no `reference_data:`, and the
+pass — which scores a scalar only where the reference has a value — leaves them
+as reported numbers. This is the documented state, not an accident: the shape is
+already the scored one, so the day a **HadEX3** DataSource lands upstream (its
+ESMValTool CMORizer already exists) the suite needs one line. Berkeley daily,
+HadGHCND, IMERG and MSWEP have no DataSource either. The precipitation indices
+*could* be referenced against `ERA5Hourly` `pr` through `daily_statistics`; the
+suite carries that stanza **commented out** rather than scoring a model against
+one ERA5 year.
+
+❗ Memory: the whole daily record is realised as one `(time, lat, lon)` array on
+the 1° grid — fine for a few decades, heavy for a full historical run. Like the
+other daily diagnostics (I.3b, I.5d) this has only been exercised on synthetic
+cubes. The older `ScoredAnnualMaxTimeSeries` global-mean TXx series
+(`tasmax_txx`, against the `ERA5Monthly` placeholder) survives as a familiar
+deterministic display. Also see the ClimateEval variable `prw`/`pr` `3hr`
+frequencies for the Extended sub-daily list (Table A2).
 
 **Baselines.** (i) **CMIP6 MME — the headline reference**: `E_ref` = median of the
 per-model fair CRPS (see §II.0). (ii) climatology persistence: forecast = **1985–2014**
@@ -1630,8 +1784,45 @@ until the upstream multi-member CMIP6 generator lands, and pending the paper's o
 §5.4 mixture-vs-median fix; (ii) `Climatology` row wired from
 `tier2.climatology_baseline_period` = ✅ [1985, 2014], scored as the **distribution**
 of that window's per-calendar-month values (⚠ CB2 interpretation, Tier II preamble);
-(iii) `baselines.two_layer_ebm` + `pattern_scaling_forecast` unwired, uncalibrated, no
-ERF series or MMM pattern — `scoring_pass.PATTERN_SCALING_DATA_ID` is the hook.
+(iii) ✅ **the GMST half is wired and calibrated** (2026-09-14, work package 6b,
+`ce509c3` + `74a4841`), 🟡 the spatial half is not:
+
+- `baselines.load_erf_series` reads the packaged annual ERF table
+  `climatebench2/data/erf_ar6_ssp245.csv` (⚠ **provisional**: a linear
+  interpolation of published AR6 anchor values, **no natural forcing** — no
+  volcanic pulses, no solar cycle — and not the AR6 annual series itself. The
+  file's own header carries the anchors, the consequences and a TODO(Duncan) to
+  replace it with the digitised AR6 Ch.7 / Annex III series);
+- `baselines.calibrate_two_layer_ebm` fits **exactly one** parameter — the
+  feedback λ by default, or a scaling of the forcing
+  (`tier2.pattern_scaling.calibrated_parameter`, bounded by `lambda_bounds`) —
+  by least squares to the observed GMST through
+  `tier2.pattern_scaling.calibration_end_year` = 2014, with **both** series
+  reduced to anomalies about the 1985–2014 window so the EBM's arbitrary
+  absolute level cancels. One degree of freedom is deliberate: the emulator has
+  to stay the "simplest defensible" reference rather than a tuned competitor;
+- ⚠ **CB2 interpretation.** A deterministic emulator is M = 1 and fair CRPS is
+  undefined for it, exactly as for the climatology. `baselines.ebm_pseudo_members`
+  therefore displaces the trajectory by the **detrended observed residuals of the
+  baseline window** — one pseudo-member per baseline year. The members differ by
+  a constant offset: the ensemble says "we do not know which phase of internal
+  variability the real world is in", not that the emulator simulates noise.
+  Either the manuscript adopts this reading or the baseline needs another score;
+- `scoring_pass._pattern_scaling_row` writes it as the `PatternScaling` row for
+  the variables of `tier2.pattern_scaling.variables` (`tas`/`ts`/`tos`) — scored
+  on the **test window only**, never on the years it was calibrated to, with the
+  fitted parameter carried in the row's `value`. The pre-2015 observations it
+  needs come from the same `ReferenceBaselineRecord` rows the climatology uses,
+  so a database cut to the test window still has them. A variable the EBM says
+  nothing about (pr, fluxes, sea ice) gets **no row**; one that qualifies but
+  cannot be fitted gets a `reason` row, so the absence is visible;
+- ❌ the **spatial** pattern — the mean over comparison models of
+  (test-window map − baseline map)/ΔGMST — needs CMIP6 baseline-window maps that
+  the EOF diagnostic does not emit and that no post-2015 CMIP6 member exists for.
+  `baselines.pattern_scaling_forecast` is the arithmetic;
+  `scoring_pass._eof_pattern_scaling_row` emits a `reason` row naming **upstream
+  ClimateEval PR #44** rather than letting the baseline disappear from the
+  scorecard.
 
 ---
 
@@ -1785,7 +1976,7 @@ as on data.
 | Tier | Specced diagnostics | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|
 | I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras; all tagged Required / Extended / extra, entry ticket over the Required group only | **18 — every Table-1 row**: I.1, I.2a, I.2b, I.3a, I.3b, **I.3c**, I.4a, I.4b, I.5a, I.5b, **I.5c**, I.5d, I.6a, I.6b, I.6c, **I.7**, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 0 | 0 — but six gates (I.3b, I.3c, I.4a, I.4b, I.5c, I.5d) have only ever run on synthetic cubes, I.3c's stored reference slope is null, and I.5c has no ERA5 temperature reference upstream |
-| II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | **fair CRPS with the M = 1 rule; member stacking by model name; ESS correction; moving-block bootstrap; observational-uncertainty draws with a real σ_obs; CMIP6-median `E_ref` with leave-one-out; regime (b) as fair CRPS on the reference's fixed pre-2015 EOF basis; the aggregated-scalar regime; σ_int from piControl chunks in the consistency test; the reference's pre-test record carried past the test-window cut; one label per model across the tiers; the realized warming level and both GMST trends with the GSAT blending correction; held-out / in-sample labelling end to end; per-member runs of the Tier II events suite; the skill table in the leaderboard**; deterministic metrics for tas/pr/TOA(all- and clear-sky)/prw/clouds/tos/OHC(total, 2000 m, 100 m)/sea-ice via ClimateEval | climatology baseline scored as a distribution (CB2 interpretation, ⚠) and only for regime (a); every σ_obs value — and the GSAT blending factor — a provisional protocol constant, no observational error field (⚠); the regime-(b) bootstrap axis and the model-anomaly definition are CB2 readings (⚠); Gaussian consistency null; Pinatubo `rsds` and the ITCZ shift still sign-only (no obs product); `tas` scored against HadCRUT5 alone, so no inter-product σ_obs; TXx reference still a monthly placeholder; sea-ice area not extent (PR #47 stanza commented in) | ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; a regime-(b) climatology baseline; **post-2015 multi-member CMIP6 reference (ClimateEval) — without it `E_ref` and every skill number stay empty** |
+| II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | **fair CRPS with the M = 1 rule; member stacking by model name; ESS correction; moving-block bootstrap; observational-uncertainty draws with a real σ_obs; CMIP6-median `E_ref` with leave-one-out; regime (b) as fair CRPS on the reference's fixed pre-2015 EOF basis; the aggregated-scalar regime; σ_int from piControl chunks in the consistency test; the reference's pre-test record carried past the test-window cut; one label per model across the tiers; the realized warming level and both GMST trends with the GSAT blending correction; held-out / in-sample labelling end to end; per-member runs of the Tier II events suite; the skill table in the leaderboard; the eight **ETCCDI extremes** on the 1° conservative grid; the **Perkins** PDF skill and its own leaderboard table; the three **seasonal-cycle** metrics; the **diurnal** first harmonic in local solar time with a (cos, sin) phase; the **pattern-scaling** baseline for GMST-type series, ERF-driven and calibrated through 2014**; deterministic metrics for tas/pr/TOA(all- and clear-sky)/prw/clouds/tos/OHC(total, 2000 m, 100 m)/sea-ice via ClimateEval | climatology baseline scored as a distribution (CB2 interpretation, ⚠) and only for regime (a); every σ_obs value — the GSAT blending factor and the packaged ERF table — provisional (⚠); the regime-(b) bootstrap axis, the model-anomaly definition, the EBM pseudo-members, the (cos, sin) phase, the per-calendar-month extremes threshold and `clt` as the low-cloud proxy are CB2 readings (⚠); Gaussian consistency null; Pinatubo `rsds` and the ITCZ shift still sign-only (no obs product); **the ETCCDI extremes computed but unscored — no daily obs DataSource (HadEX3)**; `tas` scored against HadCRUT5 alone, so no inter-product σ_obs; sea-ice area not extent (PR #47 stanza commented in) | ts; surface fluxes; the **spatial** half of pattern scaling (CMIP6-MMM pattern, PR #44); a regime-(b) climatology baseline; **post-2015 multi-member CMIP6 reference (ClimateEval) — without it `E_ref` and every skill number stay empty** |
 | III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | monsoon gate | site-consistency fraction for the three periods — disconnected from the pipeline's NetCDFs, tas-only, DA products instead of raw proxies; LE-spread functions | fair CRPS with block pseudo-members; raw SST proxy compilations; perfect-model suite and data |
 
 **Cross-cutting discrepancies (paper vs current `climatebench2/` code) — complete list,
@@ -1889,7 +2080,13 @@ as on data.
     visible in the suite itself rather than only here. Uncomment it when #47 merges.
 16. TXx now uses daily `tasmax` (registry variable, suite id `tasmax_txx`; **done**
     2026-09-14 with gap item 0) but still against an `ERA5Monthly` placeholder
-    reference; a daily obs product is still missing.
+    reference. **Superseded 2026-09-14 (work package 6b, `d8df85b`):** the
+    protocol-conforming statistic is the `extremes` entry — the eight ETCCDI
+    indices on the 1° conservative grid — and `tasmax_txx` survives only as a
+    deterministic display. *Still open, upstream:* **a daily observational
+    product**. ERA5 has no `tasmax`/`tasmin` at all and `ERA5Hourly` downloads a
+    single hard-wired year, so the extremes are computed model-only and
+    unscored; **HadEX3** has an ESMValTool CMORizer and needs only a DataSource.
 17. ~~**Entry ticket** — the leaderboard `ALL` column spans every gate present,
     including the Bjerknes and C–C extras, the Extended GFMIP/MJO gates and the Tier II
     Pinatubo / hemispheric-asymmetry gates; there is no Required/Extended/extra tag and
@@ -2049,8 +2246,9 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    hydrostatic fallback and I.5c can use ERA5 for temperature; exercise
    I.3b/I.5d/I.4a/b — and now the I.3c/I.5c observational branches — on real daily,
    fixed-SST and satellite data.
-6. **Tier II missing diagnostics** — **first half DONE 2026-09-14 (work package 6a,
-   `5185c72` + `9d4b7a9`).**
+6. **Tier II missing diagnostics** — **DONE 2026-09-14** (work package 6a,
+   `5185c72` + `9d4b7a9`; work package 6b, `ce509c3` + `d8df85b` + `74a4841`).
+   **First half (6a):**
    - **The scalar diagnostics of §II.1.** `RealizedWarmingLevel` emits the protocol's
      primary test-window statistic (mean 2015+ `tas` minus the 1985–2014 mean), the
      secondary test-window trend and the 1950-present trend; `PinatuboResponseGate` and
@@ -2077,13 +2275,50 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
      the **per-variable reference** fix, since a diagnostic holding several references
      scored only the first one's variable.
 
-   *Still open here (work package 6b):* the ETCCDI set and the Perkins score on a 1°
-   conservative grid; the seasonal-cycle triplet and the SST–CRE feedback; diurnal
-   first-harmonic scoring; pattern-scaling baseline wiring and calibration.
-   *Still open, upstream:* sea-ice extent (#47, #15) and the additional obs DataSources
-   (GISTEMP, Berkeley Earth, NOAAGlobalTemp — without which the GMST scalars have a
-   single observational product and no inter-product σ_obs — IMERG, MSWEP, HadSST/CRU
-   TS, NSIDC Sea Ice Index, Berkeley daily / HadGHCND, RSS, CERES SYN, BSRN).
+   **Second half DONE 2026-09-14 (work package 6b, `ce509c3` + `d8df85b` +
+   `74a4841`).**
+   - **The ETCCDI set** (`diags/tier2_daily.py::ETCCDIExtremes`): TXx, TNn,
+     TX90p, WSDI, Rx1day, Rx5day, R95pTOT and CDD per year and grid point after
+     a **conservative regrid to `tier2.extremes.grid` = 1°**, reduced to a
+     climatological mean and an OLS trend per decade over each
+     `tier2.extremes.regions` land band, in the aggregated-scalar shape the pass
+     scores. The index maths is pure numpy in `physics` with unit tests on
+     synthetic daily arrays. ❌ **unscored**: ERA5 carries no
+     `tasmax`/`tasmin` and no other daily observational DataSource exists, so
+     the suite gives them no reference and the pass skips them — **HadEX3** (an
+     ESMValTool CMORizer already) is the one upstream addition that would score
+     them.
+   - **The Perkins skill score** (`scoring.perkins_skill_score`,
+     `diags.tier2_daily.PerkinsSkillScore`): Σ min(f_m, f_o) over the
+     pre-registered `tier2.perkins.bins`, per season, for daily `tas` anomalies
+     and wet-day `pr` intensity against ERA5Hourly. It is a **skill, not an
+     error**, so it is a *metric* and gets its own leaderboard table rather than
+     a CRPS column, and never enters `E_ref`.
+   - **The seasonal-cycle triplet and the SST–CRE feedback**
+     (`LandAnnualTemperatureRange`, `SSTLowCloudCovariance`,
+     `SeasonalCloudRadiativeFeedback`), scored against ERA5 / ESACCI-CLOUD /
+     ESACCI-SST / CERES-EBAF through a now multi-product `ObservedScalarMixin`.
+   - **Diurnal first-harmonic scoring** (`DiurnalHarmonic`) in local solar time,
+     with `physics.first_harmonic` generalised to any sub-daily sampling and the
+     phase emitted only as (cos, sin).
+   - **Pattern-scaling wiring and calibration** (`baselines.load_erf_series`,
+     `calibrate_two_layer_ebm`, `ebm_pseudo_members`,
+     `scoring_pass._pattern_scaling_row`): the GMST trajectory is a scored
+     baseline row; the spatial half emits a `reason` row naming PR #44.
+   - The daily suite now runs over the **full historical record**
+     (`_cli.SUITE_REGISTRY`), which is what makes all of the above in-sample.
+
+   *Still open here:* the packaged ERF table is a provisional interpolation of
+   AR6 anchors with no natural forcing (TODO(Duncan)); `clt` stands in for low
+   cloud; the Perkins anomaly baseline is fixed, not moving; the extremes use a
+   per-calendar-**month** percentile threshold; AR6 region masks instead of
+   latitude bands; a regime-(b) climatology baseline.
+   *Still open, upstream:* a daily observational product (**HadEX3** first,
+   then Berkeley daily / HadGHCND / IMERG / MSWEP), sea-ice extent (#47, #15),
+   the CMIP6-MMM warming pattern (#44) and the additional obs DataSources
+   (GISTEMP, Berkeley Earth, NOAAGlobalTemp — without which the GMST scalars
+   have a single observational product and no inter-product σ_obs — HadSST/CRU
+   TS, NSIDC Sea Ice Index, RSS, CERES SYN, BSRN).
 7. **Tier III**: read the pipeline's per-dataset NetCDFs instead of the non-existent
    CSVs, one stanza per (period, dataset, variable) (#18); add the raw SST compilations
    (Tierney 2020, Osman 2021/2026, Hoffman 2017), Cleator 2020, Harrison 2015 and SISALv3

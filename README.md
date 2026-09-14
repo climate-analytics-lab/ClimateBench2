@@ -105,7 +105,8 @@ there is no single global slice of the submission:
 | `ClimateBench2_TierI`, `_TierIII` | an experiment dict (`historical` = the submission unless `--experiment historical=DIR`), **once per model** | every experiment in **full** |
 | `ClimateBench2_TierII_events` | the same experiment dict, but **once per ensemble member**, each with its own `historical` record — its Tier II scalars are scored across the ensemble | full |
 | `ClimateBench2_TierI_variability` | the `picontrol` experiment (ENSO wants ≥ 100 yr of control) | full |
-| `ClimateBench2_TierII`, `_TierII_daily` | the model's cubes, once per ensemble member | the reserved post-2015 test window, `tier2.test_window_start` → last complete year |
+| `ClimateBench2_TierII` | the model's cubes, once per ensemble member | the reserved post-2015 test window, `tier2.test_window_start` → last complete year |
+| `ClimateBench2_TierII_daily` | the model's daily/hourly cubes, once per ensemble member | **full record** — the paper defines the extremes, PDF and diurnal climatologies over it, so every entry is in-sample |
 
 `--timerange` overrides the window of the cube-based suites only. Note that
 ClimateEval's CMIP6 comparison generator is still hard-wired to 1979–2014 and
@@ -126,7 +127,8 @@ climatebench2/           # the installable package
 ├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
 ├── windows.py           # the protocol's time windows (test / baseline / long trend)
 ├── physics.py           # pure Tier I physics (numpy only)
-├── baselines.py         # climatology pseudo-members, two-layer EBM × pattern scaling
+├── baselines.py         # climatology pseudo-members, calibrated two-layer EBM
+├── data/                # packaged protocol tables (the ERF series behind the EBM)
 ├── leaderboard/         # .ddb results → static HTML leaderboard
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 docs/                    # delineation plan, metrics reference
@@ -154,13 +156,24 @@ numbers rather than sign flags alone, all four against HadCRUT5 with the GSAT
 blending correction, a generic aggregated-scalar regime in the pass,
 held-out/in-sample labelling end to end, per-member runs of the Tier II events
 suite, and the suite's missing variables (clear-sky TOA, `clwvi`/`clivi`, OHC
-0–100 m). Headline open items are a post-2015 multi-member CMIP6 reference in
-ClimateEval (without which `E_ref` has nothing to average and the Tier II cells
-fall back to the raw CRPS), the ETCCDI/Perkins extremes and the seasonal- and
-diurnal-cycle statistics (work package 6b), the pattern-scaling baseline, and
-wiring Tier III to the paleo pipeline's NetCDF outputs. Every σ_obs value in
-`thresholds.yml` — and the GSAT blending factor — is provisional and needs
-Duncan's ruling.
+0–100 m). **Work package 6b** then added the rest of §II.1: the eight **ETCCDI
+extremes** on the ~1° conservative grid (a climatological mean and a decadal
+trend per land band), the **Perkins** PDF-overlap skill, the three
+**seasonal-cycle** metrics (land annual temperature range; SST–low-cloud
+covariance and the seasonal cloud-radiative feedback over the stratocumulus
+decks), the **diurnal** first harmonic in local solar time with the phase
+scored as (cos, sin), and the **pattern-scaling baseline** — a two-layer EBM
+driven by a packaged annual ERF table, one parameter calibrated to the
+observed GMST through 2014, given pseudo-members so fair CRPS is defined for
+it. Headline open items are a post-2015 multi-member CMIP6 reference in
+ClimateEval (without which `E_ref` has nothing to average and the Tier II
+cells fall back to the raw CRPS), a **daily observational product** — no
+ClimateEval DataSource supplies `tasmax`/`tasmin`, so the extremes are
+reported model-only and unscored until HadEX3 lands upstream — the CMIP6
+multi-model-mean warming pattern for the *spatial* half of pattern scaling
+(ClimateEval PR #44), and wiring Tier III to the paleo pipeline's NetCDF
+outputs. Every σ_obs value in `thresholds.yml`, the GSAT blending factor and
+the packaged ERF table are provisional and need Duncan's ruling.
 Required/Extended/extra tagging of the Tier I gates, declared N/A and the
 Required-only entry ticket landed on 2026-09-14 (gap item 2). The same day
 (gap item 5) the three re-specced Tier I checks landed: I.5c is now the paper's

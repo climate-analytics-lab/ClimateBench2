@@ -23,6 +23,10 @@ protocol's presentation:
   badged with the ``window`` label the pass writes (paper §5.6): held-out
   entries are scored against observations from the reserved post-2015 test
   period, in-sample ones against the historical record.
+- **Tier II distribution skill** — the **Perkins score** of the daily PDFs
+  (work package 6b), in its own table because it is a skill in [0, 1]
+  rather than an error: it never enters ``E_ref`` or the headline
+  ``S = 1 − E/E_ref``, and it is always in-sample.
 - **Tier III** — paleo proxy-site consistency fractions and the
   mid-Holocene monsoon gate.
 
@@ -48,6 +52,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pandas as pd
+
+#: Prefix of the metrics columns the Perkins diagnostic writes
+#: (``perkins_djf``, …, ``perkins_all``).
+PERKINS_PREFIX = "perkins_"
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +84,9 @@ class Scores:
     gates: pd.DataFrame = field(default_factory=lambda: _empty())
     crps: pd.DataFrame = field(default_factory=lambda: _empty())
     consistency: pd.DataFrame = field(default_factory=lambda: _empty())
+    #: Distribution-shape SKILL scores (the Perkins score) — a skill, not an
+    #: error, so it is kept apart from `crps` and never enters E_ref.
+    distribution: pd.DataFrame = field(default_factory=lambda: _empty())
     deterministic: pd.DataFrame = field(default_factory=lambda: _empty())
     tier3: pd.DataFrame = field(default_factory=lambda: _empty())
 
@@ -136,6 +147,7 @@ def build_scores(db_paths: list[Path]) -> Scores:
     import pandas as pd
 
     gates, crps, consistency, deterministic, tier3 = [], [], [], [], []
+    distribution: list[pd.DataFrame] = []
     names: dict[str, str] = {}
     for suite, diag, table, df in _read_all(db_paths):
         if df.empty:
@@ -171,6 +183,12 @@ def build_scores(db_paths: list[Path]) -> Scores:
                 crps.append(tagged[keep])
             if "p_value" in df.columns:
                 consistency.append(tagged[tagged["p_value"].notna()])
+            # The Perkins skill score (climatebench2.diags.PerkinsSkillScore)
+            # is written by the diagnostic, not the scoring pass, and is a
+            # skill in [0, 1] rather than an error: its own table.
+            perkins_cols = [c for c in df.columns if c.startswith(PERKINS_PREFIX)]
+            if perkins_cols:
+                distribution.append(tagged.dropna(subset=perkins_cols, how="all"))
             metric_cols = [
                 c
                 for c in ("weighted_rmse", "weighted_pearsonr", "weighted_emd")
@@ -196,6 +214,7 @@ def build_scores(db_paths: list[Path]) -> Scores:
         gates=_label_by_model(_normalise_gates(cat(gates)), names),
         crps=_label_by_model(cat(crps), names),
         consistency=_label_by_model(cat(consistency), names),
+        distribution=_label_by_model(cat(distribution), names),
         deterministic=_label_by_model(cat(deterministic), names),
         tier3=_label_by_model(cat(tier3), names),
     )
@@ -626,6 +645,55 @@ def _crps_table_html(crps: pd.DataFrame) -> str:
     )
 
 
+def _distribution_table_html(distribution: pd.DataFrame) -> str:
+    """Tier II distribution skill — the Perkins score, in its own table.
+
+    Deliberately separate from the skill table: ``S = 1 − E/E_ref`` compares
+    an *error* against the CMIP6 median, whereas the Perkins score is an
+    overlap in [0, 1] with no reference ensemble behind it. Mixing the two
+    into one column would make "1" mean two different things.
+    """
+    import pandas as pd
+
+    if distribution.empty:
+        return ""
+    score_cols = sorted(c for c in distribution.columns if c.startswith(PERKINS_PREFIX))
+    if not score_cols:
+        return ""
+    cols = ["data_id", "var_id", *score_cols]
+    sub = distribution[[c for c in cols if c in distribution.columns]].sort_values(
+        ["var_id", "data_id"],
+        kind="stable",
+    )
+    header = "".join(
+        f"<th>{_esc(c.removeprefix(PERKINS_PREFIX).upper() if c in score_cols else c)}</th>"
+        for c in sub.columns
+    )
+    rows = []
+    for _, row in sub.iterrows():
+        cells = []
+        for col in sub.columns:
+            value = row[col]
+            if isinstance(value, float) and not pd.isna(value):
+                cells.append(f"<td class='num'>{value:.3f}</td>")
+            else:
+                cells.append(f"<td>{_esc(value)}</td>")
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+    badge = f"<span class='badge insample'>{_esc(WINDOW_IN_SAMPLE)}</span>"
+    return (
+        "<h2>Tier II — distribution skill (Perkins)</h2>"
+        f"<p>{badge} Overlap of the modelled and observed daily PDFs, "
+        "<code>S = Σ min(f_model, f_obs)</code> over the pre-registered bins "
+        "of <code>tier2.perkins.bins</code> (daily <code>tas</code> anomalies "
+        "against the fixed base-period monthly climatology; wet-day "
+        "<code>pr</code> intensity, ≥ 1 mm/day). 1 is a perfect overlap. "
+        "These are computed over the full historical record — in-sample — "
+        "and are a <em>skill</em>, not an error: they never enter "
+        "<code>E_ref</code> or the headline <code>S = 1 − E/E_ref</code>.</p>"
+        f"<table><thead><tr>{header}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
 def _consistency_table_html(consistency: pd.DataFrame) -> str:
     import pandas as pd
 
@@ -728,6 +796,7 @@ Spec: <code>docs/metrics_reference.md</code>.</p>
 <h2>Tier II — probabilistic scores vs baselines</h2>
 {_crps_table_html(scores.crps)}
 {_event_flags_html(scores.gates)}
+{_distribution_table_html(scores.distribution)}
 {_consistency_table_html(scores.consistency)}
 {_tier3_html(scores.tier3)}
 <footer>Generated by <code>climatebench2 leaderboard</code> from: {sources}

@@ -16,6 +16,7 @@ import pytest
 duckdb = pytest.importorskip("duckdb")
 
 from climatebench2 import scoring_pass  # noqa: E402
+from climatebench2._thresholds import get_threshold  # noqa: E402
 from climatebench2.scoring_pass import (  # noqa: E402
     CLIMATOLOGY_DATA_ID,
     SCORER,
@@ -199,6 +200,8 @@ def test_score_raw_output_stacks_members_and_scores_baselines() -> None:
         "CMIP6_B",
         "CMIP6_C",
         CLIMATOLOGY_DATA_ID,
+        # the calibrated-EBM baseline, reported alongside (work package 6b)
+        scoring_pass.PATTERN_SCALING_DATA_ID,
     }
     submission = by_id.loc[
         (by_id.index == "MyModel") & (by_id["data_type"] == "to_benchmark")
@@ -340,6 +343,7 @@ def test_score_database_appends_to_the_metrics_table(synthetic_db) -> None:  # n
         "CMIP6_B",
         "CMIP6_C",
         CLIMATOLOGY_DATA_ID,
+        scoring_pass.PATTERN_SCALING_DATA_ID,
     }
     for column in ("crps_ci_lo", "crps_ci_hi", "e_ref", "n_ref_models", "skill"):
         assert column in metrics.columns
@@ -498,11 +502,66 @@ def test_window_label_resolution_order() -> None:
     assert label("some_new_diagnostic", "anything") == "held-out"
 
 
-def test_pattern_scaling_hook_is_declared_but_unwired() -> None:
-    """The third baseline is a later work package; only its id exists."""
+# ---------------------------------------------------------------------------
+# The pattern-scaling baseline (work package 6b)
+# ---------------------------------------------------------------------------
+
+
+def _pattern_row(rows: pd.DataFrame) -> pd.Series:
+    return rows[rows["data_id"] == scoring_pass.PATTERN_SCALING_DATA_ID].iloc[0]
+
+
+def test_pattern_scaling_baseline_is_scored_for_a_gmst_series() -> None:
+    """The calibrated EBM is a real, fair-CRPS-able forecast of tas."""
     raw, sources = _tables(np.random.default_rng(12))
     rows = pd.DataFrame(score_raw_output(raw, sources, settings=FAST))
+    row = _pattern_row(rows)
+    assert row["reason"] == ""
+    assert np.isfinite(row["crps"])
+    # One pseudo-member per baseline year (the detrended observed residuals)
+    assert row["n_members"] == len(BASELINE_YEARS)
+    # ... scored only on the years the ERF table covers (it stops in 2030)
+    assert 3 <= row["n_time"] <= len(TEST_YEARS)
+    # `value` carries the one calibrated parameter, inside its search bounds
+    low, high = get_threshold("tier2.pattern_scaling.lambda_bounds")
+    assert low <= row["value"] <= high
+    # It is a baseline, so it never enters E_ref
+    assert row["data_type"] == "baseline"
+
+
+def test_pattern_scaling_is_skipped_for_a_variable_it_cannot_forecast() -> None:
+    """A two-layer EBM says nothing about precipitation: no row at all."""
+    raw, sources = _tables(np.random.default_rng(13))
+    rows = pd.DataFrame(
+        score_raw_output(raw.rename(columns={"tas": "pr"}), sources, settings=FAST),
+    )
     assert scoring_pass.PATTERN_SCALING_DATA_ID not in set(rows["data_id"])
+
+
+def test_pattern_scaling_says_why_without_a_calibration_record() -> None:
+    """Cut to the test window and with no baseline record, it cannot be fitted."""
+    raw, sources = _tables(np.random.default_rng(14))
+    cut = raw[pd.to_datetime(raw["time"]).dt.year >= min(TEST_YEARS)]
+    rows = pd.DataFrame(score_raw_output(cut, sources, settings=FAST))
+    row = _pattern_row(rows)
+    assert np.isnan(row["crps"])
+    assert "calibrate" in row["reason"]
+
+
+def test_pattern_scaling_uses_the_recorded_baseline_window() -> None:
+    """With the pre-2015 record back in the database it can be fitted again."""
+    rng = np.random.default_rng(15)
+    raw, sources = _tables(rng)
+    cut = raw[pd.to_datetime(raw["time"]).dt.year >= min(TEST_YEARS)]
+    baseline = scoring_pass.baseline_records(
+        _baseline_rows(list(BASELINE_YEARS), rng),
+    )
+    rows = pd.DataFrame(
+        score_raw_output(cut, sources, settings=FAST, baseline=baseline),
+    )
+    row = _pattern_row(rows)
+    assert row["reason"] == ""
+    assert np.isfinite(row["crps"])
 
 
 # ---------------------------------------------------------------------------
@@ -1094,3 +1153,16 @@ def test_score_database_scores_an_eof_schema(tmp_path) -> None:  # noqa: ANN001
         con.close()
     assert set(metrics["scorer"]) == {SCORER}
     assert set(metrics["var_id"]) == {"tas"}
+
+
+def test_eof_pattern_scaling_is_a_reason_row_until_pr_44() -> None:
+    """Regime (b)'s pattern-scaling baseline needs CMIP6 baseline-window maps."""
+    raw, sources = _eof_tables(np.random.default_rng(34))
+    rows = pd.DataFrame(scoring_pass.score_eof_output(raw, sources, settings=FAST))
+    row = rows[rows["data_id"] == scoring_pass.PATTERN_SCALING_DATA_ID].iloc[0]
+    assert np.isnan(row["crps"])
+    assert "#44" in row["reason"]
+    assert row["data_type"] == "baseline"
+    # ... and it does not disturb E_ref, which is still the CMIP6 median
+    model = rows[(rows["data_id"] == "MyModel") & (rows["data_type"] == "to_benchmark")]
+    assert np.isfinite(model["e_ref"].iloc[0])

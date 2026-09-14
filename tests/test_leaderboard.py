@@ -407,3 +407,40 @@ def test_consistency_rows_are_not_mistaken_for_gates_or_scores(tmp_path) -> None
     html = render_html(scores)
     assert "ensemble-consistency tests" in html
     assert "tas_trend_consistency" in html
+
+
+def test_distribution_skill_table_is_separate_from_the_crps_table(tmp_path) -> None:  # noqa: ANN001
+    """The Perkins score is a skill in [0, 1], not an error: its own table."""
+    import ibis
+
+    db_path = tmp_path / "ClimateBench2_TierII_daily.ddb"
+    conn = ibis.connect(f"duckdb://{db_path}")
+    perkins = pd.DataFrame(
+        {
+            "data_id": ["GoodModel", "GoodModel"],
+            "reference_data_id": ["reanalysis_ERA5"] * 2,
+            "var_id": ["pr_intensity_land", "tas_anomaly_land"],
+            "perkins_djf": [0.91, 0.83],
+            "perkins_jja": [0.88, 0.79],
+            "perkins_all": [0.90, 0.81],
+        },
+    )
+    conn.create_database("perkins")
+    conn.create_table("metrics", ibis.memtable(perkins), database="perkins")
+    conn.disconnect()
+
+    scores = build_scores([db_path])
+    assert set(scores.distribution["var_id"]) == {
+        "pr_intensity_land",
+        "tas_anomaly_land",
+    }
+    # ... and it is NOT mistaken for a CRPS score or a gate
+    assert scores.crps.empty
+    assert scores.gates.empty
+
+    html = render_html(scores, source_names=[db_path.name])
+    assert "distribution skill (Perkins)" in html
+    assert "0.910" in html
+    # always in-sample, and never part of the headline skill
+    assert "in-sample" in html
+    assert "E_ref" in html.split("distribution skill (Perkins)")[1]

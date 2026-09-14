@@ -38,7 +38,11 @@ column and a ``reference`` data source, and every variable in it:
    1985-2014 values for each calendar month. Those values are outside the
    test window the suite is cut to, so they come from the
    ``reference_baseline`` rows that
-   :class:`climatebench2.diags.ReferenceBaselineRecord` writes;
+   :class:`climatebench2.diags.ReferenceBaselineRecord` writes — and, for a
+   GMST-type annual series, the **PatternScaling** baseline: a two-layer EBM
+   driven by the packaged ERF table with one parameter calibrated on the
+   observations through 2014, displaced into pseudo-members by the detrended
+   residuals of the baseline window;
 6. set ``E_ref`` = **median of the per-model fair CRPS over the CMIP6
    comparison models** with ``M >= 2``, excluding any comparison model whose
    name equals the scored model's (leave-one-out, paper §5.6), and write the
@@ -105,11 +109,14 @@ SCORER = "climatebench2"
 #: ``data_id`` of the climatology-baseline row.
 CLIMATOLOGY_DATA_ID = "Climatology"
 
-#: ``data_id`` of the pattern-scaling baseline row — the hook for the later
-#: work package. ``baselines.two_layer_ebm`` + ``baselines.pattern_scaling_
-#: forecast`` are the maths; what is missing is an ERF series, a calibration
-#: through 2014 and a CMIP6-MMM warming pattern, none of which the results
-#: database carries, so nothing writes this row yet.
+#: ``data_id`` of the pattern-scaling baseline row (work package 6b). For a
+#: **GMST-type annual series** it is a real score: the two-layer EBM driven by
+#: the packaged ERF table, one parameter calibrated on the observations
+#: through 2014, given pseudo-members so fair CRPS is defined
+#: (:func:`_pattern_scaling_row`). For a **spatial field** it is still a
+#: ``reason`` row: the normalized CMIP6 multi-model-mean warming pattern needs
+#: baseline-window maps that arrive with upstream ClimateEval PR #44
+#: (:func:`_eof_pattern_scaling_row`).
 PATTERN_SCALING_DATA_ID = "PatternScaling"
 
 #: ``data_type`` of the reference's pre-test baseline-window rows, written by
@@ -726,6 +733,142 @@ def _climatology_row(
     )
 
 
+def _annual_observed_record(
+    reference: pd.DataFrame,
+    column: str,
+    baseline: dict[tuple[str, str], pd.DataFrame] | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(years, values)`` of the reference, reaching back past the test cut.
+
+    The Tier II suites are cut to the post-2015 test window, so the
+    reference's own rows start in 2015; the pre-test record comes from
+    :class:`climatebench2.diags.ReferenceBaselineRecord`. Both are needed
+    here: the baseline window defines the anomaly and the pre-2015 years are
+    the only ones the pattern-scaling emulator may be calibrated on.
+    """
+    frames = [reference[["time", column]].dropna()]
+    recorded = _baseline_window_series(baseline, column, monthly=False)
+    if recorded is not None:
+        frames.append(recorded[["time", column]].dropna())
+    joined = (
+        pd.concat(frames, ignore_index=True)
+        .drop_duplicates(subset="time")
+        .sort_values("time")
+    )
+    years = pd.to_datetime(joined["time"]).dt.year.to_numpy()
+    return years, joined[column].to_numpy(float)
+
+
+def _pattern_scaling_row(
+    reference: pd.DataFrame,
+    column: str,
+    settings: dict[str, Any],
+    *,
+    baseline: dict[tuple[str, str], pd.DataFrame] | None = None,
+    sigma: pd.Series | None = None,
+    floor: float = 0.0,
+) -> dict[str, Any] | None:
+    """Baseline (iii): the calibrated two-layer EBM, as an ensemble.
+
+    The protocol's "simplest defensible emulator": a global-mean temperature
+    trajectory from a two-layer EBM driven by the packaged annual ERF series
+    and calibrated — **one** parameter, on observations **through 2014** —
+    then reported alongside the headline skill.
+
+    Returns ``None`` for a variable the emulator says nothing about (only
+    ``tier2.pattern_scaling.variables`` qualify) or for a monthly series; a
+    ``reason`` row whenever it qualifies but the data do not allow the fit,
+    so the absence is visible on the scorecard rather than silent.
+
+    ⚠ Two CB2 interpretations, both recorded in docs/metrics_reference.md:
+    the deterministic trajectory is given **pseudo-members** (the detrended
+    observed residuals of the baseline window displace it, exactly as the
+    climatology baseline uses that window's values), and the ERF table it is
+    driven by is currently a provisional interpolation of AR6 anchors.
+    """
+    qualifies = get_threshold("tier2.pattern_scaling.variables")
+    if column not in qualifies and column.split("_", 1)[0] not in qualifies:
+        return None
+    ref = reference[["time", column]].dropna().sort_values("time")
+    if ref.empty or is_monthly(ref["time"]):
+        # The EBM steps annually; a monthly target would need an
+        # interpolation the protocol does not specify.
+        return None
+
+    def _reason(text: str) -> dict[str, Any]:
+        return _empty_row(PATTERN_SCALING_DATA_ID, "baseline", column, text)
+
+    first, last = (int(y) for y in get_threshold("tier2.climatology_baseline_period"))
+    end = int(get_threshold("tier2.pattern_scaling.calibration_end_year"))
+    minimum = int(get_threshold("tier2.pattern_scaling.min_calibration_years"))
+    years, values = _annual_observed_record(reference, column, baseline)
+    if (years <= end).sum() < minimum:
+        return _reason(
+            f"pattern scaling needs >= {minimum} observed years through {end} "
+            f"to calibrate; the database has {(years <= end).sum()}",
+        )
+    in_baseline = (years >= first) & (years <= last)
+    if in_baseline.sum() < _MIN_MEMBERS:
+        return _reason(f"reference has no {first}-{last} window to anchor the EBM")
+
+    ebm_kwargs = {
+        key: float(value)
+        for key, value in get_threshold("tier2.ebm").items()
+        if key != get_threshold("tier2.pattern_scaling.calibrated_parameter")
+    }
+    try:
+        erf_years, erf = baselines.load_erf_series(
+            str(get_threshold("tier2.pattern_scaling.erf_file")),
+        )
+        calibration = baselines.calibrate_two_layer_ebm(
+            erf,
+            erf_years,
+            values,
+            years,
+            baseline=(first, last),
+            calibration_end=end,
+            parameter=str(get_threshold("tier2.pattern_scaling.calibrated_parameter")),
+            bracket=tuple(get_threshold("tier2.pattern_scaling.lambda_bounds")),
+            **ebm_kwargs,
+        )
+        residuals = baselines.detrended_residuals(values[in_baseline])
+    except (ValueError, OSError) as exc:
+        return _reason(f"pattern scaling could not be calibrated: {exc}")
+
+    # Score it on the reserved test window — the steps the models are scored
+    # on — never on the years it was calibrated to.
+    target_years = pd.to_datetime(ref["time"]).dt.year.to_numpy()
+    covered = np.isin(target_years, calibration.years) & (
+        target_years >= int(get_threshold("tier2.test_window_start"))
+    )
+    if covered.sum() < _MIN_OVERLAP:
+        return _reason(
+            "no scored year is covered by both the test window and the ERF "
+            "series",
+        )
+    positions = np.searchsorted(calibration.years, target_years[covered])
+    forecast = calibration.trajectory[positions]
+    anomaly = ref[column].to_numpy(float)[covered] - float(
+        np.nanmean(values[in_baseline]),
+    )
+    try:
+        members = baselines.ebm_pseudo_members(forecast, residuals)
+    except ValueError as exc:
+        return _reason(str(exc))
+    row = _score_row(
+        data_id=PATTERN_SCALING_DATA_ID,
+        data_type="baseline",
+        var_id=column,
+        members=members,
+        obs=anomaly,
+        monthly=False,
+        settings=settings,
+        obs_sigma=_sigma_at(sigma, ref["time"][covered], floor),
+    )
+    row["value"] = calibration.value  # the one calibrated parameter
+    return row
+
+
 def _apply_reference_skill(scored: dict[tuple[str, str], dict[str, Any]]) -> None:
     """Fill ``e_ref`` / ``n_ref_models`` / ``skill`` in place.
 
@@ -920,6 +1063,17 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
             floor=floor,
         )
         scored[clim["data_type"], clim["data_id"]] = clim
+
+        pattern = _pattern_scaling_row(
+            reference,
+            column,
+            settings,
+            baseline=baseline,
+            sigma=sigma,
+            floor=floor,
+        )
+        if pattern is not None:
+            scored[pattern["data_type"], pattern["data_id"]] = pattern
 
         _apply_reference_skill(scored)
         rows.extend(scored.values())
@@ -1267,10 +1421,55 @@ def score_eof_output(
 
         if not scored:
             continue
+        scored["baseline", PATTERN_SCALING_DATA_ID] = _eof_pattern_scaling_row(
+            var_frame,
+            str(var_id),
+        )
         _apply_reference_skill(scored)
         rows.extend(scored.values())
     _apply_window_labels(rows, diagnostic)
     return rows
+
+
+#: ``data_type`` a future EOF table would carry the CMIP6 multi-model-mean
+#: baseline-window projection under. Nothing writes it yet.
+MMM_PATTERN_DATA_TYPE = "baseline_pattern"
+
+
+def _eof_pattern_scaling_row(var_frame: pd.DataFrame, var_id: str) -> dict[str, Any]:
+    """Regime (b)'s pattern-scaling baseline — a ``reason`` row for now.
+
+    The spatial half of baseline (iii) is ``ΔT_global(t)`` (which the
+    time-series regime now has, from the calibrated EBM) times a
+    **normalized CMIP6 multi-model-mean warming pattern**:
+    ``baselines.pattern_scaling_forecast`` is that arithmetic. What is
+    missing is the pattern itself — the mean over comparison models of
+    ``(test-window map − baseline-window map) / ΔGMST`` — because the EOF
+    diagnostic projects only the *test-window* anomaly of each source, and
+    the CMIP6 comparison ensemble has no post-2015 member at all until
+    **upstream ClimateEval PR #44** lands.
+
+    So the row records why there is no number, exactly as a single-member
+    model does, rather than the baseline silently disappearing from the
+    scorecard.
+    """
+    if (var_frame["data_type"] == MMM_PATTERN_DATA_TYPE).any():  # pragma: no cover
+        # Reserved for the day the projections are in the table; the caller
+        # would then build the forecast with pattern_scaling_forecast.
+        return _empty_row(
+            PATTERN_SCALING_DATA_ID,
+            "baseline",
+            var_id,
+            "pattern-scaling projections present but not yet scored",
+        )
+    return _empty_row(
+        PATTERN_SCALING_DATA_ID,
+        "baseline",
+        var_id,
+        "pattern scaling needs the CMIP6 multi-model-mean baseline-window "
+        "maps (upstream ClimateEval PR #44); the GMST trajectory alone is "
+        "scored in the time-series regime",
+    )
 
 
 def _eof_score_row(

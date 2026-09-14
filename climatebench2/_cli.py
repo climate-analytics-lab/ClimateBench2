@@ -83,9 +83,12 @@ class SuiteSpec:
         member) or ``"picontrol"`` (the piControl experiment, run once).
     ``window``
         For cube suites: ``"tier2"`` (the post-2015 test window),
-        ``"historical"`` (:data:`DEFAULT_TIMERANGE`) or ``"full"`` (no cut —
-        a control run has its own calendar). ``--timerange`` overrides the
-        first two.
+        ``"historical"`` (:data:`DEFAULT_TIMERANGE`) or ``"full"`` (no cut).
+        ``--timerange`` overrides the first two but never ``"full"``, which
+        is used where a window would destroy the statistic: a control run has
+        its own calendar (``TierI_variability``), and the daily suite's
+        extremes, PDFs and diurnal climatologies are defined by the paper
+        over the **whole historical record** and labelled in-sample.
     ``per_member``
         Whether the suite runs **once per submitted ensemble member**. True
         for the cube suites (each member's series is its own data source, and
@@ -127,9 +130,14 @@ SUITE_REGISTRY: dict[str, SuiteSpec] = {
     ),
     "ClimateBench2_TierII_daily": SuiteSpec(
         shape="cubes",
-        window="tier2",
+        window="full",
         per_member=True,
-        note="Tier II daily/hourly scoring over the test window",
+        note=(
+            "Tier II daily/hourly statistics over the FULL historical record "
+            "(the paper computes the extremes and the PDF/diurnal "
+            "climatologies over it, not over the test window) — every entry "
+            "is labelled in-sample"
+        ),
     ),
     "ClimateBench2_TierII_events": SuiteSpec(
         shape="experiments",
@@ -582,8 +590,10 @@ def build_parser() -> argparse.ArgumentParser:
             "experiment in full\n"
             "  TierI_variability                 the piControl experiment, in "
             "full (>= 100 yr)\n"
-            f"  TierII / TierII_daily             model cubes over "
+            f"  TierII                            model cubes over "
             f"{default_tier2_timerange()} (--timerange overrides)\n"
+            "  TierII_daily                      model cubes over the full "
+            "record (extremes/PDFs/diurnal are in-sample)\n"
             "\n"
             "protocol spec: docs/metrics_reference.md\n"
             "architecture:  docs/climateeval_delineation_plan.md"

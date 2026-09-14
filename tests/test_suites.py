@@ -99,6 +99,10 @@ def test_tier2_event_gates_moved_out_of_the_tier1_suite() -> None:
         "realized_warming_level",
         "pinatubo",
         "hemispheric_asymmetry",
+        # the seasonal-cycle metrics of §II.1 (work package 6b)
+        "land_temperature_range",
+        "sst_low_cloud_covariance",
+        "seasonal_cloud_feedback",
     }
     for diag in events.values():
         assert diag._required_data_keys == ("historical",)
@@ -174,3 +178,77 @@ def test_unregistered_suites_are_classified_by_probing() -> None:
     )._get_diagnostics()
     spec = _suite_spec("SomeOtherSuite", variability, ComplexDiagnostic)
     assert (spec.shape, spec.window) == ("cubes", "historical")
+
+
+def test_the_daily_suite_runs_over_the_full_record_per_member() -> None:
+    """The extremes/PDF/diurnal statistics are in-sample, not test-window.
+
+    The paper computes them "over the full historical record", so the daily
+    suite is the one cube suite the CLI does not cut — and every entry in it
+    is labelled in-sample in `tier2.window_labels`.
+    """
+    from climatebench2._cli import SUITE_REGISTRY, suite_timerange
+    from climatebench2._thresholds import get_threshold
+
+    spec = SUITE_REGISTRY["ClimateBench2_TierII_daily"]
+    assert (spec.shape, spec.window, spec.per_member) == ("cubes", "full", True)
+    # ... and not even an explicit --timerange re-cuts it
+    assert suite_timerange(spec) is None
+    assert suite_timerange(spec, "19790101/20141231") is None
+
+    labels = get_threshold("tier2.window_labels")["diagnostics"]
+    suite = Suite(_resolve_suite("ClimateBench2_TierII_daily"))._get_diagnostics()
+    for name in suite:
+        assert labels.get(name, "held-out") == "in-sample", name
+
+
+def test_the_daily_extremes_are_model_only_but_scorable_in_shape() -> None:
+    """No daily obs product exists upstream, so the extremes carry no reference.
+
+    The shape is still the scored one (aggregated scalars), so the day a
+    HadEX3 DataSource lands the suite only needs a `reference_data:` line.
+    """
+    from climatebench2.diags import ETCCDIExtremes, ScalarTableDiagnostic
+
+    suite = Suite(_resolve_suite("ClimateBench2_TierII_daily"))._get_diagnostics()
+    extremes = suite["extremes"]
+    assert isinstance(extremes, ETCCDIExtremes)
+    assert isinstance(extremes, ScalarTableDiagnostic)
+    assert not extremes._reference_data, "extremes must stay unscored for now"
+    assert {v.var_name for v in extremes._variables} == {"tasmax", "tasmin", "pr"}
+    # ETCCDI indices are land indices: the mask is ClimateEval's, per variable
+    assert all(v.landsea_mask == "land_only" for v in extremes._variables)
+
+    # ... whereas the diurnal harmonic and the Perkins score do have one
+    assert suite["diurnal_harmonic"]._reference_data
+    assert suite["perkins"]._reference_data
+
+
+def test_the_seasonal_metrics_read_their_boxes_from_thresholds() -> None:
+    from climatebench2._thresholds import get_threshold
+    from climatebench2.diags import (
+        LandAnnualTemperatureRange,
+        SeasonalCloudRadiativeFeedback,
+        SSTLowCloudCovariance,
+    )
+
+    decks = get_threshold("tier2.seasonal.stratocumulus_regions")
+    assert len(decks) == 5  # the five conventional stratocumulus decks
+    for box in decks.values():
+        assert len(box["lat"]) == 2 and len(box["lon"]) == 2
+
+    suite = Suite(_resolve_suite("ClimateBench2_TierII_events"))._get_diagnostics()
+    assert isinstance(suite["land_temperature_range"], LandAnnualTemperatureRange)
+    assert isinstance(suite["sst_low_cloud_covariance"], SSTLowCloudCovariance)
+    assert isinstance(
+        suite["seasonal_cloud_feedback"],
+        SeasonalCloudRadiativeFeedback,
+    )
+    # reported numbers, never gates
+    for name in (
+        "land_temperature_range",
+        "sst_low_cloud_covariance",
+        "seasonal_cloud_feedback",
+    ):
+        assert suite[name]._gate_checks == ()
+        assert suite[name].requirement == "diagnostic"

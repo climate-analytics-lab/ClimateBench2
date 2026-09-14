@@ -35,3 +35,30 @@
 - name: hemispheric_asymmetry         # II.1 — historical (aerosol era)
   diagnostic: climatebench2.diags.HemisphericAsymmetryGate
   additional_diagnostic_kwargs: {}
+
+# --- Seasonal-cycle metrics (§II.1 "Seasonal-cycle metrics") ----------------
+#
+# Properties of the 12-month climatology over the protocol's fixed
+# 1985-2014 window, so they are **in-sample** — and, unlike the scalars
+# above, their observed counterparts come from several products at once:
+# ERA5 (or CRU once upstream PR #49 lands) for the land temperature range,
+# ESACCI-CLOUD + ESACCI-SST for the low-cloud covariance, CERES-EBAF +
+# ESACCI-SST for the seasonal cloud-radiative feedback. `ObservedScalarMixin`
+# writes the `reference` row under the primary product and registers every
+# product it read in `data_sources`.
+#
+# Not implemented (deferred by the paper): the seasonal amplitude of land
+# carbon uptake (`nbp` vs atmospheric-inversion products) — no carbon-cycle
+# output is requested of a submission.
+
+- name: land_temperature_range       # II.1 (i) — tas, land, max-min of the cycle
+  diagnostic: climatebench2.diags.LandAnnualTemperatureRange
+  additional_diagnostic_kwargs: {}
+
+- name: sst_low_cloud_covariance     # II.1 (ii) — clt on tos, stratocumulus decks
+  diagnostic: climatebench2.diags.SSTLowCloudCovariance
+  additional_diagnostic_kwargs: {}
+
+- name: seasonal_cloud_feedback      # II.1 (iii) — swcre on tos, same decks
+  diagnostic: climatebench2.diags.SeasonalCloudRadiativeFeedback
+  additional_diagnostic_kwargs: {}

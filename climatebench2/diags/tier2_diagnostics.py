@@ -64,13 +64,14 @@ from esmvalcore.preprocessor import (
     climate_statistics,
     extract_region,
     extract_time,
+    mask_landsea,
     zonal_statistics,
 )
 from loguru import logger
 
 from climateeval import Variable
 from climateeval._config import setup_esmvaltool_config_and_logging
-from climateeval.data import HadCRUT5
+from climateeval.data import CERESEBAF, ERA5Monthly, ESACCICloud, ESACCISST, HadCRUT5
 from climateeval.diags._base import DiagnosticOutput
 from climateeval.diags._utils import union
 
@@ -131,15 +132,32 @@ class ObservedScalarMixin:
     its model-only output, exactly as the observation-fed Tier I gates do.
     """
 
-    #: Observational product the reference scalars come from.
+    #: Observational product the reference scalars come from. It is also the
+    #: ``data_id`` the ``reference`` rows are written under, so a diagnostic
+    #: drawing on several products names its **primary** one here and lists
+    #: the rest in :attr:`_observation_products` (for provenance).
     _observation_source: ClassVar[type[DataSource]] = HadCRUT5
+
+    #: Every product this diagnostic reads, registered in ``data_sources``.
+    #: ``()`` means "just the primary one".
+    _observation_products: ClassVar[tuple[type[DataSource], ...]] = ()
 
     def _observed_scalars(self) -> dict[str, float]:
         """``{scalar: observed value}``; empty when there is nothing to add."""
         return {}
 
-    def _observation_cube(self, var_name: str, timerange: str) -> Cube:
+    def _observation_cube(
+        self,
+        var_name: str,
+        timerange: str,
+        source: type[DataSource] | None = None,
+    ) -> Cube:
         """One observational field over ``timerange`` (an ISO window).
+
+        ``source`` defaults to :attr:`_observation_source`; the seasonal-cycle
+        diagnostics pass a second product (an SST or a cloud product beside
+        the primary) because their statistic is a regression *between* two
+        observed fields.
 
         HadCRUT5 CMORizes both ``tas`` and the anomaly field ``tasa``, but
         only ``tas`` is in ClimateEval's variable registry (``tasa`` would
@@ -148,7 +166,7 @@ class ObservedScalarMixin:
         baseline window and the two differ by a constant.
         """
         variable = Variable(var_name, var_name, "mon", timerange=timerange)
-        return self._observation_source().get_cube(
+        return (source or self._observation_source)().get_cube(
             self.data_root_dir,  # type: ignore[attr-defined]
             variable,
             download_missing_data=self._download_missing_data,  # type: ignore[attr-defined]
@@ -177,6 +195,10 @@ class ObservedScalarMixin:
         if not values:
             return output
         information = self._observation_source().information
+        products = [
+            source().information
+            for source in (self._observation_products or (self._observation_source,))
+        ]
         scalars = self._scalar_outputs(values)  # type: ignore[attr-defined]
         tables = list(
             self._get_raw_output_tables(  # type: ignore[attr-defined]
@@ -188,7 +210,7 @@ class ObservedScalarMixin:
         sources = pd.concat(
             [
                 output.data_sources.to_pandas(),
-                self._get_data_sources_table([information]).to_pandas(),  # type: ignore[attr-defined]
+                self._get_data_sources_table(products).to_pandas(),  # type: ignore[attr-defined]
             ],
             ignore_index=True,
         ).drop_duplicates()
@@ -577,3 +599,251 @@ class HemisphericAsymmetryGate(_GlobalMeanTasMixin, CB2ComplexDiagnostic):
                 "itcz_shift_deg_per_decade": self._itcz_shift(historical),
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# Seasonal-cycle metrics (§II.1 "Seasonal-cycle metrics")
+# ---------------------------------------------------------------------------
+
+
+class _SeasonalCycleDiagnostic(ObservedScalarMixin, CB2ComplexDiagnostic):
+    """Shared machinery of the three seasonal-cycle statistics of §II.1.
+
+    Each one is a property of the **12-month climatology**, computed over the
+    protocol's fixed ``tier2.climatology_baseline_period`` (1985-2014) so
+    that every submission and every observational product see the same
+    years, and labelled *in-sample*. The window is emitted as
+    ``seasonal_window_first/last_year`` on the model side only, so the
+    scoring pass — which scores a scalar only where the reference carries a
+    value — treats it as provenance rather than as a statistic.
+
+    A model whose record does not cover the window is not skipped: its own
+    record is used, with a warning, because a seasonal cycle is far less
+    window-sensitive than a trend.
+    """
+
+    _required_data_keys = ("historical",)
+    #: Protocol standing (thresholds.yml): reported numbers, never a gate.
+    requirement: ClassVar[str] = gate_requirement("tier2.seasonal")
+
+    def _window(self, cube: Cube) -> Cube:
+        """The climatology window of the protocol, or the whole record."""
+        first, last = windows.baseline_window_years()
+        try:
+            with setup_esmvaltool_config_and_logging():
+                return extract_time(cube, first, 1, 1, last, 12, 31)
+        except Exception as exc:  # noqa: BLE001 - a short record is not fatal
+            logger.warning(
+                f"Diagnostic '{self.name}': cannot cut to the {first}-{last} "
+                f"seasonal-cycle window ({exc}); using the whole record",
+            )
+            return cube
+
+    def _climatology(self, cube: Cube) -> Cube:
+        """The 12-month climatology of a regridded monthly cube."""
+        with setup_esmvaltool_config_and_logging():
+            return climate_statistics(self._window(cube), "mean", "month")
+
+    def _model_climatology(
+        self,
+        data: CubeList | Dataset,
+        var_name: str,
+    ) -> Cube:
+        return self._climatology(self._cube(data, _mon(var_name)))
+
+    def _observed_climatology(
+        self,
+        var_name: str,
+        source: type[DataSource],
+    ) -> Cube:
+        """The same 12-month climatology from one observational product."""
+        first, last = windows.baseline_window_years()
+        cube = self._observation_cube(
+            var_name,
+            windows.timerange(first, last),
+            source=source,
+        )
+        return self._climatology(self._regridded(cube))
+
+    @staticmethod
+    def _box_series(climatology: Cube, box: dict[str, list[float]]) -> np.ndarray:
+        """Area-mean 12-month series over one lat/lon box.
+
+        Longitudes may be negative (the Namibian deck straddles Greenwich):
+        ``extract_region`` goes through ``iris.Cube.intersection``, which is
+        modular, and ``area_statistics`` weights by true cell area.
+        """
+        lat0, lat1 = (float(v) for v in box["lat"])
+        lon0, lon1 = (float(v) for v in box["lon"])
+        with setup_esmvaltool_config_and_logging():
+            cube = extract_region(
+                climatology,
+                start_longitude=lon0,
+                end_longitude=lon1,
+                start_latitude=lat0,
+                end_latitude=lat1,
+            )
+            cube = area_statistics(cube, "mean")
+        return _filled(cube.data)
+
+    def _window_provenance(self) -> dict[str, float]:
+        first, last = windows.baseline_window_years()
+        return {
+            "seasonal_window_first_year": float(first),
+            "seasonal_window_last_year": float(last),
+        }
+
+
+class LandAnnualTemperatureRange(_SeasonalCycleDiagnostic):
+    """§II.1 (i): the climatological annual temperature range over land.
+
+    ``max − min`` of the 12-month ``tas`` climatology **at each land grid
+    point**, then an area-weighted mean over land — the order matters: the
+    range of the area-mean seasonal cycle would cancel the hemispheres
+    against each other and be several times smaller.
+
+    Emits ``land_annual_temperature_range`` (K). Reference: **ERA5Monthly**
+    ``tas`` (``VARIABLE_MAPPING`` has ``2m_temperature``). ⚠ Once upstream
+    PR #49 lands, **CRU TS** is the better land-only reference and should
+    replace or join ERA5 here.
+    """
+
+    _observation_source: ClassVar[type[DataSource]] = ERA5Monthly
+
+    def _range(self, cube: Cube) -> float:
+        """Area-mean over land of the gridpoint annual temperature range."""
+        with setup_esmvaltool_config_and_logging():
+            land = mask_landsea(cube, "sea")
+        climatology = self._climatology(land)
+        data = _filled(climatology.data)  # (12, lat, lon)
+        span = np.nanmax(data, axis=0) - np.nanmin(data, axis=0)
+        latitudes = climatology.coord("latitude").points.astype(float)
+        return physics.area_weighted_mean(span, latitudes)
+
+    def _observed_scalars(self) -> dict[str, float]:
+        first, last = windows.baseline_window_years()
+        cube = self._observation_cube(
+            "tas",
+            windows.timerange(first, last),
+        )
+        return {"land_annual_temperature_range": self._range(self._regridded(cube))}
+
+    def _calculate_raw_output(
+        self,
+        complex_data_source: ComplexDataSource,
+    ) -> dict[Variable, Cube]:
+        cube = self._cube(complex_data_source.data["historical"], _mon("tas"))
+        return self._scalar_outputs(
+            {
+                "land_annual_temperature_range": self._range(cube),
+                **self._window_provenance(),
+            },
+        )
+
+
+class _StratocumulusRegression(_SeasonalCycleDiagnostic):
+    """Regression of a cloud/radiation field on SST over the seasonal cycle.
+
+    Shared by §II.1 (ii) and (iii): in each stratocumulus deck of
+    ``tier2.seasonal.stratocumulus_regions`` the 12-month climatologies of
+    the predictand and of ``tos`` are area-averaged over the box and
+    regressed against each other (12 points), giving one slope per deck plus
+    their unweighted mean — the headline number, because a single deck is
+    noisy and the five together are the emergent constraint the paper names.
+    """
+
+    #: Predictand and its unit label, set by the subclasses.
+    _predictand: ClassVar[str] = ""
+    _scalar_prefix: ClassVar[str] = ""
+    #: Where the predictand's observations come from (SST is always ESACCI).
+    _predictand_source: ClassVar[type[DataSource]] = ESACCISST
+
+    def _slopes(self, predictand: Cube, sst: Cube) -> dict[str, float]:
+        """One slope per deck plus their mean, from two 12-month climatologies."""
+        decks = get_threshold("tier2.seasonal.stratocumulus_regions")
+        out: dict[str, float] = {}
+        values: list[float] = []
+        for deck, box in decks.items():
+            slope = physics.pooled_regression_slope(
+                self._box_series(predictand, box),
+                self._box_series(sst, box),
+            )
+            out[f"{self._scalar_prefix}_{deck}"] = slope
+            if np.isfinite(slope):
+                values.append(slope)
+        out[f"{self._scalar_prefix}_mean"] = (
+            float(np.mean(values)) if values else float("nan")
+        )
+        return out
+
+    def _observed_scalars(self) -> dict[str, float]:
+        return self._slopes(
+            self._observed_climatology(self._predictand, self._predictand_source),
+            self._observed_climatology("tos", ESACCISST),
+        )
+
+    def _calculate_raw_output(
+        self,
+        complex_data_source: ComplexDataSource,
+    ) -> dict[Variable, Cube]:
+        historical = complex_data_source.data["historical"]
+        return self._scalar_outputs(
+            {
+                **self._slopes(
+                    self._model_climatology(historical, self._predictand),
+                    self._model_climatology(historical, "tos"),
+                ),
+                **self._window_provenance(),
+            },
+        )
+
+
+class SSTLowCloudCovariance(_StratocumulusRegression):
+    """§II.1 (ii): the SST-low-cloud seasonal covariance.
+
+    Slope of the 12-month cloud-fraction climatology on the 12-month ``tos``
+    climatology in each stratocumulus deck (% per K). Observations: **ESACCI-
+    CLOUD** ``clt`` on **ESACCI-SST** ``tos``.
+
+    ⚠ **CB2 reading: ``clt`` is the low-cloud proxy.** The protocol says
+    "low-cloud fraction". A genuine low-cloud fraction would come from ``cl``
+    with a level selection (or an ISCCP-style simulator diagnostic), which
+    needs a model-level coordinate that not every submission provides and an
+    observational product whose level definition matches. In the
+    stratocumulus decks total cloud cover *is* essentially low cloud, which
+    is precisely why the decks are the region the constraint is evaluated
+    over — but over a deck with cirrus overhead the proxy is biased.
+    Recorded in docs/metrics_reference.md §II.1.
+    """
+
+    _predictand = "clt"
+    _scalar_prefix = "sst_low_cloud_slope"
+    _observation_source: ClassVar[type[DataSource]] = ESACCICloud
+    _observation_products: ClassVar[tuple[type[DataSource], ...]] = (
+        ESACCICloud,
+        ESACCISST,
+    )
+    _predictand_source: ClassVar[type[DataSource]] = ESACCICloud
+
+
+class SeasonalCloudRadiativeFeedback(_StratocumulusRegression):
+    """§II.1 (iii): the seasonal cloud-radiative feedback (§5.2's constraint).
+
+    Slope of the 12-month ``swcre`` climatology on the 12-month ``tos``
+    climatology in each stratocumulus deck (W m⁻² per K) — the seasonal-cycle
+    analogue of the low-cloud feedback, and an emergent constraint on it.
+    ``swcre`` is a **derived** variable in ClimateEval's registry
+    (``rsut``-based), so both the model and CERES-EBAF supply it without CB2
+    computing a flux difference itself.
+
+    Observations: **CERES-EBAF** ``swcre`` on **ESACCI-SST** ``tos``.
+    """
+
+    _predictand = "swcre"
+    _scalar_prefix = "seasonal_swcre_slope"
+    _observation_source: ClassVar[type[DataSource]] = CERESEBAF
+    _observation_products: ClassVar[tuple[type[DataSource], ...]] = (
+        CERESEBAF,
+        ESACCISST,
+    )
+    _predictand_source: ClassVar[type[DataSource]] = CERESEBAF

@@ -290,8 +290,20 @@ tier2:
       tas_annual_max: in-sample
       pr_intensity_pdf: in-sample
       pr_diurnal_cycle: in-sample
+      # The daily suite runs over the FULL historical record (work package
+      # 6b), so everything in it is in-sample. `extremes` has no
+      # observational reference yet and so writes no scored row at all; the
+      # label is here for the day HadEX3 lands upstream. `perkins` writes
+      # metrics rather than pass rows, so its label is the leaderboard's.
+      extremes: in-sample
+      diurnal_harmonic: in-sample
+      perkins: in-sample
       pinatubo: in-sample
       hemispheric_asymmetry: in-sample
+      # Seasonal-cycle metrics: properties of the 1985-2014 climatology
+      land_temperature_range: in-sample
+      sst_low_cloud_covariance: in-sample
+      seasonal_cloud_feedback: in-sample
     var_ids:
       gmst_warming_level: held-out
       gmst_trend_test_window: held-out
@@ -355,6 +367,15 @@ tier2:
     calibrated_parameter: lambda_feedback
     lambda_bounds: [-3.0, -0.3]        # W m-2 K-1, the search interval
     calibration_end_year: 2014         # the paper's "through 2014"
+    # Variables the GMST trajectory is a forecast OF. A two-layer EBM
+    # predicts a global-mean surface temperature anomaly and nothing else, so
+    # the baseline row is written for these series only (matched as the suite
+    # variable id, then the token before its first underscore) — never for
+    # precipitation, fluxes or sea ice, where it would be meaningless.
+    variables: [tas, ts, tos]
+    # Fewer observed years than this before `calibration_end_year` and the
+    # baseline is not fitted at all: a `reason` row says so instead.
+    min_calibration_years: 10
 
   # --- Work package 6b: the daily, seasonal and diurnal Tier II statistics --
 
@@ -400,22 +421,26 @@ tier2:
     bins:
       tas_anomaly: {range: [-20.0, 20.0], width: 0.5}   # K
       pr_intensity: {range: [1.0, 101.0], width: 2.0}   # mm day-1, wet days
+    # The score is pooled by season here and by REGION in the suite: a
+    # latitude band and a land mask are both `Variable` properties
+    # ClimateEval already applies, so each region is its own suite variable
+    # (`tas_anomaly_land`, `pr_intensity_tropics`, …) rather than a list here.
     seasons: [DJF, MAM, JJA, SON]
-    regions:
-      global_land: [-90, 90]
-      tropical: [-30, 30]
 
   # Diurnal cycle (§II.1, Extended): first-harmonic amplitude and phase of the
   # sub-daily climatology in LOCAL SOLAR TIME.
   diurnal:
     requirement: diagnostic
+    # ClimateEval's common grid: the local-solar-time shift is a whole-column
+    # roll, so the resolution only has to resolve the longitudinal structure.
+    grid: 2x2
     seasons: [DJF, JJA]
-    # (lat band, land/sea) — the tropical land/ocean contrast is the classic
-    # failure mode (models rain at local noon over land, observations in the
-    # late afternoon).
+    # Latitude bands only: the land/sea split that makes this diagnostic
+    # interesting (models rain at local noon over land, observations in the
+    # late afternoon) is a MASK, which ClimateEval owns — the suite declares
+    # it per variable with `landsea_mask: land_only` / `sea_only`.
     regions:
-      tropical_land: {lat: [-30, 30], surface: land}
-      tropical_ocean: {lat: [-30, 30], surface: sea}
+      tropics: [-30, 30]
 
   # Seasonal-cycle metrics (§II.1 "Seasonal-cycle metrics").
   seasonal:

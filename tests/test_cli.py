@@ -52,9 +52,18 @@ def test_registry_shapes_match_the_protocol() -> None:
     )
     assert not variability.per_member
 
-    for name in ("ClimateBench2_TierII", "ClimateBench2_TierII_daily"):
-        spec = SUITE_REGISTRY[name]
-        assert (spec.shape, spec.source, spec.window) == ("cubes", "model", "tier2")
+    monthly = SUITE_REGISTRY["ClimateBench2_TierII"]
+    assert (monthly.shape, monthly.source, monthly.window) == (
+        "cubes",
+        "model",
+        "tier2",
+    )
+    # The daily suite is the exception: its extremes, PDFs and diurnal
+    # climatologies are defined over the FULL historical record (work package
+    # 6b), so it is in-sample and takes no window cut.
+    daily = SUITE_REGISTRY["ClimateBench2_TierII_daily"]
+    assert (daily.shape, daily.source, daily.window) == ("cubes", "model", "full")
+    for spec in (monthly, daily):
         assert spec.per_member  # cube suites run once per ensemble member
 
 

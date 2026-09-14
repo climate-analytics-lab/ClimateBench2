@@ -1,12 +1,142 @@
 # ClimateBench v2 — Tier II: sub-daily / daily-resolution scoring.
-# Daily tas extremes (TXx-style block maxima, CRPS-ESS scored), the pr
-# intensity PDF (histogram, EMD-metric'd) and the pr diurnal cycle
-# (metrics_reference.md §II.1 "Daily tas extremes / pr intensity PDF" and
-# "Diurnal cycle"). Run against the model's daily/hourly cubes.
+# The ETCCDI extremes, the Perkins PDF skill, the pr intensity PDF, the
+# diurnal cycle and a TXx-style block maximum (metrics_reference.md §II.1
+# "Daily tas extremes / pr intensity PDF" and "Diurnal cycle").
 #
-# TXx is the annual block maximum of daily `tasmax` (in ClimateEval's variable
-# registry since the merged upstream PR alongside rsds/rsus/rlds/rlus).
+# WINDOW. Unlike the monthly Tier II suite this one runs over the model's
+# FULL record, not the reserved post-2015 test window: the paper computes
+# the extremes and the PDF statistics "over the full historical record", and
+# a diurnal or seasonal climatology of ten years would be noise. Every entry
+# here is therefore labelled **in-sample** (thresholds.yml
+# `tier2.window_labels`), and `_cli.SUITE_REGISTRY` gives the suite
+# `window: full`. It still runs once per ensemble member, so the scoring
+# pass can form a fair CRPS across them.
+#
+# REFERENCES — read this before adding one.
+# * `ERA5.VARIABLE_MAPPING` has **no `tasmax`/`tasmin`**, and `ERA5Hourly`'s
+#   CDS request is hard-wired to a single year, so there is no daily
+#   observational product for the ETCCDI indices anywhere in ClimateEval.
+#   The `extremes` entry therefore carries NO `reference_data:` and its
+#   scalars are reported model-only and unscored — deliberately, not by
+#   accident (the scoring pass skips a scalar with no observed value, and
+#   says so). The natural reference is **HadEX3**, which already has an
+#   ESMValTool CMORizer and needs only an upstream DataSource; Berkeley
+#   daily, HadGHCND, IMERG and MSWEP have none.
+# * `pr` and `tas` DO exist in ERA5, so the diurnal harmonic and the Perkins
+#   score are scored against `ERA5Hourly` — with the caveat that a
+#   `frequency: day` variable looks in `<data_root>/ERA5/day/<var>`, which a
+#   staged daily ERA5 must fill (the hourly downloader would not).
 
+# --- ETCCDI extremes (in-sample, model-only until HadEX3 lands upstream) ---
+#
+# One scalar per (index, region, statistic): the climatological mean and the
+# OLS trend per decade of each index's annual, region-mean series. Regions
+# are the latitude bands of `tier2.extremes.regions`; the LAND masking is
+# declared here (`landsea_mask: land_only`) because ETCCDI indices are
+# land indices and masking belongs to ClimateEval. The conservative regrid
+# to the common ~1° grid happens inside the diagnostic, from
+# `tier2.extremes.grid` / `regrid_scheme`.
+- name: extremes
+  diagnostic: climatebench2.diags.ETCCDIExtremes
+  variables:
+    - id: tasmax            # TXx, TX90p, WSDI
+      var_name: tasmax
+      frequency: day
+      landsea_mask: land_only
+    - id: tasmin            # TNn
+      var_name: tasmin
+      frequency: day
+      landsea_mask: land_only
+    - id: pr                # Rx1day, Rx5day, R95pTOT, CDD
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      # Once an upstream daily-pr DataSource exists (or a staged daily ERA5
+      # under <data_root>/ERA5/day/pr), the precipitation indices become
+      # scorable by adding:
+      #   reference_data: climateeval.data.ERA5Hourly
+      #   additional_preprocessors:
+      #     esmvalcore.preprocessor.daily_statistics: {operator: mean}
+      # Left out against the pinned `main` rather than scoring a model
+      # against ERA5Hourly's single hard-wired year.
+
+# --- Perkins skill score on daily PDFs (in-sample) -------------------------
+#
+# A distribution-shape SKILL score, not an error: it is written as a metric
+# (`perkins_<season>`), never as a CRPS, and the leaderboard shows it in its
+# own table. The region of each entry is the variable itself — a latitude
+# band and a land mask are both `Variable` properties ClimateEval applies —
+# while the bins are pre-registered in `tier2.perkins.bins`.
+- name: perkins
+  diagnostic: climatebench2.diags.PerkinsSkillScore
+  variables:
+    - id: tas_anomaly_land
+      var_name: tas
+      frequency: day
+      landsea_mask: land_only
+      diagnostic_kwargs:
+        quantity: tas_anomaly
+      reference_data: climateeval.data.ERA5Hourly
+    - id: tas_anomaly_tropics
+      var_name: tas
+      frequency: day
+      min_lat: -30.0
+      max_lat: 30.0
+      diagnostic_kwargs:
+        quantity: tas_anomaly
+      reference_data: climateeval.data.ERA5Hourly
+    - id: pr_intensity_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs:
+        quantity: pr_intensity
+      reference_data: climateeval.data.ERA5Hourly
+    - id: pr_intensity_tropics
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      min_lat: -30.0
+      max_lat: 30.0
+      diagnostic_kwargs:
+        quantity: pr_intensity
+      reference_data: climateeval.data.ERA5Hourly
+
+# --- Diurnal cycle: first harmonic in local solar time (in-sample) ---------
+#
+# Amplitude and phase (as cos/sin components — fair CRPS cannot score an
+# angle) of the sub-daily `pr` climatology per season and latitude band,
+# after shifting every longitude column to local solar time. The tropical
+# land/ocean contrast is the diagnostic's point, so it is two variables.
+# `swcre`/`netcre` join them wherever a model supplies 3-hourly TOA fluxes
+# (they are derived variables in ClimateEval's registry); no sub-daily
+# observational CRE product exists upstream (CERES-SYN ❌), so they are not
+# wired by default.
+- name: diurnal_harmonic
+  diagnostic: climatebench2.diags.DiurnalHarmonic
+  variables:
+    - id: pr_land
+      var_name: pr
+      frequency: 1hr
+      units: mm day-1
+      landsea_mask: land_only
+      reference_data: climateeval.data.ERA5Hourly
+    - id: pr_ocean
+      var_name: pr
+      frequency: 1hr
+      units: mm day-1
+      landsea_mask: sea_only
+      reference_data: climateeval.data.ERA5Hourly
+
+# --- Deterministic displays kept from before --------------------------------
+#
+# TXx is the annual block maximum of daily `tasmax` (in ClimateEval's
+# variable registry since the merged upstream PR alongside rsds/rsus/…),
+# against an ERA5Monthly PLACEHOLDER reference of the wrong frequency; the
+# `extremes` entry above is its protocol-conforming successor and it stays
+# only as a familiar deterministic display.
 - name: tas_annual_max
   diagnostic: climatebench2.diags.ScoredAnnualMaxTimeSeries
   variables:

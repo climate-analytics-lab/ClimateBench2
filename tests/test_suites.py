@@ -41,6 +41,11 @@ def test_tier1_gates_have_thresholds_wired() -> None:
     assert ratio.upper is None
 
 
+#: Entries of the Tier I suites that are inputs to Tier II rather than gates:
+#: they emit numbers only and can never touch the entry ticket.
+TIER1_NON_GATE_DIAGNOSTICS = {"internal_variability"}
+
+
 def test_every_tier1_gate_carries_a_requirement_tag() -> None:
     """No gate may reach the scorecard without a Required/Extended/extra tag."""
     from climatebench2.diags.pass_fail import REQUIREMENT_TAGS
@@ -49,6 +54,9 @@ def test_every_tier1_gate_carries_a_requirement_tag() -> None:
         suite = Suite(_resolve_suite(suite_name))
         for diag_name, diag in suite._get_diagnostics().items():
             checks = diag._gate_checks
+            if diag_name in TIER1_NON_GATE_DIAGNOSTICS:
+                assert not checks, f"{diag_name} must emit no pass/fail row"
+                continue
             assert checks, f"{diag_name} defines no gate checks"
             for check in checks:
                 assert check.requirement in REQUIREMENT_TAGS, (
@@ -57,6 +65,27 @@ def test_every_tier1_gate_carries_a_requirement_tag() -> None:
                 )
                 # Tier II event diagnostics do not belong in the Tier I suites
                 assert check.requirement != "diagnostic", diag_name
+
+
+def test_internal_variability_rides_in_tier1_without_gating() -> None:
+    """σ_int comes from the piControl experiment, so it lives in Tier I.
+
+    It is tagged ``diagnostic`` in thresholds.yml, emits no ``_gate_checks``
+    and therefore contributes nothing to the entry ticket — the scoring pass
+    reads its rows to fill σ_int in the regime-(c) consistency test.
+    """
+    from climatebench2.diags import InternalVariability
+
+    diagnostics = Suite(_resolve_suite("ClimateBench2_TierI"))._get_diagnostics()
+    diag = diagnostics["internal_variability"]
+    assert isinstance(diag, InternalVariability)
+    assert diag._required_data_keys == ("picontrol",)
+    assert InternalVariability.requirement == "diagnostic"
+    # ... and it is invisible to the leaderboard's Required set
+    from climatebench2.diags.pass_fail import gate_requirements
+
+    assert not [c for c, t in gate_requirements().items() if t == "diagnostic" and
+                c.startswith("sigma_int")]
 
 
 def test_tier2_event_gates_moved_out_of_the_tier1_suite() -> None:

@@ -11,6 +11,8 @@ Modules (docs/climateeval_delineation_plan.md §4):
 - ``_scoring``       — CRPS-with-ESS + ensemble-consistency primitives (Phase 2)
 - ``tier1_physics``  — land-ocean, Arctic, aerosol ERF, MHT, ITCZ, ... (Phase 3)
 - ``tier2_scores``   — probabilistic scoring diagnostics, regimes (a)/(b) (Phase 2)
+- ``tier2_reference``— reference records outside the test window: the 1985-2014
+                       baseline series and the fixed pre-2015 EOF basis (regime b)
 - ``baselines``      — climatology persistence / EBM pattern scaling / MME (Phase 4)
 - ``tier3_paleo``    — proxy-aware scoring + mid-Holocene monsoon check (Phase 5)
 
@@ -58,7 +60,12 @@ from climatebench2.diags.tier3_paleo import (
     MidHoloceneMonsoonGate,
     PaleoProxyConsistencyGate,
 )
+from climatebench2.diags.tier2_reference import (
+    ReferenceBaselineRecord,
+    ReferenceEOFProjection,
+)
 from climatebench2.diags.tier2_scores import (
+    InternalVariability,
     ScoredAnnualMaxTimeSeries,
     ScoredAnnualMeanTimeSeries,
     ScoredMonthlyMeanTimeSeries,
@@ -84,12 +91,15 @@ __all__ = [
     "GeostrophicBalanceGate",
     "HemisphericAsymmetryGate",
     "ITCZEFEGate",
+    "InternalVariability",
     "LandOceanWarmingGate",
     "MJOGate",
     "MeridionalHeatTransportGate",
     "MidHoloceneMonsoonGate",
     "PaleoProxyConsistencyGate",
     "PinatuboResponseGate",
+    "ReferenceBaselineRecord",
+    "ReferenceEOFProjection",
     "ScoredAnnualMaxTimeSeries",
     "ScoredAnnualMeanTimeSeries",
     "ScoredMonthlyMeanTimeSeries",

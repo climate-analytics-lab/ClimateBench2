@@ -106,20 +106,49 @@ def _normalise_gates(gates: pd.DataFrame) -> pd.DataFrame:
     return gates
 
 
+def _label_by_model(frame: pd.DataFrame, names: dict[str, str]) -> pd.DataFrame:
+    """Relabel ``data_id`` by model name, so one model has one row everywhere.
+
+    Tier I gate rows carry the full ``DataSourceInformation.id``
+    (``model_MyModel_historical_r1i1p1f1``) because they are written per data
+    source, while the scoring pass groups members and writes the **model
+    name**. Mapping the ids through the ``data_sources`` tables makes the two
+    halves of the scorecard agree — and collapses a model's members into one
+    scorecard row, which is what a Tier I gate means (every member must pass).
+    """
+    if frame.empty or "data_id" not in frame.columns or not names:
+        return frame
+    frame = frame.copy()
+    frame["data_id"] = [names.get(str(i), str(i)) for i in frame["data_id"]]
+    return frame
+
+
 def build_scores(db_paths: list[Path]) -> Scores:
     """Collect gate/CRPS/consistency/deterministic/Tier-III frames."""
     import pandas as pd
 
     gates, crps, consistency, deterministic, tier3 = [], [], [], [], []
+    names: dict[str, str] = {}
     for suite, diag, table, df in _read_all(db_paths):
         if df.empty:
             continue
         tagged = df.assign(suite=suite, diagnostic=diag)
-        if table == "metrics":
-            if "passes" in df.columns and "p_value" not in df.columns:
+        if table == "data_sources":
+            if {"id", "name"} <= set(df.columns):
+                names.update(
+                    {str(i): str(n) for i, n in zip(df["id"], df["name"], strict=True)},
+                )
+        elif table == "metrics":
+            # A row is a gate iff it has a verdict and no p-value: the
+            # scoring pass now writes consistency rows (which carry both
+            # `passes` and `p_value`) into the *same* metrics tables, so the
+            # test must be per row, never per column.
+            if "passes" in df.columns:
+                is_gate = tagged["passes"].notna()
+                if "p_value" in tagged.columns:
+                    is_gate = is_gate & tagged["p_value"].isna()
                 # Declared-N/A rows carry no `passes` but must be kept: they
                 # are how a submission says a Required test does not apply.
-                is_gate = tagged["passes"].notna()
                 if "applicable" in tagged.columns:
                     is_gate = is_gate | (tagged["applicable"] == 0.0)
                 gates.append(tagged[is_gate])
@@ -129,6 +158,8 @@ def build_scores(db_paths: list[Path]) -> Scores:
                 keep = tagged["crps"].notna()
                 if "scorer" in tagged.columns:
                     keep = keep | (tagged["scorer"] == SCORER)
+                if "p_value" in tagged.columns:
+                    keep = keep & tagged["p_value"].isna()
                 crps.append(tagged[keep])
             if "p_value" in df.columns:
                 consistency.append(tagged[tagged["p_value"].notna()])
@@ -154,11 +185,11 @@ def build_scores(db_paths: list[Path]) -> Scores:
         )
 
     return Scores(
-        gates=_normalise_gates(cat(gates)),
-        crps=cat(crps),
-        consistency=cat(consistency),
-        deterministic=cat(deterministic),
-        tier3=cat(tier3),
+        gates=_label_by_model(_normalise_gates(cat(gates)), names),
+        crps=_label_by_model(cat(crps), names),
+        consistency=_label_by_model(cat(consistency), names),
+        deterministic=_label_by_model(cat(deterministic), names),
+        tier3=_label_by_model(cat(tier3), names),
     )
 
 
@@ -545,7 +576,17 @@ def _consistency_table_html(consistency: pd.DataFrame) -> str:
 
     if consistency.empty:
         return ""
-    cols = ["data_id", "var_id", "value", "z", "p_value", "n_members", "passes"]
+    cols = [
+        "data_id",
+        "var_id",
+        "value",
+        "z",
+        "p_value",
+        "sigma_internal",
+        "sigma_obs",
+        "n_members",
+        "passes",
+    ]
     cols = [c for c in cols if c in consistency.columns]
     sub = consistency[cols]
     header = "".join(f"<th>{_esc(c)}</th>" for c in cols)
@@ -564,6 +605,13 @@ def _consistency_table_html(consistency: pd.DataFrame) -> str:
         rows.append(f"<tr>{''.join(cells)}</tr>")
     return (
         "<h2>Tier II — ensemble-consistency tests</h2>"
+        "<p>Regime (c), a reported diagnostic and falsification check — never "
+        "part of the entry ticket or of the headline skill. The observed "
+        "statistic is tested against the model's own ensemble, with "
+        "σ_total² = var(members) + σ_int² + σ_obs²: σ_int from the piControl "
+        "chunks of the <code>internal_variability</code> diagnostic (0 when "
+        "no piControl was supplied), σ_obs from <code>tier2.obs_sigma</code> "
+        "and the spread across observational products.</p>"
         f"<table><thead><tr>{header}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
     )
 

@@ -267,3 +267,109 @@ def test_build_scores_keeps_declared_na_rows_and_fills_old_columns(
     # requirement recovered from the gate classes
     assert by_check.loc["ecs_gate", "requirement"] == "required"
     assert by_check.loc["geostrophic_balance", "requirement"] == "required"
+
+
+def test_gate_rows_are_relabelled_by_model_name(tmp_path) -> None:  # noqa: ANN001
+    """One model, one row — Tier I ids and Tier II names must agree.
+
+    Tier I gate rows are written per data source, so they carry the full
+    ``DataSourceInformation.id`` (``model_MyModel_historical_r1i1p1f1``),
+    while the scoring pass groups the members and writes the model **name**.
+    The leaderboard maps ids through ``data_sources`` so the same model is
+    one row in the gate matrix and one row in the skill table.
+    """
+    from climatebench2.leaderboard import build_scores, render_html
+
+    db_path = tmp_path / "ClimateBench2_TierI.ddb"
+    conn = ibis.connect(f"duckdb://{db_path}")
+    gates = pd.DataFrame(
+        {
+            "data_id": [
+                "model_MyModel_historical_r1i1p1f1",
+                "model_MyModel_historical_r2i1p1f1",
+                "observation_HadCRUT5",
+            ],
+            "data_type": ["to_benchmark", "to_benchmark", "reference"],
+            "var_id": ["ecs_gate"] * 3,
+            "value": [3.1, 3.2, 3.0],
+            "bound_lower": [1.0] * 3,
+            "bound_upper": [7.0] * 3,
+            "passes": [1.0, 1.0, 1.0],
+        },
+    )
+    sources = pd.DataFrame(
+        {
+            "id": [
+                "model_MyModel_historical_r1i1p1f1",
+                "model_MyModel_historical_r2i1p1f1",
+                "observation_HadCRUT5",
+            ],
+            "name": ["MyModel", "MyModel", "HadCRUT5"],
+            "category": ["model", "model", "observation"],
+        },
+    )
+    crps = pd.DataFrame(
+        {
+            "data_id": ["MyModel"],
+            "data_type": ["to_benchmark"],
+            "var_id": ["tas"],
+            "scorer": ["climatebench2"],
+            "reason": [""],
+            "crps": [0.08],
+            "skill": [0.3],
+            "e_ref": [0.12],
+            "n_ref_models": [4.0],
+        },
+    )
+    conn.create_database("gates_diag")
+    conn.create_table("metrics", ibis.memtable(gates), database="gates_diag")
+    conn.create_table("data_sources", ibis.memtable(sources), database="gates_diag")
+    conn.create_database("scored_ts")
+    conn.create_table("metrics", ibis.memtable(crps), database="scored_ts")
+    conn.disconnect()
+
+    scores = build_scores([db_path])
+    assert set(scores.gates["data_id"]) == {"MyModel", "HadCRUT5"}
+    html = render_html(scores)
+    assert "r1i1p1f1" not in html  # the raw ids never reach the scorecard
+    # One "MyModel" row in the gate matrix, one in the skill table
+    assert html.count("<strong>MyModel</strong>") == 2
+
+
+def test_consistency_rows_are_not_mistaken_for_gates_or_scores(tmp_path) -> None:  # noqa: ANN001
+    """The pass writes gates, CRPS and consistency into one metrics table."""
+    from climatebench2.leaderboard import build_scores, render_html
+
+    db_path = tmp_path / "ClimateBench2_TierII.ddb"
+    conn = ibis.connect(f"duckdb://{db_path}")
+    metrics = pd.DataFrame(
+        {
+            "data_id": ["MyModel", "MyModel"],
+            "data_type": ["to_benchmark"] * 2,
+            "var_id": ["tas", "tas_trend_consistency"],
+            "scorer": ["climatebench2"] * 2,
+            "reason": ["", ""],
+            "crps": [0.08, np.nan],
+            "skill": [0.3, np.nan],
+            "value": [np.nan, 0.021],
+            "z": [np.nan, 0.6],
+            "p_value": [np.nan, 0.55],
+            "passes": [np.nan, 1.0],
+            "sigma_internal": [np.nan, 0.004],
+            "sigma_obs": [0.05, 0.0005],
+            "n_members": [3.0, 3.0],
+        },
+    )
+    conn.create_database("scored_ts")
+    conn.create_table("metrics", ibis.memtable(metrics), database="scored_ts")
+    conn.disconnect()
+
+    scores = build_scores([db_path])
+    # The consistency row has a verdict but is NOT a Tier I gate
+    assert scores.gates.empty
+    assert list(scores.consistency["var_id"]) == ["tas_trend_consistency"]
+    # ... and it is not a column of the Tier II skill table either
+    assert list(scores.crps["var_id"]) == ["tas"]
+    html = render_html(scores)
+    assert "ensemble-consistency tests" in html
+    assert "tas_trend_consistency" in html

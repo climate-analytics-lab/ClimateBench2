@@ -83,3 +83,13 @@
 - name: gfmip_patch                   # I.4a — amip + patch_ep + patch_wp
   diagnostic: climatebench2.diags.GFMIPPatchGate
   additional_diagnostic_kwargs: {}
+
+# Not a gate: the piControl internal-variability sigma the Tier II regime-(c)
+# consistency test needs (tier2.internal_variability, requirement:
+# diagnostic). It rides in this suite because this is where the piControl
+# experiment is loaded in full; `climatebench2 score` hands the resulting
+# rows to the scoring pass, which combines them with the ensemble spread and
+# sigma_obs. It emits no pass/fail row and never touches the entry ticket.
+- name: internal_variability          # Tier II sigma_int — piControl
+  diagnostic: climatebench2.diags.InternalVariability
+  additional_diagnostic_kwargs: {}

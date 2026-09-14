@@ -4,10 +4,24 @@
 # against the protocol's observational references, with the CMIP6 historical
 # ensemble carried along as comparison (the MME baseline of the protocol).
 #
-# Scoring: the time-series diagnostics use the CB2 regime-(a) wrappers
-# (CRPS with effective-sample-size correction, plus the pooled CMIP6-MME
-# baseline row); the trend consistency diagnostic applies the regime-(b)
-# ensemble-consistency test to the warming rate (GMST trend et al.).
+# Scoring happens in the post-suite pass (climatebench2.scoring_pass), not in
+# the diagnostics: the members of one model arrive as separate data sources,
+# so a fair CRPS can only be formed after every member has run. This suite's
+# job is to put the right series and fields in the database.
+#
+# The suite is cut to the reserved post-2015 test window (_cli.SUITE_REGISTRY),
+# which also cuts the *reference*. Two entries deliberately reach back past
+# that cut, through their own copy of the variable's timerange:
+#   reference_baseline  the reference's 1985-2014 area-mean series, from which
+#                       the pass builds the Climatology baseline's pseudo-
+#                       members (without it there is no no-skill floor);
+#   eof_projection      the regime-(b) basis — the reference's fixed pre-2015
+#                       EOFs — and every source's test-window climatological
+#                       anomaly projected onto it, standardised by the
+#                       pre-2015 PC sigma.
+# The regime-(c) trend consistency is no longer a diagnostic: the pass takes
+# the trends from `annual_mean_timeseries` and combines the ensemble spread
+# with the piControl sigma_int (Tier I suite) and sigma_obs.
 
 - name: annual_mean_timeseries
   diagnostic: climatebench2.diags.ScoredAnnualMeanTimeSeries
@@ -48,8 +62,8 @@
       reference_data: climateeval.data.ESACCICloud
       other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
 
-- name: trend_consistency
-  diagnostic: climatebench2.diags.TrendConsistency
+- name: reference_baseline
+  diagnostic: climatebench2.diags.ReferenceBaselineRecord
   variables: *core_variables
 
 - name: annual_cycle
@@ -58,6 +72,10 @@
 
 - name: map
   diagnostic: climateeval.diags.simple.Map
+  variables: *core_variables
+
+- name: eof_projection
+  diagnostic: climatebench2.diags.ReferenceEOFProjection
   variables: *core_variables
 
 - name: zonal_line
@@ -76,8 +94,18 @@
       reference_data: climateeval.data.ESACCISST
       other_data: [climateeval.data.NOAAERSSTv5, climateeval.data.HadISST]
 
+- name: sst_baseline
+  diagnostic: climatebench2.diags.ReferenceBaselineRecord
+  variables:
+    - *tos
+
 - name: sst_map
   diagnostic: climateeval.diags.simple.Map
+  variables:
+    - *tos
+
+- name: sst_eof_projection
+  diagnostic: climatebench2.diags.ReferenceEOFProjection
   variables:
     - *tos
 

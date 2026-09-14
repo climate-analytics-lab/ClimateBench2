@@ -16,12 +16,22 @@
   re-run. Scoring each source separately, as this module used to, made every
   model an M = 1 "ensemble" whose fair CRPS is undefined.
 
-- :class:`TrendConsistency` — regime (c) applied to the OLS trend of the
-  series: is the observed trend consistent with the ensemble trend
-  distribution? Ensemble = the benchmarked model + CMIP6 comparison members.
-  The internal-variability term (piControl chunking) still needs a piControl
-  data path; until then ``sigma_internal`` defaults to 0 and the test is
-  spread+obs-error only (documented limitation).
+- :class:`InternalVariability` — the σ_int input of the regime-(c)
+  consistency test: the piControl global-mean annual series of each core
+  variable, chunked into observation-length segments
+  (``scoring.chunked_statistic_std``) for the window **mean** and the OLS
+  **trend**, at both window lengths the protocol scores (the post-2015 test
+  window and the 1950-present window). It emits numbers, never a pass/fail —
+  ``tier2.internal_variability.requirement`` is ``diagnostic``.
+
+- :class:`TrendConsistency` — **now a thin alias** of the annual-mean series.
+  The regime-(c) computation moved into
+  :mod:`climatebench2.scoring_pass`, which is where the ensemble members
+  (grouped by model name), the reference and — when the Tier I database is
+  scored alongside — the σ_int rows of :class:`InternalVariability` all meet.
+  Computed inside the diagnostic it could only pool the submission with the
+  CMIP6 comparison *models*, whose spread is structural disagreement rather
+  than the model's own ensemble spread, and σ_int was hard-wired to 0.
 
 Metrics rows use the numeric-column convention of ``pass_fail``:
 ``value``/``passes`` plus score-specific columns.
@@ -29,12 +39,7 @@ Metrics rows use the numeric-column convention of ``pass_fail``:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
-
-import ibis
-import numpy as np
-import pandas as pd
-from scipy import stats
+from typing import Any, ClassVar
 
 from esmvalcore.preprocessor import (
     annual_statistics,
@@ -42,35 +47,20 @@ from esmvalcore.preprocessor import (
     regrid,
     regrid_time,
 )
+from loguru import logger
 
+from climateeval import Variable
 from climateeval._config import setup_esmvaltool_config_and_logging
 from climateeval._variable import COORDINATES
-from climateeval.diags._base import DiagnosticOutput
 from climateeval.diags._utils import DEFAULT_GRID
 from climateeval.diags.simple import AnnualMeanTimeSeries, MeanTimeSeries
 
-from climatebench2 import scoring
+from climatebench2 import scoring, windows
 from climatebench2._thresholds import get_threshold
+from climatebench2.diags.pass_fail import gate_requirement
+from climatebench2.diags.tier1_physics import CB2ComplexDiagnostic
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-_META_COLUMNS = {"data_id", "data_type", "time"}
-
-
-def _series_by_source(
-    raw_df: pd.DataFrame,
-) -> tuple[dict[tuple[str, str], pd.DataFrame], list[str]]:
-    """Split a raw-output table into per-(data_id, data_type) time series."""
-    var_columns = [c for c in raw_df.columns if c not in _META_COLUMNS]
-    groups = {
-        (str(data_id), str(data_type)): g.sort_values("time")
-        for (data_id, data_type), g in raw_df.groupby(
-            ["data_id", "data_type"],
-            sort=False,
-        )
-    }
-    return groups, var_columns
+logger = logger.opt(colors=True)
 
 
 class ScoredAnnualMeanTimeSeries(AnnualMeanTimeSeries):
@@ -113,96 +103,86 @@ class ScoredAnnualMaxTimeSeries(AnnualMeanTimeSeries):
 
 
 class TrendConsistency(AnnualMeanTimeSeries):
-    """Regime-(c) consistency of the observed trend with the ensemble.
+    """Annual-mean series whose trend is tested by the scoring pass.
 
-    Post-processes the annual-mean series: OLS trend per data source; the
-    ensemble distribution pools the benchmarked model and the CMIP6
-    comparison members; the observed (reference) trend is tested with
-    :func:`climatebench2.scoring.ensemble_consistency` at the protocol's
-    ``tier2.consistency_p_value``.
+    A thin alias, kept so existing suite YAMLs (and any user's) stay valid.
+    The regime-(c) trend-consistency test itself is now
+    :func:`climatebench2.scoring_pass.trend_consistency_rows`, run over the
+    finished database: only there are a model's ensemble members grouped
+    together (they arrive as separate data sources), and only there can the
+    σ_int rows of :class:`InternalVariability` — written into the Tier I
+    database from the piControl experiment — reach the test.
 
-    ``sigma_internal`` (piControl-chunk trend variability) still needs a
-    piControl data path; ``sigma_obs`` may be passed as a diagnostic kwarg
-    per variable until observational error fields are plumbed through.
+    ``ClimateBench2_TierII.yml`` no longer names this class: the
+    ``annual_mean_timeseries`` entry already carries the same series, and the
+    pass writes one trend-consistency row per model and variable from it.
     """
 
-    _trend_statistic: ClassVar[Callable[[np.ndarray], float]] = staticmethod(  # type: ignore[assignment]
-        lambda y: float(stats.linregress(np.arange(y.size, dtype=float), y).slope),
-    )
 
-    def __init__(self, *args: Any, sigma_obs: float = 0.0, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._sigma_obs = sigma_obs
+class InternalVariability(CB2ComplexDiagnostic):
+    """σ_int of the protocol's scored statistics, from piControl chunks.
 
-    def get_output(self, data: Any, data_information: Any) -> DiagnosticOutput:
-        output = super().get_output(data, data_information)
-        if output.raw_output is None:
-            return output
-        raw_df = output.raw_output.to_pandas()
-        if "time" not in raw_df.columns:
-            return output
-        groups, var_columns = _series_by_source(raw_df)
-        p_threshold = get_threshold("tier2.consistency_p_value")
+    The regime-(c) consistency test combines, in quadrature, the ensemble
+    spread, the **internal variability** of the statistic over an
+    observation-length window, and the observational uncertainty
+    (metrics_reference.md Tier II preamble (c)). This diagnostic supplies the
+    middle term: for the global-mean **annual** series of each core variable
+    it can find in the piControl experiment, it chops the control into
+    non-overlapping segments of each scored window length and takes the
+    inter-segment standard deviation of
 
-        rows: list[dict[str, Any]] = []
-        for column in var_columns:
-            references = [
-                g for (_, dt), g in groups.items() if dt == "reference"
-            ]
-            if not references:
+    - the window **mean** (``..._sigma_int_mean_<window>``), and
+    - the window **OLS trend** per year (``..._sigma_int_trend_<window>``),
+
+    for both window lengths the protocol scores: ``test`` (the reserved
+    post-2015 window, ``tier2.test_window_start`` → last complete year) and
+    ``long`` (``tier2.long_trend_start`` = 1950 → last complete year). The
+    lengths themselves are emitted as ``window_years_<window>`` so the
+    scoring pass can match a σ_int to the record it is actually scoring.
+
+    It lives in the Tier I suite because that is where the ``picontrol``
+    experiment is loaded in full, and it is tagged
+    ``tier2.internal_variability.requirement: diagnostic`` — it emits no
+    pass/fail row and can never touch the entry ticket.
+    """
+
+    _required_data_keys = ("picontrol",)
+    #: Protocol standing (thresholds.yml), read rather than hard-coded. This
+    #: diagnostic defines no ``_gate_checks``: it reports numbers only.
+    requirement: ClassVar[str] = gate_requirement("tier2.internal_variability")
+
+    def _calculate_raw_output(self, complex_data_source: Any) -> dict[Any, Any]:
+        picontrol = complex_data_source.data["picontrol"]
+        lengths = windows.window_lengths()
+        min_chunks = int(get_threshold("tier2.internal_variability.min_chunks"))
+        outputs: dict[str, float] = {
+            f"window_years_{window}": float(length)
+            for window, length in lengths.items()
+        }
+
+        for var_name in get_threshold("tier2.internal_variability.variables"):
+            try:
+                series = self._annual_global_series(
+                    picontrol,
+                    Variable(var_name, var_name, "mon"),
+                )
+            except Exception as exc:  # noqa: BLE001 - a control may lack a variable
+                logger.info(
+                    f"Diagnostic '{self.name}': no '{var_name}' in the piControl "
+                    f"experiment, no sigma_int for it ({exc})",
+                )
                 continue
-            reference = references[0]
-
-            def trend_of(frame: pd.DataFrame, col: str = column) -> float | None:
-                y = frame.sort_values("time")[col].dropna().to_numpy(float)
-                if y.size < 3:  # noqa: PLR2004 - trend needs >= 3 points
-                    return None
-                return self._trend_statistic(y)
-
-            obs_trend = trend_of(reference)
-            if obs_trend is None:
-                continue
-            member_trends = {
-                (data_id, dt): t
-                for (data_id, dt), g in groups.items()
-                if dt in ("to_benchmark", "other") and (t := trend_of(g)) is not None
-            }
-            if len(member_trends) < 2:  # noqa: PLR2004 - need ensemble spread
-                continue
-            result = scoring.ensemble_consistency(
-                np.array(list(member_trends.values())),
-                obs_trend,
-                sigma_obs=self._sigma_obs,
-                p_threshold=p_threshold,
-            )
-            submission_ids = [i for (i, dt) in member_trends if dt == "to_benchmark"]
-            rows.append(
-                {
-                    "data_id": submission_ids[0] if submission_ids else "ensemble",
-                    "data_type": "to_benchmark",
-                    "var_id": f"{column}_trend_consistency",
-                    "value": obs_trend,
-                    "z": result.z,
-                    "p_value": result.p_value,
-                    "ensemble_mean": result.ensemble_mean,
-                    "total_sigma": result.total_sigma,
-                    "n_members": len(member_trends),
-                    "passes": float(result.passes),
-                },
-            )
-
-        if not rows:
-            return output
-        scores_df = pd.DataFrame(rows)
-        if output.metrics is not None:
-            scores_df = pd.concat(
-                [output.metrics.to_pandas(), scores_df],
-                ignore_index=True,
-                sort=False,
-            )
-        return DiagnosticOutput(
-            raw_output=output.raw_output,
-            metrics=ibis.memtable(scores_df),
-            variables=output.variables,
-            data_sources=output.data_sources,
-        )
+            outputs[f"{var_name}_n_years_picontrol"] = float(series.size)
+            for window, length in lengths.items():
+                if series.size // length < min_chunks:
+                    logger.warning(
+                        f"Diagnostic '{self.name}': piControl has {series.size} yr, "
+                        f"too few for {min_chunks} chunks of {length} yr "
+                        f"({window} window) — no sigma_int for '{var_name}'",
+                    )
+                    continue
+                for statistic in ("mean", "trend"):
+                    outputs[f"{var_name}_sigma_int_{statistic}_{window}"] = (
+                        scoring.chunked_statistic_std(series, length, statistic)
+                    )
+        return self._scalar_outputs(outputs)

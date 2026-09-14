@@ -8,28 +8,54 @@ DRS auto-discovery run every cube suite once per member, appending rows whose
 only be formed once *all* of its members have run — which is after the suite,
 not inside a diagnostic. This module is that post-processing step:
 ``climatebench2 score`` runs it on the databases it just wrote, and
-``climatebench2 leaderboard --rescore`` re-runs it on existing ones.
+``climatebench2 leaderboard --rescore`` re-runs it on existing ones. It is
+also where the σ_int of the Tier I database meets the Tier II members, which
+is why the regime-(c) consistency test lives here too.
 
 What it computes (metrics_reference.md Tier II preamble, §II.0)
 ---------------------------------------------------------------
-For every time-series diagnostic in the database (a ``raw_output`` table with
-a ``time`` column and a ``reference`` data source), and every variable in it:
+**Regime (a) — time series.** For every ``raw_output`` with a ``time``
+column and a ``reference`` data source, and every variable in it:
 
 1. group the non-reference rows **by model name** — the ``data_sources``
-   table maps each ``data_id`` to ``(name, variant)``, so the members of one
-   model come back together and the CMIP6 comparison models stay apart;
+   table maps each ``data_id`` to ``(name, category)``, so the members of one
+   model come back together, the CMIP6 comparison models stay apart, and an
+   **observational product** (category ``observation``/``reanalysis`` sitting
+   in ``other_data``, e.g. HadISST next to the ESACCI-SST reference) is never
+   scored as if it were a comparison model;
 2. stack a model's members on the times they share with the reference and
    score them with the **fair CRPS** per step (``M >= 2``; a single-member
    model gets a row with ``crps = NaN`` and ``reason = "single member"``,
    since fair CRPS is undefined for a deterministic forecast);
-3. summarise: time-mean score, ESS-corrected standard error, and a
+3. observational uncertainty enters as **common draws** around the observed
+   series: σ_obs is the protocol floor for the variable
+   (``tier2.obs_sigma``) combined in quadrature with the per-time-step
+   **spread across observational products**, and every model and baseline
+   sees the same draws (``tier2.obs_uncertainty.seed``);
+4. summarise: time-mean score, ESS-corrected standard error, and a
    moving-block-bootstrap confidence interval (``tier2.bootstrap``);
-4. add the **Climatology** baseline — the distribution of the reference's
-   1985-2014 values for each calendar month (:mod:`climatebench2.baselines`);
-5. set ``E_ref`` = **median of the per-model fair CRPS over the CMIP6
+5. add the **Climatology** baseline — the distribution of the reference's
+   1985-2014 values for each calendar month. Those values are outside the
+   test window the suite is cut to, so they come from the
+   ``reference_baseline`` rows that
+   :class:`climatebench2.diags.ReferenceBaselineRecord` writes;
+6. set ``E_ref`` = **median of the per-model fair CRPS over the CMIP6
    comparison models** with ``M >= 2``, excluding any comparison model whose
    name equals the scored model's (leave-one-out, paper §5.6), and write the
    skill ``S = 1 - E_model / E_ref`` — bounded above, unbounded below.
+
+**Regime (b) — spatial fields.** For a ``raw_output`` of EOF coefficients
+(:class:`climatebench2.diags.ReferenceEOFProjection`: one row per source,
+variable and mode on the reference's fixed pre-2015 basis, each coefficient
+standardised by its pre-2015 σ), the same machinery runs with **mode** in
+place of time: fair CRPS per coefficient, equal-weight mean over the
+retained modes as the variable-level score, the same ``E_ref``/skill.
+
+**Regime (c) — consistency.** For every annual series, one row per model:
+the observed OLS trend against the distribution of its members' trends, with
+σ_total² = var(members) + σ_int² + σ_obs² — σ_int from the piControl chunks
+of :class:`climatebench2.diags.InternalVariability` (Tier I database, passed
+alongside), σ_obs from the same observational-uncertainty terms as (a).
 
 Rows are appended to the diagnostic's own ``metrics`` table (never a new
 schema): missing columns are added with ``ALTER TABLE ADD COLUMN``, and every
@@ -44,6 +70,7 @@ out in favour of the median of per-model scores.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -70,11 +97,25 @@ CLIMATOLOGY_DATA_ID = "Climatology"
 #: database carries, so nothing writes this row yet.
 PATTERN_SCALING_DATA_ID = "PatternScaling"
 
+#: ``data_type`` of the reference's pre-test baseline-window rows, written by
+#: ``climatebench2.diags.ReferenceBaselineRecord`` (which imports these).
+#: They are a *sample*, never a target: nothing is ever scored against them.
+BASELINE_MONTHLY_DATA_TYPE = "reference_baseline"
+BASELINE_ANNUAL_DATA_TYPE = "reference_baseline_annual"
+
+#: ``data_sources.category`` values that mark an observational product rather
+#: than a model. Everything else in ``other_data`` (CMIP6, …) is a comparison
+#: model and enters ``E_ref``.
+OBSERVATIONAL_CATEGORIES = frozenset({"observation", "reanalysis"})
+
 #: DuckDB schemas that are not diagnostics.
 _SKIP_SCHEMAS = {"main", "memory", "information_schema", "temp", "system", "pg_catalog"}
 
 #: raw_output columns that are not variables.
 _META_COLUMNS = {"data_id", "data_type", "time"}
+
+#: Columns that identify an EOF-coefficient raw_output table (regime b).
+_EOF_COLUMNS = {"mode", "coefficient", "var_id"}
 
 #: Minimum overlapping time steps for a score to be meaningful.
 _MIN_OVERLAP = 3
@@ -84,6 +125,14 @@ _MIN_MEMBERS = 2
 
 #: Median monthly-step length used to tell a monthly series from an annual one.
 _MONTHLY_MAX_DAYS = 200
+
+#: Column names of ``InternalVariability``: ``<var>_sigma_int_<stat>_<window>``.
+_SIGMA_INT_RE = re.compile(
+    r"^(?P<var>.+)_sigma_int_(?P<statistic>mean|trend)_(?P<window>[a-z]+)$",
+)
+
+#: Suffix marking a regime-(c) row in ``var_id``.
+TREND_CONSISTENCY_SUFFIX = "_trend_consistency"
 
 #: The scoring columns, with their DuckDB types. Text columns stay text;
 #: everything else is DOUBLE so the table remains numeric-friendly.
@@ -105,6 +154,15 @@ _SCORE_COLUMNS: dict[str, str] = {
     "e_ref": "DOUBLE",
     "n_ref_models": "DOUBLE",
     "skill": "DOUBLE",
+    # Regime (c) — the consistency test, same table, same `scorer` tag.
+    "value": "DOUBLE",
+    "z": "DOUBLE",
+    "p_value": "DOUBLE",
+    "passes": "DOUBLE",
+    "ensemble_mean": "DOUBLE",
+    "total_sigma": "DOUBLE",
+    "sigma_internal": "DOUBLE",
+    "sigma_obs": "DOUBLE",
 }
 
 
@@ -135,6 +193,25 @@ class PassReport:
 # ---------------------------------------------------------------------------
 
 
+def _source_column(
+    data_sources: pd.DataFrame | None,
+    column: str,
+) -> dict[str, str]:
+    """``data_id -> <column>`` from a ``data_sources`` table."""
+    if data_sources is None or data_sources.empty:
+        return {}
+    if not {"id", column} <= set(data_sources.columns):
+        return {}
+    return {
+        str(row_id): str(value)
+        for row_id, value in zip(
+            data_sources["id"],
+            data_sources[column],
+            strict=True,
+        )
+    }
+
+
 def source_names(data_sources: pd.DataFrame | None) -> dict[str, str]:
     """``data_id -> model name`` from a ``data_sources`` table.
 
@@ -142,18 +219,17 @@ def source_names(data_sources: pd.DataFrame | None) -> dict[str, str]:
     dropped), so two ensemble members of one model differ only in their
     ``variant`` and must be mapped back to the same name before scoring.
     """
-    if data_sources is None or data_sources.empty:
-        return {}
-    if not {"id", "name"} <= set(data_sources.columns):
-        return {}
-    return {
-        str(row_id): str(name)
-        for row_id, name in zip(
-            data_sources["id"],
-            data_sources["name"],
-            strict=True,
-        )
-    }
+    return _source_column(data_sources, "name")
+
+
+def source_categories(data_sources: pd.DataFrame | None) -> dict[str, str]:
+    """``data_id -> category`` (``observation`` / ``CMIP6`` / ``model`` / …).
+
+    The category is what separates an observational product sitting in a
+    variable's ``other_data`` (a second estimate of the truth, and a term in
+    σ_obs) from a comparison model (a forecast, and a term in ``E_ref``).
+    """
+    return _source_column(data_sources, "category")
 
 
 def group_members(
@@ -162,8 +238,9 @@ def group_members(
 ) -> dict[tuple[str, str], list[pd.DataFrame]]:
     """``(data_type, model name) -> [member frames]`` for the scorable rows.
 
-    Reference rows are excluded (they are the target, not a forecast). A
-    ``data_id`` absent from ``data_sources`` keeps its id as its name, so a
+    Reference rows are excluded (they are the target, not a forecast), as are
+    the reference's pre-test baseline-window rows (a sample, not a forecast).
+    A ``data_id`` absent from ``data_sources`` keeps its id as its name, so a
     hand-built or older database still groups sensibly (one member each).
     """
     groups: dict[tuple[str, str], list[pd.DataFrame]] = {}
@@ -171,13 +248,43 @@ def group_members(
         ["data_id", "data_type"],
         sort=True,
     ):
-        if str(data_type) == "reference":
+        if str(data_type) in (
+            "reference",
+            BASELINE_MONTHLY_DATA_TYPE,
+            BASELINE_ANNUAL_DATA_TYPE,
+        ):
             continue
         name = names.get(str(data_id), str(data_id))
         groups.setdefault((str(data_type), name), []).append(
             frame.sort_values("time"),
         )
     return groups
+
+
+def group_ids(
+    raw_df: pd.DataFrame,
+    names: dict[str, str],
+) -> dict[tuple[str, str], list[str]]:
+    """``(data_type, model name) -> [data_id]`` — the ids behind each group."""
+    ids: dict[tuple[str, str], list[str]] = {}
+    for data_id, data_type in {
+        (str(i), str(t))
+        for i, t in zip(raw_df["data_id"], raw_df["data_type"], strict=True)
+    }:
+        name = names.get(data_id, data_id)
+        ids.setdefault((data_type, name), []).append(data_id)
+    return ids
+
+
+def is_observational(
+    data_type: str,
+    data_ids: list[str],
+    categories: dict[str, str],
+) -> bool:
+    """Whether a ``other`` group is an observational product, not a model."""
+    if data_type != "other":
+        return False
+    return any(categories.get(i, "") in OBSERVATIONAL_CATEGORIES for i in data_ids)
 
 
 def stack_members(
@@ -208,6 +315,155 @@ def is_monthly(times: pd.Series) -> bool:
     if stamps.size < 2:  # noqa: PLR2004 - a single step tells us nothing
         return False
     return bool(stamps.diff().dropna().dt.days.median() < _MONTHLY_MAX_DAYS)
+
+
+# ---------------------------------------------------------------------------
+# Observational uncertainty
+# ---------------------------------------------------------------------------
+
+
+def obs_sigma_floor(var_id: str) -> float:
+    """Protocol σ_obs for a variable (``tier2.obs_sigma``), 0 when unknown.
+
+    Keys are matched against the full suite variable id first (``tas``,
+    ``phcint_2000m``), then the token before its first underscore (so
+    ``tos_nino34`` inherits ``tos``), then ``default``. A ``null`` entry means
+    "no published value" and scores at 0 — the draws are then a no-op, which
+    is the honest treatment of an unknown error, not a claim of zero error.
+    """
+    table = get_threshold("tier2.obs_sigma")
+    for key in (var_id, var_id.split("_", 1)[0], "default"):
+        if key in table:
+            value = table[key]
+            return 0.0 if value is None else float(value)
+    return 0.0
+
+
+def observational_sigma(
+    reference: pd.DataFrame,
+    product_frames: list[pd.DataFrame],
+    column: str,
+    floor: float,
+) -> pd.Series | None:
+    """Per-time-step σ_obs: the protocol floor plus the inter-product spread.
+
+    The paper takes observational uncertainty partly "from the spread across
+    products", so where a variable carries several observational datasets
+    (the reference plus any ``other_data`` whose category is
+    observational) their per-time-step standard deviation is added in
+    quadrature to the fixed floor. With a single product the floor is
+    returned as a flat series.
+
+    Returns a series indexed by the reference's times, or ``None`` when there
+    is nothing to say (no floor and no second product).
+    """
+    ref = reference[["time", column]].dropna().sort_values("time")
+    if ref.empty:
+        return None
+    index = pd.Index(pd.to_datetime(ref["time"]), name="time")
+    columns: list[np.ndarray] = [ref[column].to_numpy(float)]
+    for frame in product_frames:
+        aligned = (
+            frame[["time", column]]
+            .dropna()
+            .assign(time=lambda f: pd.to_datetime(f["time"]))
+            .set_index("time")[column]
+            .reindex(index)
+        )
+        # A product that barely overlaps the reference tells us nothing.
+        if aligned.notna().sum() >= _MIN_OVERLAP:
+            columns.append(aligned.to_numpy(float))
+    if len(columns) < _MIN_MEMBERS:
+        return None if floor <= 0.0 else pd.Series(floor, index=index)
+
+    # Per-time-step std across the products that have a value there. Written
+    # out rather than np.nanstd(ddof=1) so a step with a single product is 0
+    # instead of a NaN-and-a-warning.
+    stacked = np.vstack(columns)
+    finite = np.isfinite(stacked)
+    counts = finite.sum(axis=0)
+    filled = np.where(finite, stacked, 0.0)
+    mean = np.divide(filled.sum(axis=0), np.maximum(counts, 1))
+    squares = np.where(finite, (stacked - mean) ** 2, 0.0).sum(axis=0)
+    spread = np.where(
+        counts >= _MIN_MEMBERS,
+        np.sqrt(squares / np.maximum(counts - 1, 1)),
+        0.0,
+    )
+    return pd.Series(np.sqrt(floor**2 + spread**2), index=index)
+
+
+def _sigma_at(
+    sigma: pd.Series | None,
+    times: pd.Series,
+    floor: float,
+) -> float | np.ndarray:
+    """σ_obs aligned to a model's own time axis (``floor`` where unknown)."""
+    if sigma is None:
+        return floor
+    values = sigma.reindex(pd.Index(pd.to_datetime(times))).to_numpy(float)
+    return np.where(np.isfinite(values), values, floor)
+
+
+# ---------------------------------------------------------------------------
+# Internal variability (σ_int) collected from the Tier I database
+# ---------------------------------------------------------------------------
+
+#: ``(var_id, statistic) -> [(window length in years, sigma)]``.
+SigmaInternal = dict[tuple[str, str], list[tuple[int, float]]]
+
+
+def internal_variability_from_raw(raw_df: pd.DataFrame) -> SigmaInternal:
+    """Read ``InternalVariability``'s scalar columns out of one raw_output."""
+    table: SigmaInternal = {}
+    windows = {
+        name.removeprefix("window_years_"): _first_finite(raw_df[name])
+        for name in raw_df.columns
+        if name.startswith("window_years_")
+    }
+    for name in raw_df.columns:
+        match = _SIGMA_INT_RE.match(str(name))
+        if match is None:
+            continue
+        length = windows.get(match["window"])
+        sigma = _first_finite(raw_df[name])
+        if length is None or not np.isfinite(length) or not np.isfinite(sigma):
+            continue
+        table.setdefault((match["var"], match["statistic"]), []).append(
+            (int(length), float(sigma)),
+        )
+    return table
+
+
+def _first_finite(series: pd.Series) -> float:
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    return float(values.iloc[0]) if not values.empty else float("nan")
+
+
+def sigma_internal_for(
+    table: SigmaInternal | None,
+    var_id: str,
+    statistic: str,
+    n_years: int,
+) -> float:
+    """σ_int for a statistic over an ``n_years`` window (nearest available).
+
+    The diagnostic reports σ_int at the two window lengths the protocol
+    scores (the test window and 1950-present); the record actually being
+    scored may be a year or two off either, so the closest length is used.
+    Returns 0.0 when no σ_int is available — the consistency test then
+    degrades to the spread-plus-σ_obs form it had before this was wired.
+    """
+    if not table:
+        return 0.0
+    candidates = table.get((var_id, statistic)) or table.get(
+        (var_id.split("_", 1)[0], statistic),
+    )
+    if not candidates:
+        return 0.0
+    length, sigma = min(candidates, key=lambda item: abs(item[0] - int(n_years)))
+    del length
+    return float(sigma)
 
 
 # ---------------------------------------------------------------------------
@@ -283,14 +539,34 @@ def _score_row(
         n_members=float(summary.n_members),
         n_time=float(summary.n_time),
         block_length=float(block_length),
+        sigma_obs=float(np.mean(np.broadcast_to(obs_sigma, obs.shape))),
     )
     return row
+
+
+def _baseline_window_series(
+    baseline: dict[tuple[str, str], pd.DataFrame] | None,
+    column: str,
+    *,
+    monthly: bool,
+) -> pd.DataFrame | None:
+    """The reference's pre-test baseline series for one variable, if recorded."""
+    if not baseline:
+        return None
+    frame = baseline.get((column, "monthly" if monthly else "annual"))
+    if frame is None or frame.empty:
+        return None
+    return frame
 
 
 def _climatology_row(
     reference: pd.DataFrame,
     column: str,
     settings: dict[str, Any],
+    *,
+    baseline: dict[tuple[str, str], pd.DataFrame] | None = None,
+    sigma: pd.Series | None = None,
+    floor: float = 0.0,
 ) -> dict[str, Any]:
     """Baseline (i) as a distribution (see :mod:`climatebench2.baselines`)."""
     ref = reference[["time", column]].dropna().sort_values("time")
@@ -299,25 +575,35 @@ def _climatology_row(
     times = pd.to_datetime(ref["time"])
     year_0, year_1 = get_threshold("tier2.climatology_baseline_period")
     years = times.dt.year.to_numpy()
-    in_window = (years >= int(year_0)) & (years <= int(year_1))
     monthly = is_monthly(ref["time"])
-    if in_window.sum() < _MIN_OVERLAP:
-        # The Tier II suites cut every variable — the reference included — to
-        # the post-2015 test window, so the 1985-2014 baseline values are
-        # simply not in the database. Say so instead of silently dropping the
-        # no-skill floor. (Fix: load the reference over the baseline window
-        # too; that is a data-path change, not a scoring one.)
-        return _empty_row(
-            CLIMATOLOGY_DATA_ID,
-            "baseline",
-            column,
-            f"reference has no {int(year_0)}-{int(year_1)} baseline window",
-        )
+
+    # The baseline window is normally outside the reserved test window the
+    # suite is cut to, so it arrives through `ReferenceBaselineRecord`'s rows
+    # rather than through the reference series being scored. Fall back to the
+    # reference's own rows when a database happens to span both windows (a
+    # hand-built or full-record run).
+    recorded = _baseline_window_series(baseline, column, monthly=monthly)
+    if recorded is not None:
+        window_times = pd.to_datetime(recorded["time"])
+        window_values = recorded[column].to_numpy(float)
+        window_months = window_times.dt.month.to_numpy()
+    else:
+        in_window = (years >= int(year_0)) & (years <= int(year_1))
+        if in_window.sum() < _MIN_OVERLAP:
+            return _empty_row(
+                CLIMATOLOGY_DATA_ID,
+                "baseline",
+                column,
+                f"reference has no {int(year_0)}-{int(year_1)} baseline window",
+            )
+        window_values = ref[column].to_numpy(float)[in_window]
+        window_months = times.dt.month.to_numpy()[in_window]
+
     # Score the baseline on the reserved test window — the same target steps
     # the models are scored on, never on the window it was fitted to.
     is_target = years >= int(get_threshold("tier2.test_window_start"))
     if is_target.sum() < _MIN_OVERLAP:
-        is_target = ~in_window
+        is_target = (years < int(year_0)) | (years > int(year_1))
     if is_target.sum() < _MIN_OVERLAP:
         return _empty_row(
             CLIMATOLOGY_DATA_ID,
@@ -325,14 +611,14 @@ def _climatology_row(
             column,
             "reference has no test-window steps to score the baseline on",
         )
-    window_values = ref[column].to_numpy(float)[in_window]
     obs = ref[column].to_numpy(float)[is_target]
+    target_times = times[is_target]
     try:
         if monthly:
             members = baselines.climatology_pseudo_members(
                 window_values,
-                window_months=times.dt.month.to_numpy()[in_window],
-                target_months=times.dt.month.to_numpy()[is_target],
+                window_months=window_months,
+                target_months=target_times.dt.month.to_numpy(),
             )
         else:
             members = baselines.climatology_pseudo_members(
@@ -356,14 +642,92 @@ def _climatology_row(
         obs=obs,
         monthly=monthly,
         settings=settings,
+        obs_sigma=_sigma_at(sigma, target_times, floor),
     )
 
 
-def score_raw_output(
+def _apply_reference_skill(scored: dict[tuple[str, str], dict[str, Any]]) -> None:
+    """Fill ``e_ref`` / ``n_ref_models`` / ``skill`` in place.
+
+    ``E_ref`` is the median of the per-model fair CRPS over the comparison
+    models with ``M >= 2``, leaving out any model of the scored model's own
+    name (paper §5.6). Comparison models are scored the same way, so each of
+    them is also left out of its own reference. Observational products never
+    enter: they carry no ``crps``.
+    """
+    comparison = {
+        name: row["crps"]
+        for (data_type, name), row in scored.items()
+        if data_type == "other" and np.isfinite(row["crps"])
+    }
+    for row in scored.values():
+        others = [e for n, e in comparison.items() if n != row["data_id"]]
+        row["n_ref_models"] = float(len(others))
+        if others:
+            e_ref = float(np.median(others))
+            row["e_ref"] = e_ref
+            if np.isfinite(row["crps"]) and e_ref > 0:
+                row["skill"] = 1.0 - row["crps"] / e_ref
+
+
+def _trend_consistency_row(
+    *,
+    data_id: str,
+    data_type: str,
+    column: str,
+    members: np.ndarray,
+    obs: np.ndarray,
+    obs_sigma: float | np.ndarray,
+    sigma_internal: SigmaInternal | None,
+) -> dict[str, Any] | None:
+    """Regime (c): the observed trend against one model's ensemble of trends.
+
+    σ_total² = var(member trends) + σ_int² + σ_obs(trend)². The σ_obs of a
+    *trend* is derived from the per-step observational error by the OLS slope
+    variance of independent errors,
+    ``σ_trend = σ_step · sqrt(12 / (T(T²−1)))`` — an interpretation the
+    protocol does not spell out (metrics_reference.md §II.0).
+    """
+    n_time = obs.size
+    if n_time < _MIN_OVERLAP:
+        return None
+    obs_trend = scoring.ols_trend(obs)
+    member_trends = np.array([scoring.ols_trend(row) for row in members], dtype=float)
+    sigma_int = sigma_internal_for(sigma_internal, column, "trend", n_time)
+    sigma_step = float(np.sqrt(np.mean(np.broadcast_to(obs_sigma, obs.shape) ** 2)))
+    sigma_obs_trend = scoring.ols_trend_sigma(sigma_step, n_time)
+    if members.shape[0] < _MIN_MEMBERS and sigma_int <= 0.0 and sigma_obs_trend <= 0.0:
+        return None  # no spread at all: the test would divide by zero
+    result = scoring.ensemble_consistency(
+        member_trends,
+        obs_trend,
+        sigma_internal=sigma_int,
+        sigma_obs=sigma_obs_trend,
+        p_threshold=float(get_threshold("tier2.consistency_p_value")),
+    )
+    row = _empty_row(data_id, data_type, f"{column}{TREND_CONSISTENCY_SUFFIX}", "")
+    row.update(
+        value=obs_trend,
+        z=result.z,
+        p_value=result.p_value,
+        passes=float(result.passes),
+        ensemble_mean=result.ensemble_mean,
+        total_sigma=result.total_sigma,
+        sigma_internal=sigma_int,
+        sigma_obs=sigma_obs_trend,
+        n_members=float(members.shape[0]),
+        n_time=float(n_time),
+    )
+    return row
+
+
+def score_raw_output(  # noqa: C901, PLR0912, PLR0915
     raw_df: pd.DataFrame,
     data_sources: pd.DataFrame | None,
     *,
     settings: dict[str, Any] | None = None,
+    baseline: dict[tuple[str, str], pd.DataFrame] | None = None,
+    sigma_internal: SigmaInternal | None = None,
 ) -> list[dict[str, Any]]:
     """Score one diagnostic's ``raw_output`` table; returns metrics rows.
 
@@ -373,65 +737,230 @@ def score_raw_output(
         return []
     settings = settings or _bootstrap_settings()
     names = source_names(data_sources)
+    categories = source_categories(data_sources)
     var_columns = [c for c in raw_df.columns if c not in _META_COLUMNS]
     references = raw_df[raw_df["data_type"] == "reference"]
     if references.empty or not var_columns:
         return []
     reference = references[references["data_id"] == references["data_id"].iloc[0]]
     groups = group_members(raw_df, names)
+    ids = group_ids(raw_df, names)
+    observational = {
+        key: is_observational(key[0], ids.get(key, []), categories) for key in groups
+    }
 
     rows: list[dict[str, Any]] = []
     for column in var_columns:
         ref_series = reference[["time", column]].dropna()
         if ref_series.shape[0] < _MIN_OVERLAP:
             continue
+        floor = obs_sigma_floor(column)
+        sigma = observational_sigma(
+            reference,
+            [f for key, frames in groups.items() if observational[key] for f in frames],
+            column,
+            floor,
+        )
+
         scored: dict[tuple[str, str], dict[str, Any]] = {}
-        for (data_type, name), member_frames in groups.items():
-            members, obs, times = stack_members(member_frames, reference, column)
-            if obs.size < _MIN_OVERLAP:
-                continue
-            if members.shape[0] < _MIN_MEMBERS:
-                scored[data_type, name] = _empty_row(
+        consistency: list[dict[str, Any]] = []
+        for key, member_frames in groups.items():
+            data_type, name = key
+            if observational[key]:
+                scored[key] = _empty_row(
                     name,
                     data_type,
                     column,
-                    "single member",
+                    "observational product (a term in sigma_obs, not scored)",
                 )
-                scored[data_type, name]["n_members"] = float(members.shape[0])
-                scored[data_type, name]["n_time"] = float(obs.size)
                 continue
-            scored[data_type, name] = _score_row(
+            members, obs, times = stack_members(member_frames, reference, column)
+            if obs.size < _MIN_OVERLAP:
+                continue
+            monthly = is_monthly(times)
+            obs_sigma = _sigma_at(sigma, times, floor)
+            if members.shape[0] < _MIN_MEMBERS:
+                scored[key] = _empty_row(name, data_type, column, "single member")
+                scored[key]["n_members"] = float(members.shape[0])
+                scored[key]["n_time"] = float(obs.size)
+            else:
+                scored[key] = _score_row(
+                    data_id=name,
+                    data_type=data_type,
+                    var_id=column,
+                    members=members,
+                    obs=obs,
+                    monthly=monthly,
+                    settings=settings,
+                    obs_sigma=obs_sigma,
+                )
+            # Regime (c) is defined on the *annual* warming rate; a monthly
+            # series would need a σ_int chunked the same way, which the
+            # piControl diagnostic reports annually.
+            if not monthly:
+                row = _trend_consistency_row(
+                    data_id=name,
+                    data_type=data_type,
+                    column=column,
+                    members=members,
+                    obs=obs,
+                    obs_sigma=obs_sigma,
+                    sigma_internal=sigma_internal,
+                )
+                if row is not None:
+                    consistency.append(row)
+
+        clim = _climatology_row(
+            reference,
+            column,
+            settings,
+            baseline=baseline,
+            sigma=sigma,
+            floor=floor,
+        )
+        scored[clim["data_type"], clim["data_id"]] = clim
+
+        _apply_reference_skill(scored)
+        rows.extend(scored.values())
+        rows.extend(consistency)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Regime (b): EOF-coefficient tables
+# ---------------------------------------------------------------------------
+
+
+def is_eof_output(raw_df: pd.DataFrame) -> bool:
+    """Whether a ``raw_output`` holds regime-(b) EOF coefficients."""
+    return _EOF_COLUMNS <= set(raw_df.columns)
+
+
+def _coefficient_vector(frame: pd.DataFrame) -> np.ndarray:
+    """One source's coefficients, ordered by mode."""
+    ordered = frame.sort_values("mode")
+    return ordered["coefficient"].to_numpy(float)
+
+
+def score_eof_output(
+    raw_df: pd.DataFrame,
+    data_sources: pd.DataFrame | None,
+    *,
+    settings: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Score a regime-(b) coefficient table (metrics_reference.md Tier II (b)).
+
+    Fair CRPS **per standardised coefficient** across a model's members, the
+    equal-weight mean over the retained modes as the variable-level score,
+    and the same ``E_ref``/skill as regime (a).
+
+    *Uncertainty (CB2 interpretation).* The paper asks for a block bootstrap
+    that "resamples spatial blocks and discounts them to an effective sample
+    size". The scoring axis here is not space but the **orthogonal,
+    standardised coefficients**, which is exactly what that discount is for:
+    the retained modes *are* the effective sample. So the interval is an iid
+    bootstrap over coefficients (``block_length = 1``) with
+    ``T_eff = number of retained modes``, and no serial-correlation
+    correction is applied — there is no ordering along a mode index to
+    correlate.
+    """
+    settings = settings or _bootstrap_settings()
+    names = source_names(data_sources)
+    categories = source_categories(data_sources)
+    rows: list[dict[str, Any]] = []
+
+    for var_id, var_frame in raw_df.groupby("var_id", sort=True):
+        references = var_frame[var_frame["data_type"] == "reference"]
+        if references.empty:
+            continue
+        obs = _coefficient_vector(
+            references[references["data_id"] == references["data_id"].iloc[0]],
+        )
+        if obs.size == 0:
+            continue
+
+        groups: dict[tuple[str, str], list[np.ndarray]] = {}
+        ids: dict[tuple[str, str], list[str]] = {}
+        for (data_id, data_type), frame in var_frame.groupby(
+            ["data_id", "data_type"],
+            sort=True,
+        ):
+            if str(data_type) == "reference":
+                continue
+            key = (str(data_type), names.get(str(data_id), str(data_id)))
+            groups.setdefault(key, []).append(_coefficient_vector(frame))
+            ids.setdefault(key, []).append(str(data_id))
+
+        scored: dict[tuple[str, str], dict[str, Any]] = {}
+        for key, vectors in groups.items():
+            data_type, name = key
+            if is_observational(data_type, ids[key], categories):
+                scored[key] = _empty_row(
+                    name,
+                    data_type,
+                    str(var_id),
+                    "observational product (a term in sigma_obs, not scored)",
+                )
+                continue
+            usable = [v for v in vectors if v.size == obs.size]
+            if not usable:
+                continue
+            members = np.vstack(usable)
+            if members.shape[0] < _MIN_MEMBERS:
+                scored[key] = _empty_row(name, data_type, str(var_id), "single member")
+                scored[key]["n_members"] = float(members.shape[0])
+                scored[key]["n_time"] = float(obs.size)
+                continue
+            scored[key] = _eof_score_row(
                 data_id=name,
                 data_type=data_type,
-                var_id=column,
+                var_id=str(var_id),
                 members=members,
                 obs=obs,
-                monthly=is_monthly(times),
                 settings=settings,
             )
 
-        clim = _climatology_row(reference, column, settings)
-        scored[clim["data_type"], clim["data_id"]] = clim
-
-        # E_ref: median of the per-model fair CRPS over the CMIP6 comparison
-        # models with M >= 2, leaving out any model of the scored model's own
-        # name (paper §5.6). Comparison models are scored the same way, so
-        # each of them is also left out of its own reference.
-        comparison = {
-            name: row["crps"]
-            for (data_type, name), row in scored.items()
-            if data_type == "other" and np.isfinite(row["crps"])
-        }
-        for row in scored.values():
-            others = [e for n, e in comparison.items() if n != row["data_id"]]
-            row["n_ref_models"] = float(len(others))
-            if others:
-                e_ref = float(np.median(others))
-                row["e_ref"] = e_ref
-                if np.isfinite(row["crps"]) and e_ref > 0:
-                    row["skill"] = 1.0 - row["crps"] / e_ref
+        if not scored:
+            continue
+        _apply_reference_skill(scored)
         rows.extend(scored.values())
     return rows
+
+
+def _eof_score_row(
+    *,
+    data_id: str,
+    data_type: str,
+    var_id: str,
+    members: np.ndarray,
+    obs: np.ndarray,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    """Fair CRPS per coefficient, its equal-weight mean and mode bootstrap."""
+    crps_k = scoring.crps_fair(members, obs)
+    summary = scoring.crps_independent_summary(crps_k, members.shape[0])
+    lo, hi = scoring.moving_block_bootstrap_ci(
+        crps_k,
+        block_length=1,  # coefficients are orthogonal: no blocks to preserve
+        n_boot=settings["n_boot"],
+        alpha=settings["alpha"],
+        seed=settings["seed"],
+        members=members if settings["resample_members"] else None,
+        obs=obs if settings["resample_members"] else None,
+    )
+    row = _empty_row(data_id, data_type, var_id, "")
+    row.update(
+        crps=summary.score,
+        crps_se=summary.standard_error,
+        crps_ci_lo=lo,
+        crps_ci_hi=hi,
+        t_eff=summary.t_eff,
+        r1=summary.r1,
+        n_members=float(summary.n_members),
+        n_time=float(summary.n_time),
+        block_length=1.0,
+    )
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -448,10 +977,99 @@ def _table_columns(con: Any, schema: str, table: str) -> dict[str, str]:  # noqa
     return {str(name): str(dtype) for name, dtype in rows}
 
 
+def baseline_records(raw_df: pd.DataFrame) -> dict[tuple[str, str], pd.DataFrame]:
+    """``(variable, "monthly"|"annual") -> series`` from a raw_output table.
+
+    The rows :class:`climatebench2.diags.ReferenceBaselineRecord` writes: the
+    reference's pre-test 1985-2014 area-mean record, which the Tier II cut
+    removed from every other table in the database.
+    """
+    found: dict[tuple[str, str], pd.DataFrame] = {}
+    if "data_type" not in raw_df.columns or "time" not in raw_df.columns:
+        return found
+    for data_type, frequency in (
+        (BASELINE_MONTHLY_DATA_TYPE, "monthly"),
+        (BASELINE_ANNUAL_DATA_TYPE, "annual"),
+    ):
+        frame = raw_df[raw_df["data_type"] == data_type]
+        if frame.empty:
+            continue
+        for column in frame.columns:
+            if column in _META_COLUMNS:
+                continue
+            series = frame[["time", column]].dropna().sort_values("time")
+            if not series.empty:
+                found[column, frequency] = series
+    return found
+
+
+def _database_context(
+    con: Any,  # noqa: ANN401
+    schemas: dict[str, set[str]],
+) -> dict[tuple[str, str], pd.DataFrame]:
+    """Baseline records found anywhere in one database."""
+    context: dict[tuple[str, str], pd.DataFrame] = {}
+    for schema, tables in schemas.items():
+        if "raw_output" not in tables:
+            continue
+        raw_df = con.execute(f'SELECT * FROM "{schema}"."raw_output"').df()
+        context.update(baseline_records(raw_df))
+    return context
+
+
+def collect_internal_variability(db_paths: list[Path] | list[str]) -> SigmaInternal:
+    """σ_int from every ``InternalVariability`` raw_output in the databases.
+
+    ``climatebench2 score`` writes one database per suite and hands the pass
+    all of them, so the Tier I database's piControl σ_int reaches the Tier II
+    consistency test without either suite knowing about the other.
+    """
+    import duckdb
+
+    table: SigmaInternal = {}
+    for path in db_paths:
+        try:
+            con = duckdb.connect(str(path), read_only=True)
+        except Exception:  # noqa: BLE001 - a locked or missing db is not fatal
+            continue
+        try:
+            for schema in _diagnostic_schemas(con):
+                tables = _schema_tables(con, schema)
+                if "raw_output" not in tables:
+                    continue
+                raw_df = con.execute(f'SELECT * FROM "{schema}"."raw_output"').df()
+                for key, entries in internal_variability_from_raw(raw_df).items():
+                    table.setdefault(key, []).extend(entries)
+        finally:
+            con.close()
+    return table
+
+
+def _diagnostic_schemas(con: Any) -> list[str]:  # noqa: ANN401
+    return [
+        str(row[0])
+        for row in con.execute(
+            "SELECT schema_name FROM information_schema.schemata",
+        ).fetchall()
+        if str(row[0]).lower() not in _SKIP_SCHEMAS
+    ]
+
+
+def _schema_tables(con: Any, schema: str) -> set[str]:  # noqa: ANN401
+    return {
+        str(row[0])
+        for row in con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = ?",
+            [schema],
+        ).fetchall()
+    }
+
+
 def score_database(
     db_path: Path | str,
     *,
     settings: dict[str, Any] | None = None,
+    sigma_internal: SigmaInternal | None = None,
 ) -> PassReport:
     """Run the Tier II scoring pass over one results database, in place.
 
@@ -460,7 +1078,9 @@ def score_database(
     replaces earlier scores rather than duplicating them.
 
     ``settings`` overrides the ``tier2.bootstrap`` block (tests and quick
-    re-scores; the protocol values come from ``thresholds.yml``).
+    re-scores; the protocol values come from ``thresholds.yml``);
+    ``sigma_internal`` is the piControl internal variability collected from
+    the other databases of the same run (:func:`collect_internal_variability`).
     """
     import duckdb
 
@@ -469,22 +1089,11 @@ def score_database(
     settings = settings or _bootstrap_settings()
     con = duckdb.connect(path)
     try:
-        schemas = [
-            str(row[0])
-            for row in con.execute(
-                "SELECT schema_name FROM information_schema.schemata",
-            ).fetchall()
-            if str(row[0]).lower() not in _SKIP_SCHEMAS
-        ]
-        for schema in schemas:
-            tables = {
-                str(row[0])
-                for row in con.execute(
-                    "SELECT table_name FROM information_schema.tables "
-                    "WHERE table_schema = ?",
-                    [schema],
-                ).fetchall()
-            }
+        schemas = {
+            schema: _schema_tables(con, schema) for schema in _diagnostic_schemas(con)
+        }
+        baseline = _database_context(con, schemas)
+        for schema, tables in schemas.items():
             if "raw_output" not in tables:
                 continue
             raw_df = con.execute(f'SELECT * FROM "{schema}"."raw_output"').df()
@@ -493,7 +1102,16 @@ def score_database(
                 if "data_sources" in tables
                 else None
             )
-            rows = score_raw_output(raw_df, sources, settings=settings)
+            if is_eof_output(raw_df):
+                rows = score_eof_output(raw_df, sources, settings=settings)
+            else:
+                rows = score_raw_output(
+                    raw_df,
+                    sources,
+                    settings=settings,
+                    baseline=baseline,
+                    sigma_internal=sigma_internal,
+                )
             if not rows:
                 continue
             frame = pd.DataFrame(rows)[list(_SCORE_COLUMNS)]
@@ -556,5 +1174,13 @@ def score_databases(
     *,
     settings: dict[str, Any] | None = None,
 ) -> list[PassReport]:
-    """Run :func:`score_database` over several databases."""
-    return [score_database(path, settings=settings) for path in db_paths]
+    """Run :func:`score_database` over several databases.
+
+    σ_int is collected from **all** of them first, so the Tier I database's
+    piControl internal variability reaches the Tier II consistency test.
+    """
+    sigma_internal = collect_internal_variability(db_paths)
+    return [
+        score_database(path, settings=settings, sigma_internal=sigma_internal)
+        for path in db_paths
+    ]

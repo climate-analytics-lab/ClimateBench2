@@ -26,12 +26,14 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import numpy as np
 from esmvalcore.preprocessor import (
     annual_statistics,
+    anomalies,
     area_statistics,
     climate_statistics,
     regrid,
     zonal_statistics,
 )
 from iris.cube import Cube
+from loguru import logger
 
 from climateeval import Variable
 from climateeval._config import setup_esmvaltool_config_and_logging
@@ -221,7 +223,15 @@ class ECSGate(_UpstreamGate, ECS):
 
 
 class EnergyBalanceGate(CB2ComplexDiagnostic):
-    """I.1: |μ(N)| < 0.1 W/m² and 10-yr-running-mean drift < 0.02 W/m²/dec."""
+    """I.1: |μ(N)| < 0.1 W/m² and 10-yr-running-mean drift < 0.02 W/m²/dec.
+
+    Both criteria are evaluated over the **last**
+    ``tier1.energy_balance.evaluation_years`` (100) annual values of the
+    supplied piControl — the segment contemporaneous with the historical
+    branch point, so a model still equilibrating early in its control is not
+    penalised. A shorter control is used whole (with a warning); the number
+    of years actually used is emitted as ``n_years``.
+    """
 
     _required_data_keys = ("picontrol",)
     _gate_checks = (
@@ -243,6 +253,15 @@ class EnergyBalanceGate(CB2ComplexDiagnostic):
     ) -> dict[Variable, Cube]:
         picontrol = complex_data_source.data["picontrol"]
         n = self._toa_net_annual_global(picontrol)
+        n_eval = int(get_threshold("tier1.energy_balance.evaluation_years"))
+        if n.size < n_eval:
+            logger.warning(
+                f"Diagnostic '{self.name}': piControl has {n.size} yr, fewer than "
+                f"the {n_eval} yr evaluation window of I.1; using the whole record "
+                f"(reduced power to detect slow drifts)",
+            )
+        else:
+            n = n[-n_eval:]
         return self._scalar_outputs(
             {
                 "toa_net_mean_abs": abs(float(n.mean())),
@@ -320,7 +339,12 @@ class ClosureGate(CB2ComplexDiagnostic):
 
 
 class ClearSkyFeedbackGate(CB2ComplexDiagnostic):
-    """I.3a: area-mean gridpoint ∂rlutcs/∂Ts within ±25% of 2.2 W/m²/K."""
+    """I.3a: area-mean gridpoint ∂rlutcs/∂Ts within ±25% of 2.2 W/m²/K.
+
+    The regression is on **deseasonalised monthly anomalies** at each grid
+    point (paper App. B): annual means would suppress the seasonal covariance
+    that carries most of the signal and shorten the sample by 12×.
+    """
 
     _required_data_keys = ("historical",)
 
@@ -343,8 +367,8 @@ class ClearSkyFeedbackGate(CB2ComplexDiagnostic):
         rlutcs = self._cube(historical, _mon("rlutcs"))
         ts = self._cube(historical, _mon("ts"))
         with setup_esmvaltool_config_and_logging():
-            rlutcs = annual_statistics(rlutcs, "mean")
-            ts = annual_statistics(ts, "mean")
+            rlutcs = anomalies(rlutcs, period="month")
+            ts = anomalies(ts, period="month")
         n = min(rlutcs.shape[0], ts.shape[0])
         beta_field = physics.gridpoint_regression_slope(
             np.asarray(rlutcs.data[:n], dtype=float),

@@ -6,6 +6,8 @@ through ClimateEval's ComplexDiagnostic machinery (needs climateeval).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -18,8 +20,10 @@ from iris.cube import Cube, CubeList  # noqa: E402
 
 from climateeval.data import DataSourceInformation  # noqa: E402
 
+from climatebench2._thresholds import get_threshold  # noqa: E402
 from climatebench2.diags.tier1_physics import (  # noqa: E402
     CB2ComplexDiagnostic,
+    ClearSkyFeedbackGate,
     ClosureGate,
     EnergyBalanceGate,
 )
@@ -34,8 +38,13 @@ def _monthly_cube(
     *,
     n_years: int = N_YEARS,
     trend_per_year: float = 0.0,
+    series: np.ndarray | None = None,
 ) -> Cube:
-    """Global monthly cube with a constant (optionally drifting) field."""
+    """Global monthly cube with a constant (optionally drifting) field.
+
+    ``series`` adds a per-timestep offset (length ``n_years * 12``), so a
+    cube can carry an arbitrary global-mean time series.
+    """
     n_time = n_years * 12
     time = DimCoord(
         np.arange(n_time, dtype=float) * 30.0 + 15.0,
@@ -57,8 +66,11 @@ def _monthly_cube(
     lon.guess_bounds()
     time.guess_bounds()
     years = np.arange(n_time, dtype=float) / 12.0
+    values = value + trend_per_year * years
+    if series is not None:
+        values = values + np.asarray(series, dtype=float)
     data = np.broadcast_to(
-        (value + trend_per_year * years)[:, None, None],
+        values[:, None, None],
         (n_time, 18, 36),
     ).astype(np.float32)
     return Cube(
@@ -77,14 +89,13 @@ def _picontrol_cubes(
 ) -> CubeList:
     """piControl fluxes: balanced TOA + balanced surface/water budget."""
     pr = 3.0 / 86400.0  # kg m-2 s-1  (3 mm/day)
-    hfls = pr * 2.5008e6  # W m-2, closes the water budget (~87)
+    hfls = pr * 2.5008e6  # W m-2, closes the water budget (~87 = L_v P)
     hfss = 20.0
     rsdt, rsut = 340.0, 100.0
     rlut = rsdt - rsut - toa_imbalance  # TOA net = toa_imbalance
-    # Surface net radiation to close the atmospheric budget exactly:
-    # residual = |LP - (-(TOA - SFCrad) + SHF)| = 0
-    # => SFCrad = TOA - (SHF - LP)
-    sfc_net_rad = toa_imbalance - (hfss - hfls * 1.0) + 0.0
+    # Surface net radiation closing the atmospheric energy budget exactly
+    # (paper I.2b): Q_rad = SFCrad - TOA = L_v P + SHF
+    sfc_net_rad = toa_imbalance + hfls + hfss
     rsds, rsus = 185.0, 25.0  # net SW = 160
     rlds = sfc_net_rad - (rsds - rsus) + 340.0  # choose rlus = 340
     rlus = 340.0
@@ -152,6 +163,85 @@ def test_closure_gate_water_budget_passes() -> None:
     # P and E constructed to balance exactly
     assert metrics.loc["water_budget", "value"] == pytest.approx(0.0, abs=1e-3)
     assert metrics.loc["water_budget", "passes"] == 1.0
+    # ... and so do Q_rad and L_v P + SHF (paper I.2b arrangement)
+    assert metrics.loc["atm_energy_budget", "value"] == pytest.approx(0.0, abs=0.05)
+    assert metrics.loc["atm_energy_budget", "passes"] == 1.0
+
+
+def test_closure_gate_atmospheric_energy_budget_fails_when_open() -> None:
+    """A 5 W/m² surface-radiation error breaks the 2 W/m² bound."""
+    diag = ClosureGate("closure", fail_on_missing_data=True)
+    cubes = _picontrol_cubes()
+    cubes.extract_cube(iris.NameConstraint(var_name="rlds")).data += np.float32(5.0)
+    output = diag.get_output({"picontrol": cubes}, _info())
+    metrics = output.metrics.to_pandas().set_index("var_id")
+    assert metrics.loc["atm_energy_budget", "value"] == pytest.approx(5.0, abs=0.05)
+    assert metrics.loc["atm_energy_budget", "passes"] == 0.0
+
+
+def test_energy_balance_gate_uses_only_the_last_evaluation_years(monkeypatch) -> None:  # noqa: ANN001
+    """I.1 is evaluated over the last `evaluation_years` of the control."""
+    n_eval = int(get_threshold("tier1.energy_balance.evaluation_years"))
+    # 50 badly imbalanced years followed by `n_eval` balanced ones: the whole
+    # record would average 50*5/(50+n_eval) = 1.67 W/m2 and fail.
+    toa_net = np.concatenate([np.full(50, 5.0), np.zeros(n_eval)])
+    monkeypatch.setattr(
+        EnergyBalanceGate,
+        "_toa_net_annual_global",
+        lambda self, data: toa_net,  # noqa: ARG005
+    )
+    diag = EnergyBalanceGate("energy_balance", fail_on_missing_data=True)
+    raw = diag._calculate_raw_output(SimpleNamespace(data={"picontrol": None}))
+    values = {variable.var_name: float(cube.data) for variable, cube in raw.items()}
+    assert values["n_years"] == n_eval
+    assert values["toa_net_mean_abs"] == pytest.approx(0.0, abs=1e-9)
+    assert values["toa_net_drift_abs"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_energy_balance_gate_short_control_uses_whole_record(monkeypatch) -> None:  # noqa: ANN001
+    """A control shorter than the window is used whole (with a warning)."""
+    toa_net = np.full(30, 0.05)
+    monkeypatch.setattr(
+        EnergyBalanceGate,
+        "_toa_net_annual_global",
+        lambda self, data: toa_net,  # noqa: ARG005
+    )
+    diag = EnergyBalanceGate("energy_balance", fail_on_missing_data=True)
+    raw = diag._calculate_raw_output(SimpleNamespace(data={"picontrol": None}))
+    values = {variable.var_name: float(cube.data) for variable, cube in raw.items()}
+    assert values["n_years"] == 30
+    assert values["toa_net_mean_abs"] == pytest.approx(0.05)
+
+
+def test_clear_sky_feedback_gate_regresses_monthly_anomalies() -> None:
+    """I.3a: β from deseasonalised monthly anomalies, not annual means.
+
+    ``ts`` carries a large seasonal cycle, fast (monthly) variability that
+    ``rlutcs`` responds to with the target β = 2.2 W/m²/K, and slow (annual)
+    variability it responds to with a much larger slope. Annual averaging
+    keeps only the slow component and would report β ≈ 4 — outside the
+    ±25% gate — so this test fails if the regression reverts to annual means.
+    """
+    rng = np.random.default_rng(7)
+    n_time = N_YEARS * 12
+    month = np.arange(n_time) % 12
+    fast = rng.normal(0.0, 1.0, n_time)
+    slow = np.repeat(rng.normal(0.0, 1.0 / np.sqrt(12.0), N_YEARS), 12)
+    seasonal = 5.0 * np.sin(2 * np.pi * month / 12.0)
+
+    ts = _monthly_cube("ts", 288.0, "K", series=seasonal + fast + slow)
+    rlutcs = _monthly_cube(
+        "rlutcs",
+        240.0,
+        "W m-2",
+        series=2.2 * fast + 6.0 * slow,
+    )
+    diag = ClearSkyFeedbackGate("clear_sky_feedback", fail_on_missing_data=True)
+    output = diag.get_output({"historical": CubeList([ts, rlutcs])}, _info())
+    metrics = output.metrics.to_pandas().set_index("var_id")
+    beta = metrics.loc["clear_sky_lw_feedback", "value"]
+    assert 2.2 <= beta <= 2.75  # monthly anomalies; annual means give ~4
+    assert metrics.loc["clear_sky_lw_feedback", "passes"] == 1.0
 
 
 def test_superset_keys_accepted() -> None:

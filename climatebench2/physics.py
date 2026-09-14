@@ -64,17 +64,24 @@ def atmospheric_energy_residual(
     sfc_net_radiation_mean: float,
     hfss_mean: float,
 ) -> float:
-    """|⟨L_v·P⟩ − (⟨Q_rad⟩ + ⟨SHF⟩)| in W/m² (I.2b).
+    """|⟨Q_rad⟩ − (⟨L_v·P⟩ + ⟨SHF⟩)| in W/m² (I.2b).
 
-    Q_rad = column radiative *convergence* = TOA net − surface net radiation
-    (typically ≈ −100 W/m², i.e. cooling); the identity is
-    L_v·P + Q_rad ≈ SHF, i.e. latent heating balances radiative cooling minus
-    sensible input, so the residual is |L_v·P − (−Q_rad + SHF)| with
-    Q_rad_cooling = −(TOA_net − sfc_net_radiation).
+    The atmospheric column is heated by latent heat release and by the
+    surface sensible heat flux and cooled radiatively, so in steady state
+    ``Q_rad ≈ L_v·P + SHF`` with ``Q_rad`` the *magnitude of the net
+    radiative cooling* of the column,
+
+        Q_rad = [(rsds − rsus) + (rlds − rlus)] − (rsdt − rsut − rlut)
+              = sfc_net_radiation − TOA_net        (positive, ≈ +100 W/m²).
+
+    (Earlier revisions of the paper wrote the identity as
+    ``|L_v·P − (Q_rad + SHF)|``, which implies the sensible heat flux cools
+    the atmosphere; that arrangement is off by 2·SHF ≈ 40 W/m² against a
+    2 W/m² bound and was abandoned in the 2026-09 draft.)
     """
     lp = LATENT_HEAT_VAPORIZATION * p_mean
-    q_rad_cooling = -(toa_net_mean - sfc_net_radiation_mean)
-    return float(abs(lp - (q_rad_cooling + hfss_mean)))
+    q_rad_cooling = sfc_net_radiation_mean - toa_net_mean
+    return float(abs(q_rad_cooling - (lp + hfss_mean)))
 
 
 # ---------------------------------------------------------------------------

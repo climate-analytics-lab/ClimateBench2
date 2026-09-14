@@ -20,10 +20,20 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import ibis
 import numpy as np
 import pandas as pd
+from esmvalcore.preprocessor import (
+    anomalies,
+    area_statistics,
+    extract_region,
+    regrid,
+    regrid_time,
+)
 from loguru import logger
 from scipy import signal
 
+from climateeval._config import setup_esmvaltool_config_and_logging
+from climateeval._variable import COORDINATES
 from climateeval.diags._base import DiagnosticOutput
+from climateeval.diags._utils import DEFAULT_GRID
 from climateeval.diags.simple import Nino34
 
 from climatebench2._thresholds import get_threshold
@@ -184,7 +194,11 @@ def band_power_ratio(
     numerator_period_years: tuple[float, float] = (2.0, 7.0),
     denominator_period_years: tuple[float, float] = (1.0, 2.0),
 ) -> float:
-    """Ratio of mean spectral power between two period bands (Welch PSD).
+    """Ratio of *integrated* spectral power between two period bands.
+
+    Welch PSD, then ``∫S df`` over each band (paper I.5b: integrated power,
+    not the mean PSD — the 1–2 yr band spans 0.5 cycles/yr against the 2–7 yr
+    band's 0.357, so a mean-PSD ratio runs ≈ 1.4× high).
 
     Defaults implement the ENSO spectral-shape check (metrics_reference I.5b):
     power in the 2–7 yr band over the 1–2 yr band of a monthly index.
@@ -194,14 +208,14 @@ def band_power_ratio(
     nperseg = min(len(x), 20 * MONTHS_PER_YEAR)  # 20-yr segments resolve 7-yr power
     freqs, psd = signal.welch(x - x.mean(), fs=fs, nperseg=nperseg)
 
-    def band_mean(period_band: tuple[float, float]) -> float:
+    def band_power(period_band: tuple[float, float]) -> float:
         lo_p, hi_p = period_band  # years
         mask = (freqs >= 1.0 / hi_p) & (freqs <= 1.0 / lo_p)
-        if not mask.any():
+        if mask.sum() < 2:  # cannot integrate over fewer than two frequencies
             return float("nan")
-        return float(psd[mask].mean())
+        return float(np.trapezoid(psd[mask], freqs[mask]))
 
-    return band_mean(numerator_period_years) / band_mean(denominator_period_years)
+    return band_power(numerator_period_years) / band_power(denominator_period_years)
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +246,11 @@ def _enso_checks(column: str) -> tuple[GateCheck, ...]:
 class ENSOGate(GateMixin, Nino34):
     """Tier I checks I.5a/b: ENSO amplitude and spectral shape.
 
-    Runs ClimateEval's ``Nino34`` diagnostic (monthly Niño-3.4 SST anomaly,
-    3-month running mean) unchanged, then gates:
+    Runs ClimateEval's ``Nino34`` diagnostic (deseasonalised monthly Niño-3.4
+    SST anomalies) with ``_rolling_window_length = 1``: the paper's σ and
+    spectrum are of the *unsmoothed* monthly anomalies, whereas ClimateEval's
+    default 3-month running mean (the operational ONI definition) lowers σ by
+    roughly 5–10% and reddens the spectrum. Then gates:
 
     - amplitude: σ(Niño-3.4) within ``tier1.enso.amplitude_range``;
     - spectral shape: Welch band-power ratio (2–7 yr)/(1–2 yr) above
@@ -243,6 +260,40 @@ class ENSOGate(GateMixin, Nino34):
     in Phase 4 (see docs/climateeval_delineation_plan.md §5).
     """
 
+    # No 3-month running mean: gate the raw monthly anomalies (paper I.5a/b).
+    _rolling_window_length: ClassVar[int] = 1
+
     # The Nino34 suite entry uses variable id `tos_nino34` (kept for
     # compatibility with ClimateEval's Tier2_ocean_monthly stanza).
     _gate_checks = _enso_checks("tos_nino34")
+
+    def _preprocess(self, cube: Any, variable: Any) -> Any:
+        """Niño-3.4 index, running mean applied only if it has ≥ 2 points.
+
+        Mirrors ``Nino34._preprocess`` (same region, same deseasonalisation,
+        same output calendar) minus the smoothing step: iris refuses a
+        rolling window shorter than two points, so the upstream chain cannot
+        express the paper's *unsmoothed* monthly index. Upstream-PR
+        candidate: accept ``window_length = 1`` as a no-op, after which this
+        override can go and only the ClassVar remains.
+        """
+        if self._rolling_window_length >= 2:
+            return super()._preprocess(cube, variable)  # type: ignore[misc]
+        with setup_esmvaltool_config_and_logging():
+            cube = regrid(cube, DEFAULT_GRID, "linear", cache_weights=True)
+            cube = extract_region(
+                cube,
+                start_longitude=self._start_longitude,
+                end_longitude=self._end_longitude,
+                start_latitude=self._start_latitude,
+                end_latitude=self._end_latitude,
+            )
+            cube = anomalies(cube, period="month")
+            cube = area_statistics(cube, "mean")
+            cube = regrid_time(
+                cube,
+                frequency="mon",
+                calendar="standard",
+                units=COORDINATES["time"]["units"],
+            )
+        return cube

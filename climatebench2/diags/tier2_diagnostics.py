@@ -42,7 +42,8 @@ class PinatuboResponseGate(CB2ComplexDiagnostic):
     """Pinatubo (1991–93) response: surface dimming and cooling.
 
     Global-mean ``rsds`` and ``tas`` anomalies for Jul 1991 – Dec 1993
-    relative to the 1990–2020 climatology. Gates: Δrsds < 0 (dimming) and
+    relative to the ``tier2.climatology_baseline_period`` (1985–2014)
+    climatology. Gates: Δrsds < 0 (dimming) and
     Δtas < 0 (cooling). The anomaly magnitudes are emitted for the
     regime-(b) consistency comparison in the leaderboard.
     """
@@ -95,15 +96,15 @@ class PinatuboResponseGate(CB2ComplexDiagnostic):
 
 
 class HemisphericAsymmetryGate(CB2ComplexDiagnostic):
-    """Aerosol-era (1950–1985) hemispheric asymmetry.
+    """Aerosol-era hemispheric asymmetry.
 
     NH−SH tas trend difference (NH suppressed by aerosol forcing → < 0) and
     the associated southward ITCZ shift (trend of the zonal-mean-pr maximum
-    latitude < 0). Values emitted for regime-(b) comparison.
+    latitude < 0), both over ``tier2.hemispheric_asymmetry.era``
+    (1950–1985). Values emitted for regime-(b) comparison.
     """
 
     _required_data_keys = ("historical",)
-    _era: tuple[int, int] = (1950, 1985)
     _gate_checks = (
         GateCheck(
             check_id="hemispheric_trend_asymmetry",
@@ -116,6 +117,12 @@ class HemisphericAsymmetryGate(CB2ComplexDiagnostic):
             upper=get_threshold("tier2.hemispheric_asymmetry.itcz_shift_max"),
         ),
     )
+
+    @property
+    def _era(self) -> tuple[int, int]:
+        """Aerosol era (first, last year) from ``thresholds.yml``."""
+        era = get_threshold("tier2.hemispheric_asymmetry.era")
+        return (int(era[0]), int(era[1]))
 
     def _hemisphere_trend(
         self,

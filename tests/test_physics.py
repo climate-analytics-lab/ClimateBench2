@@ -48,11 +48,11 @@ def test_water_budget_residual_balanced() -> None:
 
 
 def test_atmospheric_energy_residual_balanced() -> None:
+    """Paper identity (2026-09): Q_rad = L_v·P + SHF, Q_rad = sfc_rad − TOA."""
     p = 3.0 / physics.SECONDS_PER_DAY
     lp = physics.LATENT_HEAT_VAPORIZATION * p  # ~87 W/m2
     shf = 20.0
-    # Balanced atmosphere: radiative cooling = LP - SHF
-    q_rad_cooling = lp - shf
+    q_rad_cooling = lp + shf  # balanced atmosphere
     toa_net = 0.5
     sfc_net_rad = toa_net + q_rad_cooling
     assert physics.atmospheric_energy_residual(
@@ -61,6 +61,25 @@ def test_atmospheric_energy_residual_balanced() -> None:
         sfc_net_rad,
         shf,
     ) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_atmospheric_energy_residual_earth_like_magnitudes() -> None:
+    """LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m² closes; the old form gave ≈ 40."""
+    lp = 80.0
+    p = lp / physics.LATENT_HEAT_VAPORIZATION
+    shf = 20.0
+    q_rad_cooling = 100.0
+    toa_net = 0.0
+    sfc_net_rad = toa_net + q_rad_cooling
+    residual = physics.atmospheric_energy_residual(p, toa_net, sfc_net_rad, shf)
+    assert residual == pytest.approx(0.0, abs=1e-9)
+    # And a real imbalance is reported at its true size
+    assert physics.atmospheric_energy_residual(
+        p,
+        toa_net,
+        sfc_net_rad + 3.0,
+        shf,
+    ) == pytest.approx(3.0, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------

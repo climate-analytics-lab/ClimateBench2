@@ -20,9 +20,14 @@ against the `climatebench2/` package at commit `d6b0513` (migration Phase 6 of
 `ArcticAmplification`, `MeridionalHeatTransport` complex diagnostics; the
 `rsds`/`rsus`/`rlds`/`rlus`/`tasmax`/`tasmin` variables), the ocean-transport
 diagnostics of #34, and the relative-score leaderboard of #37. **`pyproject.toml` now
-pins `b0e941c`** (gap item 0, 2026-09-14): the three duplicated Tier I diagnostics are
+pins `b0e941c`** (gap item 0, `b7e8593`): the three duplicated Tier I diagnostics are
 thin `GateMixin` wrappers over the upstream classes, the CB2-side registry stopgap
-(`RegistryFreeVariable`) is gone and the daily suite scores `tasmax`. The legacy
+(`RegistryFreeVariable`) is gone and the daily suite scores `tasmax`. **Gap item 1**
+(the same day) then corrected the gates that were wrong as written — the I.2b identity,
+the I.1 evaluation window, the I.3a monthly anomalies, the I.5a unsmoothed index, the
+I.5b integrated band power and the 1985–2014 Tier II baseline window — so the status
+entries for I.1, I.2b, I.3a, I.5a/b and the Pinatubo/Climatology rows below describe
+the corrected code. The legacy
 `benchmark_scrips/*.py` scripts that earlier revisions of this document audited were
 deleted in migration Phases 1–5; **every status entry below refers to
 `climatebench2/`**, and the only legacy survivors are `constants.py`, `utils.py` and
@@ -64,16 +69,16 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 
 | # | Diagnostic | Paper requirement (short) | Req. | Status (2026-09-14) | Code |
 |---|---|---|---|---|---|
-| I.1 | Energy balance (piControl) | \|μ(N)\| < 0.1 W/m²; 10-yr-running-mean drift \|δ\| < 0.02 W/m²/decade; **evaluated over the last 100 yr of piControl** | Req. | 🟡 thresholds and running-mean drift per spec, but computed over the **whole** supplied control, not the last 100 yr; `thresholds.yml` still says `min_years: 500 # TODO` | `diags.tier1_physics.EnergyBalanceGate`, `physics.running_mean_drift` |
+| I.1 | Energy balance (piControl) | \|μ(N)\| < 0.1 W/m²; 10-yr-running-mean drift \|δ\| < 0.02 W/m²/decade; **evaluated over the last 100 yr of piControl** | Req. | ✅ both criteria over the last `tier1.energy_balance.evaluation_years` = 100 annual values; a shorter control is used whole with a logged warning and the length reported as `n_years` | `diags.tier1_physics.EnergyBalanceGate`, `physics.running_mean_drift` |
 | I.2a | Water budget closure | \|⟨P⟩−⟨E⟩\| < 0.05 mm/day | Req. | ✅ | `ClosureGate`, `physics.water_budget_residual` |
-| I.2b | Atmospheric energy budget | \|⟨Q_rad⟩ − (⟨L·P⟩+⟨SHF⟩)\| < 2 W/m² | Req. | 🟡 **blocking** — implements the superseded `\|L·P − (Q_rad + SHF)\|`; with realistic magnitudes (LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m²) the residual is ≈ 40 W/m², so **every model fails** | `ClosureGate`, `physics.atmospheric_energy_residual` |
-| I.3a | Clear-sky LW feedback β = ∂rlutcs/∂Ts | global-mean gridpoint slope within ±25% of 2.2 W/m²/K, historical | Req. | 🟡 gridpoint regression on historical `ts`, ±25% of 2.2 ✓, but on **annual means** rather than deseasonalised monthly anomalies | `ClearSkyFeedbackGate`, `physics.gridpoint_regression_slope` |
+| I.2b | Atmospheric energy budget | \|⟨Q_rad⟩ − (⟨L·P⟩+⟨SHF⟩)\| < 2 W/m² | Req. | ✅ the paper's arrangement, `Q_rad = sfc_net_rad − TOA_net`; an Earth-like column (LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m²) now closes to ≈ 0 | `ClosureGate`, `physics.atmospheric_energy_residual` |
+| I.3a | Clear-sky LW feedback β = ∂rlutcs/∂Ts | global-mean gridpoint slope within ±25% of 2.2 W/m²/K, historical | Req. | ✅ gridpoint regression of **deseasonalised monthly anomalies** (`anomalies(period="month")`) of `rlutcs` on `ts`, ±25% of 2.2 | `ClearSkyFeedbackGate`, `physics.gridpoint_regression_slope` |
 | I.3b | Midlatitude geostrophic balance | spatial ρ(u, u_g) at 850 hPa daily, 30–60°, > 0.9. **Skipped (N/A) for models with no dynamical representation** | Req. (N/A allowed) | ✅ per spec (daily `ua`/`zg` at 850 hPa, optional `ps` orography mask, pooled 30–60° both hemispheres); N/A only implicit (gate skipped when no `day` data supplied); untested on real daily data | `diags.tier1_extended.GeostrophicBalanceGate` |
 | I.3c | Tropical precipitation–buoyancy | monthly P′ vs column-MSE′ slope, 20S–20N, ±30% of GPCP/ERA5 | Req. | ❌ missing — the legacy log(pr)-vs-prw proxy was retired with the scripts and nothing replaced it | — |
 | I.4a | GFMIP SST patch experiments | Δλ = ΔR_EP/ΔTs_EP − ΔR_WP/ΔTs_WP > 0.5 W/m²/K — **Extended** | Ext. | ✅ per spec; needs submission-provided `amip`/`patch_ep`/`patch_wp` | `GFMIPPatchGate` |
 | I.4b | amip-4xCO2 ERF | 6.5–9.0 W/m² | Req. | ✅ (TOA-net difference amip-4xCO2 − amip; no land-warming correction, none asked) | `Amip4xCO2ERFGate` |
-| I.5a | ENSO amplitude | σ(Niño-3.4) ∈ [0.5, 1.4] K | Req. | 🟡 σ taken from ClimateEval `Nino34`, which applies a **3-month running mean** (paper: monthly anomalies → σ biased low ≈ 5–10%); runs on the CLI's historical cubes (1979–2014 default), not on ≥ 100 yr piControl | `diags.pass_fail.ENSOGate` |
-| I.5b | ENSO spectrum | power(2–7 yr)/power(1–2 yr) > 1.5 | Req. | 🟡 Welch **mean** PSD per band; paper says **integrated** power — the 1–2 yr band is 1.4× wider in frequency, so the code ratio ≈ 1.4× the paper's (threshold 1.5 ≙ ≈ 1.07 in paper units) | `pass_fail.band_power_ratio` |
+| I.5a | ENSO amplitude | σ(Niño-3.4) ∈ [0.5, 1.4] K | Req. | ✅ σ of the **unsmoothed** deseasonalised monthly index (`ENSOGate._rolling_window_length = 1`); 🟡 the variability suite is still fed the CLI's historical cubes (1979–2014 default), not ≥ 100 yr piControl — a later CLI work package | `diags.pass_fail.ENSOGate` |
+| I.5b | ENSO spectrum | power(2–7 yr)/power(1–2 yr) > 1.5 | Req. | ✅ Welch PSD **integrated** over each band (`np.trapezoid`), so 1.5 means what the paper says (white noise now scores ≈ 0.71, not ≈ 1.0) | `pass_fail.band_power_ratio` |
 | I.5c | ENSO teleconnections | gridpoint regression of `ts` and `pr` on standardized Niño-3.4, 30S–30N; centred spatial correlation of modelled vs observed regression patterns > 0.7 (R² > 0.5), vs HadISST/ERA5 and GPCP | Req. | 🟡 implements the **superseded** scalar criterion (tropical ta500 regression > 0, Maritime-Continent pr < 0, sign only, no observations) | `diags.tier1_extended.ENSOTeleconnectionsGate` |
 | I.5d | MJO Wheeler–Kiladis | east/west power ratio (k=1–3, 30–90 d) > 1.5 — **Extended** | Ext. | ✅ (2-D FFT east/west ratio, k = 1–3, 30–90 d, ±15°, daily `pr`) | `MJOGate`, `physics.mjo_east_west_ratio` |
 | I.6a | Land–ocean warming ratio | ratio ∈ [1.2, 1.6] (**strict** — resolved 2026-09); a4x last 50 yr | Req. | ✅ one strict-range gate row `land_ocean_warming`; thin wrapper over `climateeval.diags.complex.LandOceanWarmingRatio` (⬆ done) | `LandOceanWarmingGate` |
@@ -118,17 +123,18 @@ basic "the model is a physically closed system" test.
 - Pass criterion 1: long-term mean `|μ(N)| < 0.1 W/m²`.
 - Pass criterion 2: drift of the **10-yr running mean** of N, `|δ| < 0.02 W/m²/decade`.
 
-**Implementation status: 🟡** — `climatebench2/diags/tier1_physics.py::EnergyBalanceGate`
+**Implementation status: ✅** — `climatebench2/diags/tier1_physics.py::EnergyBalanceGate`
 (`picontrol` key).
 - ✅ Global annual-mean N via ClimateEval preprocessors (regrid to 2°, `area_statistics`,
   `annual_statistics`); `|μ|` gated at `tier1.energy_balance.mean_toa_net_abs_max = 0.1`;
   drift = OLS slope of the centred 10-yr running mean × 10 (`physics.running_mean_drift`),
   gated at `drift_10yr_running_abs_max = 0.02`. Rows `energy_balance_mean`,
   `energy_balance_drift`; raw output also carries `n_years`.
-- 🟡 Both statistics are computed over **the whole piControl passed in**, not its last
-  100 yr. Add `evaluation_years: 100` to `thresholds.yml` (replacing the stale
-  `min_years: 500 # TODO`), slice `n[-100:]` before both statistics, and show the
-  emitted `n_years` on the scorecard as the record-length caveat.
+- ✅ Both statistics are computed over the **last
+  `tier1.energy_balance.evaluation_years` = 100** annual values (the stale
+  `min_years: 500 # TODO` key is gone). A control shorter than the window is used
+  whole, with a logged warning; `n_years` is the number of years actually used and is
+  the record-length caveat for the scorecard.
 - ➖ The legacy CERES-range sanity checks on `rsut`/`rlut` were dropped with the script;
   ClimateEval's stock `Tier1_sanity_checks` suite covers flux ranges if wanted.
 
@@ -136,7 +142,7 @@ basic "the model is a physically closed system" test.
 ```python
 N = gmean(rsdt) - gmean(rsut) - gmean(rlut)        # annual, area-weighted, piControl
 assert len(N) >= 100                                # >=500 requested; >=100 accepted
-N = N[-100:]                                        # last 100 yr of the control  (NOT yet in code)
+N = N[-100:]                                        # last 100 yr of the control
 mu = N.mean()
 N10 = N.rolling(year=10, center=True).mean()        # 10-yr running mean
 delta = 10 * linregress(np.arange(N10.size), N10.dropna()).slope   # W/m2/decade
@@ -185,22 +191,22 @@ identity as `|L_v·P − (Q_rad + SHF)|`, which implies the sensible heat flux c
 atmosphere. The paper (Table 1 and Appendix B) now carries the physically standard
 arrangement above; code written against the old form must be reordered.
 
-**Status: 🟡 — blocking.** `ClosureGate` calls `physics.atmospheric_energy_residual`,
-which returns `|L_v·P − (Q_rad,cool + hfss)|` with `Q_rad,cool = sfc_net_rad − TOA_net`
-— i.e. exactly the **old arrangement** the paper abandoned. Its docstring and
-`tests/test_physics.py::test_atmospheric_energy_residual_balanced` encode the same
-form. For Earth-like magnitudes (LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m²) the old residual
-is ≈ 40 W/m² against a 2 W/m² bound, so **as written the gate fails every physically
-reasonable model**. Fix: return `abs(q_rad_cooling - (lp + hfss_mean))`, update the
-docstring, and rebuild the unit test's balanced case (`Q_rad = LP + SHF`). The absolute
-2 W/m² bound and the piControl full-period means are already right.
+**Status: ✅.** `ClosureGate` calls `physics.atmospheric_energy_residual`, which
+returns `|Q_rad − (L_v·P + hfss)|` with `Q_rad = sfc_net_rad − TOA_net` — the paper's
+arrangement. (Earlier revisions returned `|L_v·P − (Q_rad + SHF)|`, which is off by
+2·SHF ≈ 40 W/m² against a 2 W/m² bound and failed every physically reasonable model.)
+`tests/test_physics.py` covers both the balanced case and an Earth-like column
+(LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m² → residual 0, where the old form gave ≈ 40), and
+`tests/test_tier1_physics.py` checks the gate end-to-end on synthetic cubes built to
+close this identity. The absolute 2 W/m² bound and the piControl full-period means were
+already right.
 
 ```python
 LP    = 2.5008e6 * gmean(pr).mean()                        # W/m2
 Qrad  = gmean(rsds - rsus + rlds - rlus                    # sfc net radiation
               - (rsdt - rsut - rlut)).mean()               # minus TOA net -> atm cooling (+ve)
 SHF   = gmean(hfss).mean()
-passes = abs(Qrad - (LP + SHF)) < 2.0                      # W/m2   (code still has LP - (Qrad + SHF))
+passes = abs(Qrad - (LP + SHF)) < 2.0                      # W/m2
 ```
 
 ---
@@ -220,15 +226,17 @@ clear-sky OLR (Koll & Cronin 2018); observed value ≈ 2.2 W/m²/K (CERES).
 surface temperature `ts` over the historical period; area-average the slope field.
 **Pass: global-mean slope within ±25% of 2.2 W/m²/K → [1.65, 2.75] W/m²/K.**
 
-**Status: 🟡** — `ClearSkyFeedbackGate` (`historical` key): per-gridpoint OLS of
-`rlutcs` on `ts` on the 2° grid (`physics.gridpoint_regression_slope`), cos-weighted
-area mean, gated at `2.2 × (1 ± 0.25)` from `tier1.clear_sky_lw_feedback` (row
-`clear_sky_lw_feedback`). Deviation: the regression is on **annual means**
-(`annual_statistics`) whereas the paper's Appendix B specifies **deseasonalised monthly
-anomalies** — swap in `esmvalcore.preprocessor.anomalies(period="month")`; annual means
-suppress the seasonal covariance and shorten the sample, so expect a somewhat different
-β. The 2.2 reference is a fixed constant in `thresholds.yml` (the paper quotes the
-CERES-derived value, so no live CERES regression is needed).
+**Status: ✅** — `ClearSkyFeedbackGate` (`historical` key): both `rlutcs` and `ts` are
+reduced to **deseasonalised monthly anomalies**
+(`esmvalcore.preprocessor.anomalies(period="month")`, paper App. B) before the
+per-gridpoint OLS on the 2° grid (`physics.gridpoint_regression_slope`), then a
+cos-weighted area mean, gated at `2.2 × (1 ± 0.25)` from
+`tier1.clear_sky_lw_feedback` (row `clear_sky_lw_feedback`). Annual means — the
+previous behaviour — suppress the seasonal covariance and shorten the sample 12-fold;
+the unit test builds a field whose monthly-anomaly β is 2.5 and whose annual-mean β is
+4.2, so a reversion fails the gate. The 2.2 reference is a fixed constant in
+`thresholds.yml` (the paper quotes the CERES-derived value, so no live CERES regression
+is needed).
 
 ```python
 beta = xr.apply_ufunc(linregress_slope, ts_anom, rlutcs_anom,   # per grid point, over time
@@ -389,9 +397,13 @@ passes = 6.5 <= erf <= 9.0
 **Measures.** Existence, amplitude, timescale and teleconnection footprint of the
 model's dominant coupled mode of interannual variability.
 
-**Index definition (as built).** `ENSOGate` subclasses ClimateEval's `Nino34` diagnostic
-unchanged: regrid to 2°, `extract_region` 190–240°E × 5S–5N, `anomalies(period="month")`,
-**3-month running mean**, area mean. It runs in `ClimateBench2_TierI_variability.yml` on
+**Index definition (as built).** `ENSOGate` subclasses ClimateEval's `Nino34`
+diagnostic with `_rolling_window_length = 1`: regrid to 2°, `extract_region`
+190–240°E × 5S–5N, `anomalies(period="month")`, area mean — i.e. the paper's
+*unsmoothed* monthly anomalies, without the operational ONI 3-month running mean.
+(iris refuses a rolling window shorter than two points, so `ENSOGate._preprocess`
+reproduces the upstream chain minus that one step; upstream-PR candidate: accept
+`window_length = 1` as a no-op, after which only the ClassVar is needed.) It runs in `ClimateBench2_TierI_variability.yml` on
 the model's monthly `tos` cubes (variable id `tos_nino34`) with ESACCI-SST as reference
 and ERSSTv5/HadISST as additional data — the gate is applied to the observational series
 too, which sanity-checks the thresholds. `ENSOTeleconnectionsGate` recomputes the same
@@ -399,31 +411,29 @@ index inside a complex diagnostic on the `picontrol` key.
 
 **(a) Amplitude.**
 - Spec: **σ(Niño-3.4) ∈ [0.5, 1.4] K**.
-- Code: `std(ddof=1)` of the `Nino34` output, gated at `tier1.enso.amplitude_range`
-  = [0.5, 1.4] (row `enso_amplitude`). Two deviations: (i) the index is the
-  **3-month-smoothed** one, whereas the paper's σ is of the unsmoothed monthly anomalies
-  — smoothing lowers σ by roughly 5–10% (either subclass with
-  `_rolling_window_length = 1` or document the choice; the [0.5, 1.4] envelope is
-  "generous"); (ii) the variability suite receives the same cubes as Tier II — the
-  historical run cut to the CLI `--timerange` (default 1979–2014, i.e. 36 yr) — not the
-  ≥ 100 yr piControl the paper specifies. Feed it the `picontrol` experiment.
-- Status: 🟡.
+- Code: `std(ddof=1)` of the index, gated at `tier1.enso.amplitude_range`
+  = [0.5, 1.4] (row `enso_amplitude`). ✅ The index is now the unsmoothed monthly one
+  (the 3-month running mean lowered σ by roughly 5–10%). 🟡 One deviation left: the
+  variability suite receives the same cubes as Tier II — the historical run cut to the
+  CLI `--timerange` (default 1979–2014, i.e. 36 yr) — not the ≥ 100 yr piControl the
+  paper specifies. Feeding it the `picontrol` experiment is a CLI work package.
+- Status: ✅ statistic, 🟡 input record.
 
 **(b) Spectral shape.**
 - Spec: **ratio of spectral power in the 2–7 yr band to the 1–2 yr band > 1.5**.
 - Code: `pass_fail.band_power_ratio` — Welch PSD (fs = 12/yr, 20-yr segments) and the
-  ratio of the **mean** PSD in 2–7 yr to the mean PSD in 1–2 yr, gated at
-  `tier1.enso.band_power_ratio_min = 1.5` (row `enso_spectral_ratio`). The paper's
-  ratio is of **integrated** power (∫S df). Because the 1–2 yr band spans 0.5 cycles/yr
-  and the 2–7 yr band only 0.357, the mean-based ratio is ≈ 1.4× the integral-based
-  one, so the code's 1.5 corresponds to ≈ 1.07 in the paper's units. Replace
-  `psd[mask].mean()` with `np.trapezoid(psd[mask], freqs[mask])`.
-- Status: 🟡 (statistic mismatch).
+  ratio of the **integrated** power `np.trapezoid(psd[mask], freqs[mask])` in 2–7 yr to
+  that in 1–2 yr, gated at `tier1.enso.band_power_ratio_min = 1.5` (row
+  `enso_spectral_ratio`). The former mean-PSD ratio ran ≈ 1.4× high (the 1–2 yr band
+  spans 0.5 cycles/yr against the 2–7 yr band's 0.357), so 1.5 then meant ≈ 1.07 in the
+  paper's units; white noise now scores ≈ 0.71 instead of ≈ 1.0. A band containing
+  fewer than two Welch frequencies returns NaN rather than a spurious ratio.
+- Status: ✅.
 
 ```python
 f, S = welch(nino34, fs=12, nperseg=240)          # cycles/yr
 band = lambda lo, hi: trapezoid(S[(f >= 1/hi) & (f <= 1/lo)], f[(f >= 1/hi) & (f <= 1/lo)])
-ratio = band(2, 7) / band(1, 2)                   # integrated power (code currently uses means)
+ratio = band(2, 7) / band(1, 2)                   # integrated power
 passes = ratio > 1.5
 ```
 
@@ -876,12 +886,12 @@ gone.
 | Cloud properties (LWP, fraction, CTT/CTP) | (a)/(b) | 🟡 `clt` vs ESACCI-Cloud scored; `clwvi`/`clivi` not in the suite (ESACCICloud carries them); CTT/CTP ❌ | suite |
 | prw | (a) | 🟡 vs `ERA5Monthly` (paper: RSS primary, ERA5 as reference) — acceptable pending an RSS DataSource | suite |
 | Realized warming level 2015+ vs 1985–2014 (primary); 1950–present trend; test-period trend (secondary); GSAT blending | (a)/(c) | ❌ — `TrendConsistency` tests the OLS trend of **whatever window is loaded** (CLI default 1979–2014 → no test window at all); no warming-level statistic, no 1950 start, no blending correction | `TrendConsistency` |
-| Pinatubo response | (b) | 🟡 `PinatuboResponseGate`: global-mean `rsds`/`tas` anomalies Jul 1991–Dec 1993 vs `tier2.climatology_baseline_period` (**still [1990, 2020]** — must be [1985, 2014]), **sign-only** gates; no BSRN/obs magnitude comparison, no co-variation test | `diags/tier2_diagnostics.py` |
-| Hemispheric asymmetry | (b) | 🟡 `HemisphericAsymmetryGate`: NH−SH `tas` trend 1950–1985 and zonal-mean-pr-maximum latitude trend, **sign-only** gates; no HadCRUT/Berkeley comparison | `tier2_diagnostics.py` |
+| Pinatubo response | (b) | 🟡 `PinatuboResponseGate`: global-mean `rsds`/`tas` anomalies Jul 1991–Dec 1993 vs `tier2.climatology_baseline_period` (✅ now [1985, 2014]), **sign-only** gates; no BSRN/obs magnitude comparison, no co-variation test | `diags/tier2_diagnostics.py` |
+| Hemispheric asymmetry | (b) | 🟡 `HemisphericAsymmetryGate`: NH−SH `tas` trend over `tier2.hemispheric_asymmetry.era` (✅ [1950, 1985], no longer a hard-coded class constant) and zonal-mean-pr-maximum latitude trend, **sign-only** gates; no HadCRUT/Berkeley comparison | `tier2_diagnostics.py` |
 | Seasonal cycle: land annual T range; SST–low-cloud covariance; seasonal CRE–SST feedback | (b) | ❌ (ClimateEval `AnnualCycle` runs deterministically for the core variables; none of the three protocol statistics is computed) | — |
 | Diurnal cycle (first-harmonic amplitude/phase of pr and CRE, local solar time) | (b) | 🟡 ClimateEval `DiurnalCycle` of hourly pr vs `ERA5Hourly`, deterministic; `physics.first_harmonic` exists, unwired; CRE diurnal ❌; IMERG / CERES-SYN DataSources ❌ | `ClimateBench2_TierII_daily.yml` |
 | Held-out vs in-sample labelling | — | ❌ leaderboard has no such column | `leaderboard/` |
-| Baselines | — | 🟡 **Climatology** row wired (`_climatology_row`) but from `tier2.climatology_baseline_period = [1990, 2020]`, which **overlaps the test window**; **pattern scaling**: `baselines.two_layer_ebm` + `pattern_scaling_forecast` are pure functions — unwired, uncalibrated (Geoffroy-2013 defaults in `tier2.ebm`), no ERF series or CMIP6-MMM pattern in the package; **CMIP6 MME**: pooled (see skill-score row) | `baselines.py`, `tier2_scores.py` |
+| Baselines | — | 🟡 **Climatology** row wired (`_climatology_row`) from `tier2.climatology_baseline_period` (✅ now [1985, 2014] — no longer overlapping the reserved test window); **pattern scaling**: `baselines.two_layer_ebm` + `pattern_scaling_forecast` are pure functions — unwired, uncalibrated (Geoffroy-2013 defaults in `tier2.ebm`), no ERF series or CMIP6-MMM pattern in the package; **CMIP6 MME**: pooled (see skill-score row) | `baselines.py`, `tier2_scores.py` |
 | **CMIP6 reference ensemble for the test window** | — | ❌ ClimateEval's `CMIP6HistoricalR1I1P1F1` generator is hard-wired to `ensemble: r1i1p1f1` and `timerange: 19790101/20141231`; there is **no SSP2-4.5 or historical+SSP2-4.5 generator and no multi-member variant**, so neither a per-model fair CRPS of the CMIP6 reference (≥ 2 members) nor any post-2015 CMIP6 comparison can be assembled — an upstream `CMIP6HistoricalSSP245` generator with `ensemble: "r*i1p1f1"` is the blocking dependency | `climateeval/data/_cmip6_generators.py` |
 
 ## II.0 Machinery as built (`climatebench2/scoring.py`, `diags/tier2_scores.py`, `baselines.py`, `leaderboard/`)
@@ -1021,8 +1031,8 @@ use historical members.
 
 *Status: 🟡.* `diags/tier2_diagnostics.py::PinatuboResponseGate` (`historical` key):
 global-mean `rsds` and `tas` anomalies for Jul 1991–Dec 1993 relative to the
-`tier2.climatology_baseline_period` mean — **still [1990, 2020]** in `thresholds.yml`;
-change to [1985, 2014] — gated **sign-only** (`pinatubo_dimming`: Δrsds < 0;
+`tier2.climatology_baseline_period` mean (✅ [1985, 2014] since 2026-09-14) — gated
+**sign-only** (`pinatubo_dimming`: Δrsds < 0;
 `pinatubo_cooling`: Δtas < 0). No observational magnitudes (BSRN / HadCRUT), no
 co-variation test, no ENSO removal; the gate sits in the Tier I suite and currently
 counts toward the entry ticket.
@@ -1051,7 +1061,9 @@ diagnostic (§II.0(b)) against
 HadCRUT/GPCP-era reconstructions.
 
 *Status: 🟡.* `HemisphericAsymmetryGate` (`historical`): NH and SH area-mean annual
-`tas` OLS trends over 1950–1985 (`physics.ols_trend`), `nh_minus_sh_trend` gated < 0;
+`tas` OLS trends over `tier2.hemispheric_asymmetry.era` = [1950, 1985]
+(`physics.ols_trend`; the era is a threshold now, not a class constant),
+`nh_minus_sh_trend` gated < 0;
 ITCZ = latitude of the annual zonal-mean `pr` maximum within ±30°, its trend
 (°/decade) gated < 0. Sign-only; no HadCRUT/Berkeley comparison; also counts toward the
 entry ticket today.
@@ -1113,8 +1125,8 @@ headline `S`.
 
 *Status: 🟡.* (i) pooled `CMIP6-MME` row (single r1i1p1f1 member per model, all
 pooled) — not the median of per-model scores, and pending the paper's own
-mixture-vs-median resolution; (ii) `Climatology` row wired but from [1990, 2020]
-(`tier2.climatology_baseline_period`) — fix the constant; (iii) `baselines.two_layer_ebm`
+mixture-vs-median resolution; (ii) `Climatology` row wired, from
+`tier2.climatology_baseline_period` = ✅ [1985, 2014]; (iii) `baselines.two_layer_ebm`
 + `pattern_scaling_forecast` unwired, uncalibrated, no ERF series or MMM pattern.
 
 ---
@@ -1268,28 +1280,32 @@ as on data.
 
 | Tier | Specced diagnostics | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|
-| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras | 10 — I.2a, I.3b, I.4a, I.4b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 7 — I.1 (window), I.2b (**identity reversed — fails every model**), I.3a (annual vs monthly anomalies), I.5a (smoothed index / wrong experiment), I.5b (mean vs integrated power), I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
-| II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | ESS correction; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval; climatology-baseline row; static leaderboard | empirical (not fair) CRPS; single-member scoring; Gaussian consistency test without σ_int; pooled MME; Climatology/Pinatubo window 1990–2020; sign-only Pinatubo & hemispheric asymmetry; TXx reference still a monthly placeholder; sea-ice area not extent; single obs product per variable | reference-EOF fair-CRPS scoring; block bootstrap; obs-uncertainty draws; CMIP6-median skill score; realized warming level & blending; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval)** |
+| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras | 14 — I.1, I.2a, I.2b, I.3a, I.3b, I.4a, I.4b, I.5b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 3 — I.5a (statistic ✅, but run on historical cubes not ≥ 100 yr piControl), I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
+| II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | ESS correction; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval; climatology-baseline row on the correct 1985–2014 pre-test window; static leaderboard | empirical (not fair) CRPS; single-member scoring; Gaussian consistency test without σ_int; pooled MME; sign-only Pinatubo & hemispheric asymmetry; TXx reference still a monthly placeholder; sea-ice area not extent; single obs product per variable | reference-EOF fair-CRPS scoring; block bootstrap; obs-uncertainty draws; CMIP6-median skill score; realized warming level & blending; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval)** |
 | III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | monsoon gate | site-consistency fraction for the three periods — disconnected from the pipeline's NetCDFs, tas-only, DA products instead of raw proxies; LE-spread functions | fair CRPS with block pseudo-members; raw SST proxy compilations; perfect-model suite and data |
 
 **Cross-cutting discrepancies (paper vs current `climatebench2/` code) — complete list,
 2026-09-14:**
-1. **I.2b atmospheric energy identity reversed in code** — `physics.atmospheric_energy_residual`
-   returns `|LP − (Q_rad + SHF)|`; the paper's `|Q_rad − (LP + SHF)|` differs by
-   `2·SHF ≈ 40 W/m²`, so the 2 W/m² gate fails every model. **Blocking.**
-2. I.1 evaluated over the whole supplied piControl, not its last 100 yr; `thresholds.yml`
-   still carries `min_years: 500 # TODO`.
-3. I.3a regresses annual means, paper says deseasonalised monthly anomalies.
-4. I.5a σ is of the 3-month-smoothed `Nino34` index (paper: monthly anomalies), and the
-   variability suite is fed the historical cubes (36 yr by default) rather than ≥ 100 yr
-   piControl.
-5. I.5b band-power ratio uses mean PSD per band instead of integrated power — the code's
-   ratio is ≈ 1.4× the paper's (threshold 1.5 ≙ 1.07).
+1. ~~**I.2b atmospheric energy identity reversed in code**~~ — **DONE (2026-09-14, gap
+   item 1):** `physics.atmospheric_energy_residual` returns the paper's
+   `|Q_rad − (LP + SHF)|` with `Q_rad = sfc_net_rad − TOA_net`.
+2. ~~I.1 evaluated over the whole supplied piControl~~ — **DONE (2026-09-14):** both
+   criteria use the last `tier1.energy_balance.evaluation_years = 100` annual values
+   (the stale `min_years: 500 # TODO` is gone); shorter controls are used whole with a
+   warning and reported through `n_years`.
+3. ~~I.3a regresses annual means~~ — **DONE (2026-09-14):** deseasonalised monthly
+   anomalies (`anomalies(period="month")`) for both `rlutcs` and `ts`.
+4. I.5a — σ is now of the **unsmoothed** monthly index (`_rolling_window_length = 1`,
+   **done** 2026-09-14); *still open:* the variability suite is fed the historical cubes
+   (36 yr by default) rather than ≥ 100 yr piControl (CLI work package).
+5. ~~I.5b band-power ratio uses mean PSD per band~~ — **DONE (2026-09-14):** integrated
+   power (`np.trapezoid`) per band, so the 1.5 bound means what the paper says.
 6. I.5c implements the superseded scalar criterion (ta500 / Maritime-Continent sign
    checks); the pattern-correlation test and its HadISST/ERA5/GPCP reference patterns do
    not exist; four stale keys in `thresholds.yml`.
-7. I.6a emits both the `> 1` and the `[1.2, 1.6]` checks; only the strict range is the
-   criterion now (`required_min` key stale).
+7. ~~I.6a emits both the `> 1` and the `[1.2, 1.6]` checks~~ — **DONE (2026-09-14, gap
+   item 0):** one strict-range check `land_ocean_warming` on
+   `tier1.land_ocean_warming.range`; `required_min`/`expected_range` removed.
 8. I.7 "2015" = last-30-yr mean (paper: decadal mean centred on 2015); no parallel-segment
    drift removal. Paper-side: App. B.8 writes `F = ΔN + λΔT` with a negative Gregory λ —
    sign should read `ΔN − λΔT` (code is right).
@@ -1299,8 +1315,10 @@ as on data.
     pooled mixture. The paper itself says "unweighted mixture" (§5.4) and "median E"
     (Fig. 4 caption) — resolve in the manuscript, then implement median-of-per-model
     with leave-one-out.
-11. `tier2.climatology_baseline_period = [1990, 2020]` (Climatology baseline **and**
-    Pinatubo reference) overlaps the reserved test window; the paper says 1985–2014.
+11. ~~`tier2.climatology_baseline_period = [1990, 2020]` overlaps the reserved test
+    window~~ — **DONE (2026-09-14, gap item 1):** `[1985, 2014]` for both the
+    Climatology baseline and the Pinatubo reference; `baselines.py` docstrings follow,
+    and the hemispheric-asymmetry era is now `tier2.hemispheric_asymmetry.era`.
 12. Aggregated-diagnostic scoring is the old model-variability-EOF z-test
     (`field_consistency`, unwired); the paper wants reference-EOF fair CRPS with
     standardised coefficients and a block bootstrap.
@@ -1341,7 +1359,7 @@ as on data.
 keeping CB2 a thin protocol wrapper (thresholds, scoring, baselines, leaderboard) over
 ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
 
-0. ~~**Sync with ClimateEval `main`**~~ — **DONE 2026-09-14 (this commit).** Pin bumped
+0. ~~**Sync with ClimateEval `main`**~~ — **DONE 2026-09-14 (`b7e8593`).** Pin bumped
    `4de03ed → b0e941c`; `LandOceanWarmingGate`, `ArcticAmplificationGate` and
    `MeridionalHeatTransportGate` are now `SupersetExperimentMixin`/`GateMixin` wrappers
    over `climateeval.diags.complex.{LandOceanWarmingRatio, ArcticAmplification,
@@ -1353,10 +1371,14 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    experiments moved into the shared `SupersetExperimentMixin`, so `ECSGate` gets it
    too. This was the first concrete "retire as parity is reached" step of
    delineation-plan §7.
-1. **Fix the gates that are wrong as written** (hours): I.2b identity (#1); I.1
-   last-100-yr slice (#2); I.5b integrated power (#5); I.6a strict range (#7);
-   `thresholds.yml` clean-up — `min_years` TODO, `required_min`, the four teleconnection
-   keys, `climatology_baseline_period → [1985, 2014]` (#11).
+1. ~~**Fix the gates that are wrong as written**~~ — **DONE 2026-09-14 (this commit).**
+   I.2b identity (#1); I.1 last-100-yr slice with `evaluation_years` (#2); I.3a monthly
+   anomalies (#3); I.5a unsmoothed index (#4, statistic only); I.5b integrated power
+   (#5); `thresholds.yml` clean-up — `min_years` TODO and `required_min`/`expected_range`
+   gone (the latter with gap item 0, #7), `climatology_baseline_period → [1985, 2014]`
+   and the new `tier2.hemispheric_asymmetry.era` (#11). *Still open here:* the four
+   stale ENSO-teleconnection keys, which go with the I.5c rewrite (#6, item 5), and the
+   aerosol-forcing window (#8, item 5).
 2. **Entry-ticket semantics** (a day): tag every gate Required / Extended / extra
    (suite kwarg or `thresholds.yml`), add pass/fail/N-A, compute `ALL` over Required
    only, and move `pinatubo`/`hemispheric_asymmetry` out of the Tier I suite (#17).

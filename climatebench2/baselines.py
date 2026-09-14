@@ -2,8 +2,10 @@
 
 Every submission's Tier II score is reported relative to:
 
-(i)   **Climatology persistence** — forecast = the 1990–2020 (monthly or
-      annual) climatology of the observations, held fixed.
+(i)   **Climatology persistence** — forecast = the 1985–2014 (monthly or
+      annual) climatology of the observations, held fixed. The window is the
+      pre-test baseline `tier2.climatology_baseline_period`; it deliberately
+      stops in 2014 so it cannot overlap the reserved post-2015 test period.
 (ii)  **Pattern scaling** — ΔT_global(t) from a two-layer energy-balance
       model driven by an ERF series, times the CMIP6 multi-model-mean
       normalized warming pattern, plus the climatology.
@@ -33,8 +35,8 @@ def climatology_forecast(
     """Baseline (i): persistence of the reference climatology.
 
     ``reference_series``: the observed series (monthly or annual) from which
-    the climatology is taken — restricted to ``baseline_slice`` (e.g. the
-    1990–2020 window) if given. Returns a forecast of length ``n_time``:
+    the climatology is taken — restricted to ``baseline_slice`` (the
+    1985–2014 pre-test window) if given. Returns a forecast of length ``n_time``:
     the repeating 12-month climatology (``monthly=True``) or the constant
     mean (``monthly=False``).
     """

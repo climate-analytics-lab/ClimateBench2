@@ -15,7 +15,9 @@ tier1:
   energy_balance:
     mean_toa_net_abs_max: 0.1          # W m-2, |mean(N)|
     drift_10yr_running_abs_max: 0.02   # W m-2 / decade, drift of 10-yr running mean
-    min_years: 500                     # TODO: paper internally inconsistent (100 vs 500)
+    evaluation_years: 100              # both criteria use the LAST 100 yr of piControl
+                                       # (>=500 yr requested; shorter records are used
+                                       # whole, with the length noted via `n_years`)
 
   # I.2a Water budget closure
   water_budget:
@@ -108,18 +110,23 @@ tier1:
 tier2:
   # Scoring window and baselines (metrics_reference.md Tier II preamble)
   observation_period_start: 2015
-  climatology_baseline_period: [1990, 2020]
+  # Pre-test baseline: 1985–2014 (NOT 1990–2020, which overlapped the reserved
+  # post-2015 test window). Used by the Climatology baseline row and as the
+  # Pinatubo reference climatology.
+  climatology_baseline_period: [1985, 2014]
   # Regime (a): CRPS with effective-sample-size correction
   crps_ess_correction: true
   # Regime (b): ensemble-consistency test
   consistency_p_value: 0.05            # two-sided
   eof_modes: 5                         # spatial fields: leading EOFs tested
-  # Pinatubo response (1991-07 .. 1993-12 vs 1990–2020 climatology)
+  # Pinatubo response (1991-07 .. 1993-12 vs the climatology_baseline_period
+  # climatology above, i.e. 1985–2014)
   pinatubo:
     rsds_anomaly_max: 0.0              # dimming: global-mean anomaly < 0
     tas_anomaly_max: 0.0               # cooling: global-mean anomaly < 0
-  # Aerosol-era hemispheric asymmetry (1950–1985)
+  # Aerosol-era hemispheric asymmetry
   hemispheric_asymmetry:
+    era: [1950, 1985]                  # the aerosol era the trends are taken over
     nh_minus_sh_trend_max: 0.0         # NH warming suppressed vs SH
     itcz_shift_max: 0.0                # southward ITCZ migration (°/decade)
   # Two-layer EBM parameters for the pattern-scaling baseline (Geoffroy 2013

@@ -51,6 +51,19 @@
       var_name: rtnt
       frequency: mon
       reference_data: climateeval.data.CERESEBAF
+    # Clear-sky TOA (paper Tier II core: "TOA fluxes, all- AND clear-sky").
+    # CERES-EBAF carries both; separating clear-sky from all-sky is what
+    # isolates the cloud-radiative contribution to a flux error.
+    - id: rsutcs
+      var_name: rsutcs
+      frequency: mon
+      reference_data: climateeval.data.CERESEBAF
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+    - id: rlutcs
+      var_name: rlutcs
+      frequency: mon
+      reference_data: climateeval.data.CERESEBAF
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
     - id: prw
       var_name: prw
       frequency: mon
@@ -58,6 +71,19 @@
       other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
     - id: clt
       var_name: clt
+      frequency: mon
+      reference_data: climateeval.data.ESACCICloud
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+    # Condensed-water paths (paper Tier II extended: "cloud properties —
+    # LWP, fraction"). ESACCI-CLOUD CMORizes clwvi/clivi/lwp alongside clt.
+    # Cloud-top temperature/pressure remain missing (no DataSource).
+    - id: clwvi
+      var_name: clwvi
+      frequency: mon
+      reference_data: climateeval.data.ESACCICloud
+      other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
+    - id: clivi
+      var_name: clivi
       frequency: mon
       reference_data: climateeval.data.ESACCICloud
       other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]
@@ -118,6 +144,10 @@
       frequency: mon
       reference_data: climateeval.data.EN4
       other_data: [climateeval.data.IAP]
+    # The paper names both layers: 0-2000 m (the standard OHC index) and
+    # 0-100 m (the mixed layer, where the seasonal and interannual signal
+    # lives). Both are annual global series with an EN4/IAP reference, so the
+    # scoring pass picks them up as regime (a) like any other time series.
     - <<: *ohc
       id: phcint_2000m
       additional_preprocessors:
@@ -125,8 +155,52 @@
           z_min: 0.0
           z_max: 2000.0
           interval_bounds: left_closed
+    - <<: *ohc
+      id: phcint_100m
+      additional_preprocessors:
+        esmvalcore.preprocessor.extract_volume:
+          z_min: 0.0
+          z_max: 100.0
+          interval_bounds: left_closed
 
 # --- Sea ice ---------------------------------------------------------------
+#
+# ⚠ These rows are sea-ice AREA (Σ siconc·A), which is what ClimateEval's
+# SeaIceArea* diagnostics compute. The protocol scores sea-ice EXTENT
+# (Σ A where siconc > 15 %) — a different number, systematically larger and
+# less sensitive to concentration biases. ClimateEval PR #47
+# (https://github.com/climate-federation/ClimateEval/pull/47) adds the extent
+# variants; once it merges, the annual-series entry becomes the stanza below
+# and the deterministic/CRPS rows change meaning, so it stays COMMENTED OUT
+# against the pinned `main` rather than silently mislabelling area as extent.
+#
+# - name: sea_ice_extent_minimum
+#   diagnostic: climateeval.diags.simple.SeaIceExtentTimeSeries  # PR #47
+#   variables:
+#     - id: siconc_nh_sep_extent
+#       var_name: siconc
+#       frequency: mon
+#       min_lat: 30.0
+#       max_lat: 90.0
+#       diagnostic_kwargs:
+#         extent_threshold: 15.0        # % concentration, the 15 % definition
+#       additional_preprocessors:
+#         esmvalcore.preprocessor.extract_month:
+#           month: 9
+#       reference_data: climateeval.data.OSI450NH
+#       other_data: [climateeval.data.HadISST]
+#     - id: siconc_sh_feb_extent
+#       var_name: siconc
+#       frequency: mon
+#       min_lat: -90.0
+#       max_lat: -30.0
+#       diagnostic_kwargs:
+#         extent_threshold: 15.0
+#       additional_preprocessors:
+#         esmvalcore.preprocessor.extract_month:
+#           month: 2
+#       reference_data: climateeval.data.OSI450SH
+#       other_data: [climateeval.data.HadISST, climateeval.data.NSIDCG02202SH]
 
 - name: sea_ice_annual_cycle
   diagnostic: climateeval.diags.simple.SeaIceAreaAnnualCycle

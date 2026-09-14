@@ -129,6 +129,12 @@ _SKIP_SCHEMAS = {"main", "memory", "information_schema", "temp", "system", "pg_c
 #: raw_output columns that are not variables.
 _META_COLUMNS = {"data_id", "data_type", "time"}
 
+#: ``Diagnostic._get_raw_output_table`` builds its frame with
+#: ``as_data_frame(cube).reset_index()``, so a *scalar* cube (no coordinates)
+#: contributes an anonymous index column — ``level_0`` — carrying 0.0 for
+#: every source. It is not a variable and must never be scored.
+_INDEX_COLUMN_RE = re.compile(r"^(index|level_\d+)$")
+
 #: Columns that identify an EOF-coefficient raw_output table (regime b).
 _EOF_COLUMNS = {"mode", "coefficient", "var_id"}
 
@@ -1038,15 +1044,18 @@ def _scalar_consistency_row(
 ) -> dict[str, Any] | None:
     """Regime (c) for an aggregated scalar (metrics_reference.md §II.1)."""
     sigma_int = _scalar_sigma_internal(sigma_internal, var_id)
-    if values.size < _MIN_MEMBERS and sigma_int <= 0.0 and sigma_obs <= 0.0:
-        return None  # no spread at all: the test would divide by zero
-    result = scoring.ensemble_consistency(
-        values,
-        obs,
-        sigma_internal=sigma_int,
-        sigma_obs=sigma_obs,
-        p_threshold=float(get_threshold("tier2.consistency_p_value")),
-    )
+    try:
+        result = scoring.ensemble_consistency(
+            values,
+            obs,
+            sigma_internal=sigma_int,
+            sigma_obs=sigma_obs,
+            p_threshold=float(get_threshold("tier2.consistency_p_value")),
+        )
+    except ValueError:
+        # No ensemble spread and no σ terms: the test would divide by zero,
+        # so there is nothing to say rather than something false.
+        return None
     row = _empty_row(data_id, data_type, f"{var_id}{SCALAR_CONSISTENCY_SUFFIX}", "")
     row.update(
         value=float(obs),
@@ -1088,7 +1097,9 @@ def score_scalar_output(  # noqa: C901
     var_columns = [
         c
         for c in raw_df.columns
-        if c not in _META_COLUMNS and not c.endswith(SCALAR_SIGMA_OBS_SUFFIX)
+        if c not in _META_COLUMNS
+        and not c.endswith(SCALAR_SIGMA_OBS_SUFFIX)
+        and not _INDEX_COLUMN_RE.match(str(c))
     ]
     n_draws = int(get_threshold("tier2.obs_uncertainty.n_draws"))
     seed = int(get_threshold("tier2.obs_uncertainty.seed"))

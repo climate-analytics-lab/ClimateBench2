@@ -112,6 +112,40 @@ def test_render_html_gate_matrix_and_skill(synthetic_db) -> None:  # noqa: ANN00
     assert "http" not in html.split("</style>")[1]
 
 
+def test_skill_table_badges_and_orders_by_window(synthetic_db) -> None:  # noqa: ANN001
+    """Paper §5.6: held-out entries first, every column labelled."""
+    from climatebench2.leaderboard import variable_windows
+
+    scores = build_scores([synthetic_db])
+    # A second variable, scored in-sample (a historical-period climatology)
+    in_sample = scores.crps[scores.crps["data_id"] == "GoodModel"].copy()
+    in_sample["var_id"] = "a_seasonal_cycle"  # sorts before "tas" alphabetically
+    in_sample["window"] = "in-sample"
+    scores.crps["window"] = "held-out"
+    scores.crps = pd.concat([scores.crps, in_sample], ignore_index=True)
+
+    assert variable_windows(scores.crps) == {
+        "tas": "held-out",
+        "a_seasonal_cycle": "in-sample",
+    }
+    html = render_html(scores)
+    assert "badge held'>held-out" in html
+    assert "badge insample'>in-sample" in html
+    # Held-out first, despite the alphabetical order of the names
+    assert html.index(">tas<") < html.index(">a_seasonal_cycle<")
+
+
+def test_skill_table_without_a_window_column_defaults_to_held_out(  # noqa: ANN001
+    synthetic_db,
+) -> None:
+    """A database written before the pass wrote the label still renders."""
+    from climatebench2.leaderboard import variable_windows
+
+    scores = build_scores([synthetic_db])
+    assert variable_windows(scores.crps) == {}
+    assert "held-out" in render_html(scores)
+
+
 def test_render_html_clips_the_displayed_skill(synthetic_db) -> None:  # noqa: ANN001
     """S is unbounded below; the paper clips the display at -1."""
     scores = build_scores([synthetic_db])

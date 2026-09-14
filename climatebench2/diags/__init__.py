@@ -56,6 +56,7 @@ from climatebench2.diags.tier1_extended import (
 from climatebench2.diags.tier2_diagnostics import (
     HemisphericAsymmetryGate,
     PinatuboResponseGate,
+    RealizedWarmingLevel,
 )
 from climatebench2.diags.tier3_paleo import (
     MidHoloceneMonsoonGate,
@@ -100,6 +101,7 @@ __all__ = [
     "PaleoProxyConsistencyGate",
     "PinatuboResponseGate",
     "PrecipBuoyancyGate",
+    "RealizedWarmingLevel",
     "ReferenceBaselineRecord",
     "ReferenceEOFProjection",
     "ScoredAnnualMaxTimeSeries",

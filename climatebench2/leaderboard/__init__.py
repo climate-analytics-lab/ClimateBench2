@@ -19,7 +19,10 @@ protocol's presentation:
   The scores come from :mod:`climatebench2.scoring_pass`, which
   ``climatebench2 score`` runs after the suites (and ``leaderboard
   --rescore`` re-runs), so a database that has not been through the pass
-  shows no Tier II numbers.
+  shows no Tier II numbers. Columns are ordered **held-out first** and
+  badged with the ``window`` label the pass writes (paper §5.6): held-out
+  entries are scored against observations from the reserved post-2015 test
+  period, in-sample ones against the historical record.
 - **Tier III** — paleo proxy-site consistency fractions and the
   mid-Holocene monsoon gate.
 
@@ -34,7 +37,12 @@ import html as html_module
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from climatebench2.scoring_pass import CLIMATOLOGY_DATA_ID, SCORER
+from climatebench2.scoring_pass import (
+    CLIMATOLOGY_DATA_ID,
+    SCORER,
+    WINDOW_HELD_OUT,
+    WINDOW_IN_SAMPLE,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -232,6 +240,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 .baseline{font-style:italic;color:#555}
 .beats{color:#1e7e34;font-weight:600}
 .loses{color:#c0392b}
+.badge{display:inline-block;padding:0 .35rem;border-radius:.7rem;font-weight:600;
+       font-size:.72rem;letter-spacing:.02em}
+.badge.held{background:#e8eef7;color:#205493;border:1px solid #c3d3e8}
+.badge.insample{background:#f4f0e6;color:#8a6d1f;border:1px solid #e3d9bd}
 footer{margin-top:3rem;color:#777;font-size:.8rem;border-top:1px solid #ddd;
        padding-top:.6rem}
 """
@@ -429,6 +441,34 @@ def _event_flags_html(gates: pd.DataFrame) -> str:
 #: whole column).
 SKILL_DISPLAY_FLOOR = -1.0
 
+#: Order of the scorecard's columns: the paper's §5.6 rule is that the
+#: **held-out** entries — those scored against observations from the reserved
+#: post-2015 test period — come first, with the in-sample ones (climatologies
+#: and event diagnostics over the historical record the models were developed
+#: against) reported after them and clearly marked.
+_WINDOW_ORDER = {WINDOW_HELD_OUT: 0, WINDOW_IN_SAMPLE: 1}
+
+
+def variable_windows(crps: pd.DataFrame) -> dict[str, str]:
+    """``var_id -> held-out | in-sample`` from the pass's ``window`` column.
+
+    A variable scored by several diagnostics keeps the first label seen; a
+    database written before the pass wrote the column falls back to
+    ``held-out``, which is the protocol's default (``tier2.window_labels``).
+    """
+    labels: dict[str, str] = {}
+    if crps.empty or "window" not in crps.columns:
+        return labels
+    for var_id, window in zip(crps["var_id"], crps["window"], strict=True):
+        if isinstance(window, str) and window and str(var_id) not in labels:
+            labels[str(var_id)] = window
+    return labels
+
+
+def _window_badge(label: str) -> str:
+    cls = "held" if label == WINDOW_HELD_OUT else "insample"
+    return f"<br><small class='badge {cls}'>{_esc(label)}</small>"
+
 
 def _number(value: object) -> float:
     try:
@@ -503,7 +543,12 @@ def _crps_table_html(crps: pd.DataFrame) -> str:
             3,
         ):
             records[key] = row
-    variables = sorted({var for (_, var) in records})
+    # Held-out entries first (paper §5.6), each column badged with its label.
+    windows = variable_windows(crps)
+    variables = sorted(
+        {var for (_, var) in records},
+        key=lambda v: (_WINDOW_ORDER.get(windows.get(v, WINDOW_HELD_OUT), 0), v),
+    )
 
     def data_type(model: str) -> str:
         return min(
@@ -521,7 +566,10 @@ def _crps_table_html(crps: pd.DataFrame) -> str:
         if (CLIMATOLOGY_DATA_ID, var) in records
     }
 
-    header = "".join(f"<th>{_esc(v)}</th>" for v in variables)
+    header = "".join(
+        f"<th>{_esc(v)}{_window_badge(windows.get(v, WINDOW_HELD_OUT))}</th>"
+        for v in variables
+    )
     body = []
     for model in models:
         cells = []
@@ -566,6 +614,13 @@ def _crps_table_html(crps: pd.DataFrame) -> str:
         "size. <strong>n/a</strong> marks a model the protocol cannot score — "
         "most often a single-member submission, for which fair CRPS is "
         "undefined.</p>"
+        "<p>Columns are ordered <strong>held-out first</strong> and each is "
+        "badged: <span class='badge held'>held-out</span> is scored against "
+        "observations from the reserved post-2015 test period, "
+        "<span class='badge insample'>in-sample</span> against the historical "
+        "record the models were developed with — a climatology, a seasonal or "
+        "diurnal cycle, an extremes index or a historical event. Only the "
+        "held-out entries are out-of-sample evidence.</p>"
         f"<table><thead><tr><th>Model</th>{header}</tr></thead>"
         f"<tbody>{''.join(body)}</tbody></table>"
     )
@@ -579,6 +634,7 @@ def _consistency_table_html(consistency: pd.DataFrame) -> str:
     cols = [
         "data_id",
         "var_id",
+        "window",
         "value",
         "z",
         "p_value",
@@ -588,7 +644,14 @@ def _consistency_table_html(consistency: pd.DataFrame) -> str:
         "passes",
     ]
     cols = [c for c in cols if c in consistency.columns]
+    # Held-out consistency statements first, as in the skill table.
     sub = consistency[cols]
+    if "window" in cols:
+        sub = sub.assign(
+            _order=[
+                _WINDOW_ORDER.get(str(w), 0) for w in sub["window"]
+            ],
+        ).sort_values(["_order", "var_id", "data_id"], kind="stable")[cols]
     header = "".join(f"<th>{_esc(c)}</th>" for c in cols)
     rows = []
     for _, row in sub.iterrows():
@@ -598,6 +661,9 @@ def _consistency_table_html(consistency: pd.DataFrame) -> str:
             if c == "passes":
                 cls = "pass" if val >= 1.0 else "fail"
                 cells.append(f"<td class='{cls}'>{'✓' if val >= 1.0 else '✗'}</td>")
+            elif c == "window" and isinstance(val, str) and val:
+                badge = "held" if val == WINDOW_HELD_OUT else "insample"
+                cells.append(f"<td><span class='badge {badge}'>{_esc(val)}</span></td>")
             elif isinstance(val, float) and not pd.isna(val):
                 cells.append(f"<td class='num'>{val:.4g}</td>")
             else:
@@ -606,7 +672,9 @@ def _consistency_table_html(consistency: pd.DataFrame) -> str:
     return (
         "<h2>Tier II — ensemble-consistency tests</h2>"
         "<p>Regime (c), a reported diagnostic and falsification check — never "
-        "part of the entry ticket or of the headline skill. The observed "
+        "part of the entry ticket or of the headline skill — and the primary "
+        "form the protocol asks for the realized warming level in (§II.1). "
+        "Held-out statements come first. The observed "
         "statistic is tested against the model's own ensemble, with "
         "σ_total² = var(members) + σ_int² + σ_obs²: σ_int from the piControl "
         "chunks of the <code>internal_variability</code> diagnostic (0 when "

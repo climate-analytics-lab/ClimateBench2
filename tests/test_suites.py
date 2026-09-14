@@ -95,12 +95,38 @@ def test_tier2_event_gates_moved_out_of_the_tier1_suite() -> None:
     assert "hemispheric_asymmetry" not in tier1
 
     events = Suite(_resolve_suite("ClimateBench2_TierII_events"))._get_diagnostics()
-    assert set(events) == {"pinatubo", "hemispheric_asymmetry"}
+    assert set(events) == {
+        "realized_warming_level",
+        "pinatubo",
+        "hemispheric_asymmetry",
+    }
     for diag in events.values():
         assert diag._required_data_keys == ("historical",)
         for check in diag._gate_checks:
             assert check.requirement == "diagnostic"
     assert "ClimateBench2_TierII_events" in DEFAULT_SUITES
+
+
+def test_realized_warming_level_emits_no_gate_row() -> None:
+    """§II.1's primary scalar is scored, not gated: no pass/fail anywhere."""
+    from climatebench2.diags import RealizedWarmingLevel
+    from climatebench2.diags.pass_fail import gate_requirements
+
+    assert RealizedWarmingLevel._gate_checks == ()
+    assert RealizedWarmingLevel.requirement == "diagnostic"
+    assert "gmst_warming_level" not in gate_requirements()
+
+
+def test_tier2_suite_covers_the_protocol_variables() -> None:
+    """Clear-sky TOA, condensed-water paths and both OHC layers are wired."""
+    suite = Suite(_resolve_suite("ClimateBench2_TierII"))._get_diagnostics()
+    core = {v.id for v in suite["annual_mean_timeseries"]._variables}
+    assert {"rsutcs", "rlutcs", "clwvi", "clivi"} <= core
+    # ... and every one of them carries a reference, or the pass cannot score
+    referenced = {v.id for v in suite["annual_mean_timeseries"]._reference_data}
+    assert core <= referenced
+    ohc = {v.id for v in suite["ohc"]._variables}
+    assert {"phcint_total", "phcint_2000m", "phcint_100m"} <= ohc
 
 
 def test_complex_gates_accept_the_not_applicable_kwarg() -> None:

@@ -1,17 +1,32 @@
-# ClimateBench v2 — Tier II: aggregated event diagnostics (historical).
-# Spec: docs/metrics_reference.md §II.1 ("Pinatubo response", "Hemispheric
-# asymmetry"); bounds: climatebench2/thresholds.yml.
+# ClimateBench v2 — Tier II: aggregated scalar diagnostics (historical).
+# Spec: docs/metrics_reference.md §II.1 ("GMST warming rate", "Pinatubo
+# response", "Hemispheric asymmetry"); bounds: climatebench2/thresholds.yml.
 #
-# These are Tier II *aggregated diagnostics* whose current implementation is a
-# pair of sign flags emitted through the Tier I gate machinery — they are NOT
-# part of the Tier I entry ticket, which is why they live here rather than in
-# ClimateBench2_TierI (their thresholds.yml blocks carry
-# `requirement: diagnostic`, and the leaderboard lists them under Tier II).
+# These are Tier II *aggregated diagnostics*: one scalar per ensemble member,
+# scored by climatebench2.scoring_pass with fair CRPS against the observed
+# value plus the regime-(c) consistency test. They are NOT part of the Tier I
+# entry ticket, which is why they live here rather than in
+# ClimateBench2_TierI; the sign flags Pinatubo and hemispheric asymmetry also
+# emit are tagged `requirement: diagnostic` in thresholds.yml, so the
+# leaderboard lists them under Tier II and the entry ticket ignores them.
 #
-# Data shape: an experiment dict with the `historical` key — the CLI supplies
-# the model's own output in FULL (no --timerange cut), because the events sit
-# in 1950–1993, outside the Tier II test window. Override with
-# `climatebench2 score MODEL --experiment historical=DIR`.
+# Data shape: an experiment dict with the `historical` key. The suite is
+# `per_member` (`_cli.SUITE_REGISTRY`), so it runs ONCE PER ENSEMBLE MEMBER
+# with that member's own output loaded in FULL (no --timerange cut) — the
+# scalars sit in 1950–1993 and from 2015 to the record end, and the fair CRPS
+# needs every member. `--experiment historical=DIR` pins one record for all
+# of them instead, collapsing the runs to one.
+#
+# Observations enter through ClimateEval DataSources: HadCRUT5 `tas`,
+# corrected to a surface-air-temperature basis with
+# `tier2.gsat_blending_factor`, is the reference for the warming level, the
+# two GMST trends, the Pinatubo cooling and the NH−SH trend difference. The
+# Pinatubo dimming (`rsds`, no BSRN DataSource) and the ITCZ shift (GPCP
+# starts in 1979, after the aerosol era) stay model-only sign flags.
+
+- name: realized_warming_level        # II.1 — the primary test-window scalar
+  diagnostic: climatebench2.diags.RealizedWarmingLevel
+  additional_diagnostic_kwargs: {}
 
 - name: pinatubo                      # II.1 — historical (1991-07..1993-12)
   diagnostic: climatebench2.diags.PinatuboResponseGate

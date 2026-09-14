@@ -14,6 +14,12 @@ registry (`_cli.SUITE_REGISTRY`): experiments always load in full, the
 variability suite takes `picontrol`, and the Tier II suites take the model's
 cubes over the post-2015 test window (`tier2.test_window_start`), once per
 ensemble member (`--member LABEL=PATH`, or DRS auto-discovery).
+`SuiteSpec.per_member` is what decides that, and it is set for
+`ClimateBench2_TierII_events` too: its aggregated scalars are scored *across*
+the ensemble, so the suite runs once per member with **that member's own
+record** under the `historical` key (an explicit `--experiment historical=DIR`
+pins one record for every member instead, collapsing the runs to one). Tier I
+and Tier III stay once-per-model — a gate is a property of the model.
 CB2 complex diagnostics accept a superset of their required keys and skip
 (with a warning) when their experiments are absent
 (`climatebench2.diags.SupersetExperimentMixin`) — including the thin gate
@@ -26,9 +32,9 @@ protocol constants from `thresholds.yml`, so their suite entries keep
 |---|---|---|
 | `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | 17 physical-consistency gates: ECS, energy balance, closures, clear-sky β, precip–buoyancy, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ + the Bjerknes and C–C extras — **plus** `internal_variability`, which is not a gate: it reports the piControl σ_int the Tier II consistency test needs, and rides here because this is where the control is loaded in full |
 | `ClimateBench2_TierI_variability` | cubes (monthly `tos`) | ENSO amplitude + spectral-shape gates |
-| `ClimateBench2_TierII` | cubes (monthly) | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4, plus `reference_baseline` / `sst_baseline` (the reference's pre-test 1985–2014 record) and `eof_projection` / `sst_eof_projection` (the regime-(b) coefficients on the reference's fixed pre-2015 EOF basis) |
+| `ClimateBench2_TierII` | cubes (monthly) | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4 — `tas`, `pr`, all-sky **and clear-sky** TOA (`rsut`/`rlut`/`rtnt`/`rsutcs`/`rlutcs`), `prw`, clouds (`clt`/`clwvi`/`clivi`), SST, sea ice, OHC (total, 0–2000 m **and 0–100 m**) — plus `reference_baseline` / `sst_baseline` (the reference's pre-test 1985–2014 record) and `eof_projection` / `sst_eof_projection` (the regime-(b) coefficients on the reference's fixed pre-2015 EOF basis) |
 | `ClimateBench2_TierII_daily` | cubes (daily/hourly) | TXx block maxima (daily `tasmax`), pr intensity PDF, diurnal cycle |
-| `ClimateBench2_TierII_events` | experiment dict (`historical`) | Pinatubo response and aerosol-era hemispheric asymmetry — Tier II aggregated diagnostics, reported but never part of the Tier I entry ticket |
+| `ClimateBench2_TierII_events` | experiment dict (`historical`), **once per ensemble member** | The Tier II aggregated scalars of §II.1 — realized warming level (the protocol's primary test-window statistic) and the two GMST trends, the Pinatubo response, the aerosol-era hemispheric asymmetry. Reported and *scored*, never part of the Tier I entry ticket |
 | `ClimateBench2_TierIII` | experiment dict (`picontrol` + `midholocene`/`lgm`/`lig127k`) | Mid-Holocene monsoon gate + proxy-site consistency per period |
 
 The `Scored*` diagnostics named by the Tier II suites (and `TrendConsistency`,
@@ -57,6 +63,26 @@ by loading their reference through a copy of the `Variable` carrying a different
 1985–2014 series the Climatology baseline is built from, and `eof_projection`
 builds the regime-(b) basis from the reference's pre-2015 monthly anomalies. Both
 skip a reference that does not cover the window, with a logged reason.
+
+The **Tier II events** suite also fetches observations, and unlike the Tier I
+gates it emits them as `reference` rows so the scoring pass can score against
+them (`diags/tier2_diagnostics.py::ObservedScalarMixin`): HadCRUT5 `tas`,
+corrected from its blended land-air/SST basis to a surface-air-temperature one
+with `tier2.gsat_blending_factor` and carrying
+`tier2.gsat_blending_relative_uncertainty` of the change as the scalar's
+`_sigma_obs`. Two of its scalars have **no** observational counterpart and stay
+model-only sign flags, with the reason recorded: the Pinatubo `rsds` dimming
+(no BSRN or CERES-SYN DataSource) and the ITCZ shift (GPCP starts in 1979,
+after the 1950–1985 aerosol era). GISTEMP, Berkeley Earth and NOAAGlobalTemp —
+the paper's other three GMST products — have no ClimateEval DataSource either,
+so `tas` has no inter-product observational spread yet; the pass picks them up
+automatically once they land upstream.
+
+Sea ice is scored as **area** (Σ siconc·A), which is what ClimateEval's
+`SeaIceArea*` diagnostics compute; the protocol asks for **extent** (Σ A where
+siconc > 15 %). `ClimateBench2_TierII.yml` carries a commented-out
+`SeaIceExtentTimeSeries` stanza against ClimateEval PR #47 rather than
+mislabelling area as extent.
 
 Every threshold referenced by a diagnostic comes from
 [`../thresholds.yml`](../thresholds.yml) — never hard-coded, and that includes each

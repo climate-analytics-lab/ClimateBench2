@@ -21,7 +21,12 @@ Every diagnostic subclasses ``climateeval.diags._base.Diagnostic`` (usually via
 
 from __future__ import annotations
 
-from climatebench2.diags.pass_fail import ENSOGate, GateCheck, GateMixin
+from climatebench2.diags.pass_fail import (
+    ENSOGate,
+    GateCheck,
+    GateMixin,
+    SupersetExperimentMixin,
+)
 from climatebench2.diags.tier1_physics import (
     AerosolForcingGate,
     ArcticAmplificationGate,
@@ -86,5 +91,6 @@ __all__ = [
     "ScoredAnnualMaxTimeSeries",
     "ScoredAnnualMeanTimeSeries",
     "ScoredMonthlyMeanTimeSeries",
+    "SupersetExperimentMixin",
     "TrendConsistency",
 ]

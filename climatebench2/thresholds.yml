@@ -64,8 +64,7 @@ tier1:
 
   # I.6a Land–ocean warming ratio (abrupt-4xCO2, last 50 yr)
   land_ocean_warming:
-    required_min: 1.0
-    expected_range: [1.2, 1.6]
+    range: [1.2, 1.6]                  # strict pass criterion (paper 2026-09)
     equilibrium_years: 50
 
   # I.6b Arctic amplification (abrupt-4xCO2, last 50 yr)
@@ -91,6 +90,8 @@ tier1:
     amet_peak_range: [4.0, 5.0]        # PW
     amet_peak_lat: 45                  # °N (±5)
     amet_peak_lat_tolerance: 5
+    omet_search_band: [5, 30]          # °N band searched for the OMET peak
+    amet_search_band: [25, 55]         # °N band searched for the AMET peak
 
   # I.8b ITCZ–energy flux equator (12-month climatology)
   itcz_efe:

@@ -16,7 +16,11 @@ authors = [
 # For local development against a checkout instead:
 #   pip install -e ../ClimateEval && pip install -e . --no-deps
 dependencies = [
-    "climateeval @ git+https://github.com/climate-federation/ClimateEval.git@4de03ed9ba508ceb8465dabda73bf1c38d89c9c9",
+    # b0e941c (2026-09) — ClimateEval main with the merged CB2 upstream PR #35
+    # (LandOceanWarmingRatio / ArcticAmplification / MeridionalHeatTransport
+    # complex diagnostics; rsds/rsus/rlds/rlus/tasmax/tasmin in variables.yml),
+    # which the CB2 gate wrappers in diags/tier1_physics.py require.
+    "climateeval @ git+https://github.com/climate-federation/ClimateEval.git@b0e941c163ae71c929a61026bf6491f530a3e253",
     "pyyaml",
 ]
 

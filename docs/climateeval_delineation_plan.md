@@ -1,12 +1,15 @@
 # ClimateBench2 ⟷ ClimateEval — Delineation Plan
 
 > **Status (2026-09-14):** Phases 0–6 implemented, one commit per phase
-> (`git log --oneline --grep "Phase"`). The §7 upstream track has started to
-> pay off: ClimateEval `main` (`b0e941c`) merged CB2's PR #35
+> (`git log --oneline --grep "Phase"`). The §7 upstream track has paid off:
+> ClimateEval `main` (`b0e941c`) merged CB2's PR #35
 > (`LandOceanWarmingRatio`, `ArcticAmplification`, `MeridionalHeatTransport`
-> plus the `rsds`/`rsus`/`rlds`/`rlus`/`tasmax`/`tasmin` variables). The CB2
-> tests pass against it, so the next step is to bump the pin and replace the
-> three CB2 copies with gate wrappers (the `ECSGate` pattern). The full
+> plus the `rsds`/`rsus`/`rlds`/`rlus`/`tasmax`/`tasmin` variables), **the pin
+> in `pyproject.toml` is now `b0e941c`, and the three CB2 copies have been
+> replaced by thin gate wrappers** (the `ECSGate` pattern: a
+> `SupersetExperimentMixin`/`GateMixin` subclass of the upstream class that
+> only feeds `thresholds.yml` constants into its kwargs and gates its output
+> columns) — the first "retire as parity is reached" deletion. The full
 > re-audit of the implementation against the 2026-09 paper draft — including
 > what still blocks "run every suite against CMIP6" (fair CRPS, multi-member
 > ingestion, a post-2015 multi-member CMIP6 reference generator in ClimateEval,

@@ -4,15 +4,14 @@
 # (metrics_reference.md §II.1 "Daily tas extremes / pr intensity PDF" and
 # "Diurnal cycle"). Run against the model's daily/hourly cubes.
 #
-# Note: TXx proper wants daily `tasmax`, which is not yet in ClimateEval's
-# variable registry — `tas` (day) is used until the registry gains tasmax
-# (queued in the upstream PR alongside rsds/rsus/rlds/rlus).
+# TXx is the annual block maximum of daily `tasmax` (in ClimateEval's variable
+# registry since the merged upstream PR alongside rsds/rsus/rlds/rlus).
 
 - name: tas_annual_max
   diagnostic: climatebench2.diags.ScoredAnnualMaxTimeSeries
   variables:
-    - id: tas_txx
-      var_name: tas
+    - id: tasmax_txx
+      var_name: tasmax
       frequency: day
       reference_data: climateeval.data.ERA5Monthly   # placeholder ref; daily obs TBD
       other_data: [climateeval.data.CMIP6HistoricalR1I1P1F1]

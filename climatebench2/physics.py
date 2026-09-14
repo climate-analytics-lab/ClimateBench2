@@ -165,22 +165,6 @@ def meridional_transport(
     return out
 
 
-def nh_peak(
-    profile: np.ndarray,
-    lats: np.ndarray,
-    lat_min: float,
-    lat_max: float,
-) -> tuple[float, float]:
-    """(peak value, peak latitude) of a profile within a NH latitude band."""
-    profile = np.asarray(profile, dtype=float)
-    lats = np.asarray(lats, dtype=float)
-    mask = (lats >= lat_min) & (lats <= lat_max) & np.isfinite(profile)
-    if not mask.any():
-        return float("nan"), float("nan")
-    idx = np.nanargmax(np.where(mask, profile, -np.inf))
-    return float(profile[idx]), float(lats[idx])
-
-
 def zero_crossing_nearest_equator(
     profile: np.ndarray,
     lats: np.ndarray,

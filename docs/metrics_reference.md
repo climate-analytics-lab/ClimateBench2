@@ -19,9 +19,10 @@ against the `climatebench2/` package at commit `d6b0513` (migration Phase 6 of
 (2026-09), which now contains the merged CB2 upstream PR #35 (`LandOceanWarmingRatio`,
 `ArcticAmplification`, `MeridionalHeatTransport` complex diagnostics; the
 `rsds`/`rsus`/`rlds`/`rlus`/`tasmax`/`tasmin` variables), the ocean-transport
-diagnostics of #34, and the relative-score leaderboard of #37. `pyproject.toml` still
-pins ClimateEval at `4de03ed` (2026-07-06); the CB2 test suite (69 tests) passes
-unchanged against `b0e941c`, so the pin can be bumped without code changes. The legacy
+diagnostics of #34, and the relative-score leaderboard of #37. **`pyproject.toml` now
+pins `b0e941c`** (gap item 0, 2026-09-14): the three duplicated Tier I diagnostics are
+thin `GateMixin` wrappers over the upstream classes, the CB2-side registry stopgap
+(`RegistryFreeVariable`) is gone and the daily suite scores `tasmax`. The legacy
 `benchmark_scrips/*.py` scripts that earlier revisions of this document audited were
 deleted in migration Phases 1–5; **every status entry below refers to
 `climatebench2/`**, and the only legacy survivors are `constants.py`, `utils.py` and
@@ -75,11 +76,11 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 | I.5b | ENSO spectrum | power(2–7 yr)/power(1–2 yr) > 1.5 | Req. | 🟡 Welch **mean** PSD per band; paper says **integrated** power — the 1–2 yr band is 1.4× wider in frequency, so the code ratio ≈ 1.4× the paper's (threshold 1.5 ≙ ≈ 1.07 in paper units) | `pass_fail.band_power_ratio` |
 | I.5c | ENSO teleconnections | gridpoint regression of `ts` and `pr` on standardized Niño-3.4, 30S–30N; centred spatial correlation of modelled vs observed regression patterns > 0.7 (R² > 0.5), vs HadISST/ERA5 and GPCP | Req. | 🟡 implements the **superseded** scalar criterion (tropical ta500 regression > 0, Maritime-Continent pr < 0, sign only, no observations) | `diags.tier1_extended.ENSOTeleconnectionsGate` |
 | I.5d | MJO Wheeler–Kiladis | east/west power ratio (k=1–3, 30–90 d) > 1.5 — **Extended** | Ext. | ✅ (2-D FFT east/west ratio, k = 1–3, 30–90 d, ±15°, daily `pr`) | `MJOGate`, `physics.mjo_east_west_ratio` |
-| I.6a | Land–ocean warming ratio | ratio ∈ [1.2, 1.6] (**strict** — resolved 2026-09); a4x last 50 yr | Req. | 🟡 two gate rows still emitted (`> 1` "required" and `[1.2, 1.6]` "expected"); collapse to the strict range. ⬆ `climateeval.diags.complex.LandOceanWarmingRatio` now exists — replace CB2's copy with a gate wrapper | `LandOceanWarmingGate` |
-| I.6b | Arctic amplification | (ΔT>66.5N)/(ΔT global) ≥ 1.5; a4x last 50 yr | Req. | ✅ ⬆ `climateeval.diags.complex.ArcticAmplification` now exists — wrap it, delete CB2's copy | `ArcticAmplificationGate` |
+| I.6a | Land–ocean warming ratio | ratio ∈ [1.2, 1.6] (**strict** — resolved 2026-09); a4x last 50 yr | Req. | ✅ one strict-range gate row `land_ocean_warming`; thin wrapper over `climateeval.diags.complex.LandOceanWarmingRatio` (⬆ done) | `LandOceanWarmingGate` |
+| I.6b | Arctic amplification | (ΔT>66.5N)/(ΔT global) ≥ 1.5; a4x last 50 yr | Req. | ✅ thin wrapper over `climateeval.diags.complex.ArcticAmplification` (⬆ done) | `ArcticAmplificationGate` |
 | I.6c | ECS (Gregory, 150 yr) | ∈ [1, 7] K | Req. | ✅ gate wrapper over ClimateEval's `ECS` (the template for the ⬆ rows) | `ECSGate` |
 | I.7 | Aerosol forcing (hist-aer) | 2015 aerosol ERF ∈ [−2.0, −0.5] W/m²; ΔT(2015) < 0 — **Required** (promoted from Extended) | Req. | 🟡 ERF = ΔN − λ_Gregory·ΔT ✓, range ✓, cooling ✓; but "2015" = mean of the **last 30 yr** of hist-aer (paper: decadal mean centred on 2015) and anomalies vs the piControl long-term mean — **no parallel-segment drift removal** (paper App. B.8) | `AerosolForcingGate`, `physics.aerosol_erf` |
-| I.8a | Meridional heat transport | OMET peak 1.5–2.0 PW near 15–20°; AMET peak 4–5 PW near ~45° | Req. | ✅ thresholds per paper (15–20°, 45 ± 5°); ⬆ `climateeval.diags.complex.MeridionalHeatTransport` now exists with identical outputs — wrap it | `MeridionalHeatTransportGate` |
+| I.8a | Meridional heat transport | OMET peak 1.5–2.0 PW near 15–20°; AMET peak 4–5 PW near ~45° | Req. | ✅ thresholds per paper (15–20°, 45 ± 5°); thin wrapper over `climateeval.diags.complex.MeridionalHeatTransport`, search bands from `thresholds.yml` (⬆ done) | `MeridionalHeatTransportGate` |
 | I.8b | ITCZ–EFE relationship | 12-month climatology; slope within ±50% of ~3°/PW; r > 0.9 | Req. | ✅ 12-month climatology, slope ±50% of 3°/PW, \|r\| > 0.9; the hard-coded-1980 bug is gone | `ITCZEFEGate`, `physics.itcz_efe_regression` |
 | (extra) | Bjerknes compensation 40–70N | not in paper's Tier I list as specced | — | ✅ vs its own spec — but **counted in the leaderboard's entry ticket** (see wiring note) | `BjerknesGate` |
 | (extra) | Clausius–Clapeyron scaling | not in paper's Tier I list as specced | — | ✅ vs its own spec — same entry-ticket problem | `CCScalingGate` |
@@ -518,23 +519,24 @@ fraction, 0–100). **Pass: ratio ∈ [1.2, 1.6]** — the strict range is the p
 (RESOLVED 2026-09; the earlier "ratio > 1 required, [1.2, 1.6] expected" formulation is
 superseded).
 
-**Status: 🟡 (and duplicated upstream).**
-- ✅ `diags/tier1_physics.py::LandOceanWarmingGate` (`picontrol` + `4xco2`): `tas`
-  regridded to 2°, `mask_landsea("sea")`/`("land")` domains (ESMValCore's land-sea mask
-  on the common grid rather than the model's own `sftlf` — equivalent at 2°), last-50-yr
-  a4x mean minus full piControl mean per domain, ratio plus `delta_t_land`/`delta_t_ocean`.
-- 🟡 Two gate rows are emitted: `land_ocean_warming_required` (> `required_min = 1.0`)
-  and `land_ocean_warming_expected` (`expected_range = [1.2, 1.6]`). The strict range is
-  now the criterion — drop `required_min`, rename the check `land_ocean_warming`.
-- ⬆ **Upstream.** ClimateEval `main` (PR #35) ships
-  `climateeval.diags.complex.LandOceanWarmingRatio`: the identical computation (same
-  masks, same 50-yr window) that additionally pulls the CMIP6 r1i1p1f1
-  piControl/abrupt-4xCO2 comparison ensemble and emits registry variables
-  `land_ocean_warming_ratio`, `delta_t_land`, `delta_t_ocean`. CB2 should become a
-  `GateMixin` wrapper over it — exactly as `ECSGate` wraps `ECS`, with the superset
-  `_check_required_dict_keys` override — and delete `_WarmingResponseGate`. One
-  behavioural difference: the upstream class raises if the a4x run is shorter than the
-  equilibrium window, whereas CB2's silently averages what it has.
+**Status: ✅ (upstream computation + CB2 gate).**
+- ✅ `diags/tier1_physics.py::LandOceanWarmingGate` is a thin
+  `_UpstreamGate` wrapper over `climateeval.diags.complex.LandOceanWarmingRatio`:
+  `tas` regridded to 2°, `mask_landsea("sea")`/`("land")` domains (ESMValCore's
+  land-sea mask on the common grid rather than the model's own `sftlf` — equivalent at
+  2°), last-`equilibrium_years` a4x mean minus full piControl mean per domain,
+  emitting `land_ocean_warming_ratio`, `delta_t_land`, `delta_t_ocean` and the CMIP6
+  r1i1p1f1 piControl/abrupt-4xCO2 comparison ensemble. CB2 keeps only the protocol
+  layer: `equilibrium_years` is fed from
+  `tier1.land_ocean_warming.equilibrium_years = 50` into the upstream kwargs (the
+  suite YAML keeps `additional_diagnostic_kwargs: {}`).
+- ✅ **One** gate row, `land_ocean_warming`, against
+  `tier1.land_ocean_warming.range = [1.2, 1.6]` — the strict range is the criterion
+  (2026-09). The former `land_ocean_warming_required` / `_expected` pair and the
+  `required_min`/`expected_range` keys are gone.
+- Behavioural note: the upstream class *raises* if the a4x run is shorter than the
+  equilibrium window, where CB2's deleted copy silently averaged what it had — a
+  short a4x submission now fails loudly.
 
 ```python
 w_land, w_ocean = coslat * sftlf/100, coslat * (1 - sftlf/100)
@@ -551,12 +553,13 @@ poleward transport (Pithan & Mauritsen 2014).
 
 **Spec.** ΔT(lat > 66.5N) / ΔT(global) ≥ **1.5**, anomalies as in I.6a.
 
-**Status: ✅ (duplicated upstream).** `ArcticAmplificationGate`: `extract_region`
-(66.5–90N) vs global, last-50-yr a4x minus piControl mean, ratio gated at
-`tier1.arctic_amplification.ratio_min = 1.5` (row `arctic_amplification`);
-`delta_t_arctic`/`delta_t_global` emitted. ⬆ `climateeval.diags.complex.ArcticAmplification`
-(kwarg `arctic_latitude`, default 66.5) is the same computation with the CMIP6
-comparison ensemble — wrap it and delete CB2's copy.
+**Status: ✅.** `ArcticAmplificationGate` is a thin `_UpstreamGate` wrapper over
+`climateeval.diags.complex.ArcticAmplification`: `extract_region` (66.5–90N) vs global,
+last-`equilibrium_years` a4x minus piControl mean, plus the CMIP6 comparison ensemble;
+`arctic_amplification`, `delta_t_arctic`, `delta_t_global` emitted. CB2 feeds
+`arctic_latitude` = `tier1.arctic_amplification.lat_min` and `equilibrium_years`
+= `tier1.arctic_amplification.equilibrium_years` into the upstream kwargs and gates the
+`arctic_amplification` column at `ratio_min = 1.5` (row `arctic_amplification`).
 
 ```python
 dT_arc = wmean(a4x_tas[-N_eq:], coslat, lat_min=66.5) - wmean(pi_tas, coslat, lat_min=66.5)
@@ -577,8 +580,9 @@ long-term mean) and ΔN (TOA net anomaly vs piControl mean). OLS: `N = F_4x + λ
 (Gregory regression over the first 150 yr, piControl long-term-mean baseline; emits
 `ecs`, `lambda`, `lambda_stderr`, `f4x`, `f2x`, `p_value`, `r2`, plus the CMIP6
 r1i1p1f1 comparison ensemble) with one gate row `ecs_gate` at `tier1.ecs.range`
-= [1, 7] K. The superset-keys override lets it run from the shared Tier I experiment
-dict. This is the pattern the ⬆ rows above should follow. (No drift correction against
+= [1, 7] K. `SupersetExperimentMixin` lets it run from the shared Tier I experiment
+dict and skip with a warning when `picontrol`/`4xco2` were not supplied. This is the
+pattern I.6a/b and I.8a now follow. (No drift correction against
 the parallel piControl segment — an acceptable simplification for well-balanced
 controls; I.1 gates drift separately.)
 
@@ -655,18 +659,18 @@ Inputs: piControl monthly, 9 Amon variables (all now in ClimateEval's registry).
 **Spec.** **Peak OMET 1.5–2.0 PW near 15–20°N; peak AMET 4–5 PW at ~45°N**
 (vs ECCO/ERA5).
 
-**Status: ✅ (duplicated upstream).**
-- ✅ `MeridionalHeatTransportGate` (`picontrol`): time-mean zonal-mean fluxes on the 2°
-  grid, NH peak search 5–30° (OMET) and 25–55° (AMET), four gate rows — `omet_peak`
-  [1.5, 2.0] PW, `omet_peak_lat` [15, 20]°, `amet_peak` [4, 5] PW, `amet_peak_lat`
-  45 ± 5° — all from `tier1.meridional_heat_transport`. The legacy widened pass
-  windows are gone.
-- ⬆ **Upstream.** `climateeval.diags.complex.MeridionalHeatTransport` (PR #35) is the
-  same residual computation with the same output names (`amet_peak`, `amet_peak_lat`,
-  `omet_peak`, `omet_peak_lat`; kwargs `amet_search_band`, `omet_search_band`) plus the
-  CMIP6 piControl comparison ensemble. CB2 should wrap it and delete
-  `_transport_profiles`. (`physics.meridional_transport` stays for I.8b and Bjerknes
-  until ClimateEval exposes `implied_meridional_transport` publicly.)
+**Status: ✅.**
+- ✅ `MeridionalHeatTransportGate` (`picontrol`) is a thin `_UpstreamGate` wrapper over
+  `climateeval.diags.complex.MeridionalHeatTransport` — the same residual computation
+  on time-mean zonal-mean fluxes on the 2° grid, plus the CMIP6 piControl comparison
+  ensemble. Four gate rows on the upstream output columns — `omet_peak` [1.5, 2.0] PW,
+  `omet_peak_lat` [15, 20]°, `amet_peak` [4, 5] PW, `amet_peak_lat` 45 ± 5° — all from
+  `tier1.meridional_heat_transport`, whose `omet_search_band` [5, 30] and
+  `amet_search_band` [25, 55] are fed into the upstream kwargs. The legacy widened pass
+  windows and CB2's `_transport_profiles` are gone.
+  (`physics.meridional_transport` stays for I.8b and Bjerknes until ClimateEval exposes
+  `implied_meridional_transport` publicly; `physics.nh_peak` was deleted with its last
+  caller.)
 - ⚠ No global-imbalance correction before integrating: the residual OMET inherits any
   piControl F_sfc imbalance. Small for a balanced control, and I.1 gates the imbalance
   separately; the upstream class has the same property.
@@ -860,7 +864,7 @@ gone.
 | Moving-block-bootstrap CIs; observational-uncertainty draws | (a)/(b) | ❌ | — |
 | Multi-member submissions | — | ❌ `load_cmor_dir` yields one member, the CLI has no `--member`, `Suite` passes one `data_id`; every "ensemble" scored today has **M = 1** | `_cli.py`, `tier2_scores.py` |
 | tas monthly/annual anomalies | (a) | 🟡 scored vs **HadCRUT5 only** (paper: GISS, Berkeley Earth, HadCRUT, NOAA GlobalTemp — ClimateEval has no DataSource for the other three); no GSAT blending correction; HadCRUT5 error field not used as σ_obs | `ScoredAnnualMeanTimeSeries` + `climateeval.data.HadCRUT5` |
-| tas daily extremes (TXx, TNn, TX90p, warm-spell duration) | (b) | 🟡 only a TXx-like global-mean annual block maximum (`ScoredAnnualMaxTimeSeries`) on daily `tas`, against a **placeholder `ERA5Monthly` reference** (wrong frequency); `tasmax`/`tasmin` are now in ClimateEval's registry but no daily obs DataSource (Berkeley daily, HadGHCND) exists; TNn/TX90p/WSDI ❌ | `ClimateBench2_TierII_daily.yml` |
+| tas daily extremes (TXx, TNn, TX90p, warm-spell duration) | (b) | 🟡 only a TXx-like global-mean annual block maximum (`ScoredAnnualMaxTimeSeries`) on daily **`tasmax`** (id `tasmax_txx`, ✅ 2026-09-14), against a **placeholder `ERA5Monthly` reference** (wrong frequency) — no daily obs DataSource (Berkeley daily, HadGHCND) exists; TNn/TX90p/WSDI ❌ | `ClimateBench2_TierII_daily.yml` |
 | Perkins skill score (daily T and wet-day pr PDFs, 1 mm/day, ~1° conservative regrid, moving-baseline anomalies) | — | ❌ (ClimateEval `Histogram` yields EMD, not the protocol statistic; regridding is linear to 2°) | — |
 | ts (skin temperature) | (a) | ❌ — only `tos` vs ESACCI-SST/ERSSTv5/HadISST; no CRU TS / HadSST DataSource | ClimateEval |
 | pr anomalies | (a) | 🟡 vs **GPCP only** (IMERG, MSWEP ❌ in ClimateEval) | `ScoredAnnualMeanTimeSeries` + `GPCP` |
@@ -1091,9 +1095,10 @@ skill score** on anomalies relative to a moving climatological baseline, wet day
 mm/day, pre-registered bin widths; everything after **conservative regridding of model
 and obs to a common ~1° grid**; labelled in-sample.
 
-*Status: 🟡.* `ScoredAnnualMaxTimeSeries` gives a global-mean TXx-like series from
-daily `tas` (switch to `tasmax`, now in the registry) against an `ERA5Monthly`
-placeholder reference; `Histogram` gives hourly-pr EMD vs ERA5Hourly. None of the eight
+*Status: 🟡.* `ScoredAnnualMaxTimeSeries` gives a global-mean TXx series from
+daily `tasmax` (registry variable since `b0e941c`; suite id `tasmax_txx`) against an
+`ERA5Monthly` placeholder reference — a daily obs product is the remaining gap;
+`Histogram` gives hourly-pr EMD vs ERA5Hourly. None of the eight
 ETCCDI indices, the Perkins score, the 1° conservative regrid or the daily obs products
 (Berkeley daily, HadGHCND, IMERG, MSWEP) exist. Also see the ClimateEval variable
 `prw`/`pr` `3hr` frequencies for the Extended sub-daily list (Table A2).
@@ -1263,8 +1268,8 @@ as on data.
 
 | Tier | Specced diagnostics | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|
-| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras | 9 — I.2a, I.3b, I.4a, I.4b, I.5d, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); three of these are now also upstream in ClimateEval `main` | 8 — I.1 (window), I.2b (**identity reversed — fails every model**), I.3a (annual vs monthly anomalies), I.5a (smoothed index / wrong experiment), I.5b (mean vs integrated power), I.5c (superseded criterion), I.6a (stale second check), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
-| II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | ESS correction; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval; climatology-baseline row; static leaderboard | empirical (not fair) CRPS; single-member scoring; Gaussian consistency test without σ_int; pooled MME; Climatology/Pinatubo window 1990–2020; sign-only Pinatubo & hemispheric asymmetry; TXx placeholder; sea-ice area not extent; single obs product per variable | reference-EOF fair-CRPS scoring; block bootstrap; obs-uncertainty draws; CMIP6-median skill score; realized warming level & blending; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval)** |
+| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras | 10 — I.2a, I.3b, I.4a, I.4b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 7 — I.1 (window), I.2b (**identity reversed — fails every model**), I.3a (annual vs monthly anomalies), I.5a (smoothed index / wrong experiment), I.5b (mean vs integrated power), I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
+| II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | ESS correction; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval; climatology-baseline row; static leaderboard | empirical (not fair) CRPS; single-member scoring; Gaussian consistency test without σ_int; pooled MME; Climatology/Pinatubo window 1990–2020; sign-only Pinatubo & hemispheric asymmetry; TXx reference still a monthly placeholder; sea-ice area not extent; single obs product per variable | reference-EOF fair-CRPS scoring; block bootstrap; obs-uncertainty draws; CMIP6-median skill score; realized warming level & blending; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval)** |
 | III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | monsoon gate | site-consistency fraction for the three periods — disconnected from the pipeline's NetCDFs, tas-only, DA products instead of raw proxies; LE-spread functions | fair CRPS with block pseudo-members; raw SST proxy compilations; perfect-model suite and data |
 
 **Cross-cutting discrepancies (paper vs current `climatebench2/` code) — complete list,
@@ -1305,8 +1310,9 @@ as on data.
     multi-member CMIP6 reference cannot be built with today's ClimateEval.
 14. Single-member ingestion end-to-end (no `--member`, one `data_id` per model).
 15. Sea ice: ClimateEval computes area, the paper scores extent (15 % threshold).
-16. TXx on daily `tas` with an `ERA5Monthly` placeholder reference; should be `tasmax`
-    (now in the registry) against a daily product.
+16. TXx now uses daily `tasmax` (registry variable, suite id `tasmax_txx`; **done**
+    2026-09-14 with gap item 0) but still against an `ERA5Monthly` placeholder
+    reference; a daily obs product is still missing.
 17. **Entry ticket** — the leaderboard `ALL` column spans every gate present, including
     the Bjerknes and C–C extras, the Extended GFMIP/MJO gates and the Tier II Pinatubo /
     hemispheric-asymmetry gates; there is no Required/Extended/extra tag and no
@@ -1315,9 +1321,13 @@ as on data.
     the pipeline's LGM targets are DA products the paper now excludes; tas-only.
 19. `paleo_benchmark.py`'s Gaussian CRPS treats the proxy as the forecast distribution —
     the inverse of the protocol's model-ensemble fair CRPS.
-20. Duplicate physics vs ClimateEval `main` — land–ocean, Arctic and MHT exist upstream
+20. ~~Duplicate physics vs ClimateEval `main` — land–ocean, Arctic and MHT exist upstream
     with identical outputs; `_MISSING_FROM_REGISTRY`/`RegistryFreeVariable` are obsolete
-    (`rsds`/`rsus`/`rlds`/`rlus` landed upstream); the pin is 2 months stale.
+    (`rsds`/`rsus`/`rlds`/`rlus` landed upstream); the pin is 2 months stale.~~
+    **DONE (2026-09-14, gap item 0):** pin bumped to `b0e941c`; `LandOceanWarmingGate`,
+    `ArcticAmplificationGate` and `MeridionalHeatTransportGate` are `GateMixin`
+    wrappers over the upstream classes; `_WarmingResponseGate`, `_transport_profiles`,
+    `_MISSING_FROM_REGISTRY`, `RegistryFreeVariable` and `physics.nh_peak` deleted.
 21. Paper-side items to fix in the manuscript: App. E says "the Tier I–III diagnostics
     are hosted in the ClimateEval repository" — today 3 of 18 Tier I sub-checks and none
     of the Tier II/III scoring are; the Open Research section places ClimateBench under
@@ -1331,14 +1341,18 @@ as on data.
 keeping CB2 a thin protocol wrapper (thresholds, scoring, baselines, leaderboard) over
 ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
 
-0. **Sync with ClimateEval `main`** (no science, half a day). Bump the pin
-   `4de03ed → b0e941c` (69/69 tests already pass). Replace `LandOceanWarmingGate`,
-   `ArcticAmplificationGate`, `MeridionalHeatTransportGate` by `GateMixin` wrappers over
-   `climateeval.diags.complex.{LandOceanWarmingRatio, ArcticAmplification,
-   MeridionalHeatTransport}` on the `ECSGate` pattern; delete `_WarmingResponseGate`,
-   `_transport_profiles`, `_MISSING_FROM_REGISTRY`/`RegistryFreeVariable`; switch the
-   daily suite to `tasmax`. This is the first concrete "retire as parity is reached"
-   step of delineation-plan §7.
+0. ~~**Sync with ClimateEval `main`**~~ — **DONE 2026-09-14 (this commit).** Pin bumped
+   `4de03ed → b0e941c`; `LandOceanWarmingGate`, `ArcticAmplificationGate` and
+   `MeridionalHeatTransportGate` are now `SupersetExperimentMixin`/`GateMixin` wrappers
+   over `climateeval.diags.complex.{LandOceanWarmingRatio, ArcticAmplification,
+   MeridionalHeatTransport}` on the `ECSGate` pattern, feeding `equilibrium_years`,
+   `arctic_latitude` and the AMET/OMET search bands from `thresholds.yml` into the
+   upstream kwargs; `_WarmingResponseGate`, `_transport_profiles`,
+   `_MISSING_FROM_REGISTRY`/`RegistryFreeVariable` and `physics.nh_peak` deleted; the
+   daily suite scores `tasmax` (`tasmax_txx`). The graceful skip-with-warning on absent
+   experiments moved into the shared `SupersetExperimentMixin`, so `ECSGate` gets it
+   too. This was the first concrete "retire as parity is reached" step of
+   delineation-plan §7.
 1. **Fix the gates that are wrong as written** (hours): I.2b identity (#1); I.1
    last-100-yr slice (#2); I.5b integrated power (#5); I.6a strict range (#7);
    `thresholds.yml` clean-up — `min_years` TODO, `required_min`, the four teleconnection

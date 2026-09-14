@@ -132,19 +132,15 @@ def test_meridional_transport_realistic_shape() -> None:
     lats = np.linspace(-89.5, 89.5, 360)
     flux = 150 * (np.cos(np.deg2rad(lats)) - np.pi / 4)
     transport = physics.meridional_transport(flux, lats) / 1e15
-    peak, peak_lat = physics.nh_peak(transport, lats, 20, 60)
+    band = (lats >= 20.0) & (lats <= 60.0)
+    peak = float(transport[band].max())
+    peak_lat = float(lats[band][np.argmax(transport[band])])
     assert 1.0 < peak < 10.0  # PW, right order of magnitude
     assert 33 < peak_lat < 43
     # Antisymmetric: SH minimum mirrors NH maximum
     assert transport.min() == pytest.approx(-peak, rel=0.1)
     # Global closure: ~zero transport at the N pole
     assert abs(transport[-1]) < 0.05 * peak
-
-
-def test_nh_peak_empty_band() -> None:
-    value, lat = physics.nh_peak(np.ones(5), np.array([-80, -60, -40, -20, -10.0]), 10, 30)
-    assert np.isnan(value)
-    assert np.isnan(lat)
 
 
 # ---------------------------------------------------------------------------

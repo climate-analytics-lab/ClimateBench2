@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import ibis
 import numpy as np
 import pandas as pd
+from loguru import logger
 from scipy import signal
 
 from climateeval.diags._base import DiagnosticOutput
@@ -125,6 +126,50 @@ class GateMixin:
     def get_output(self, data: Any, data_information: Any) -> DiagnosticOutput:
         output = super().get_output(data, data_information)  # type: ignore[misc]
         return apply_gate(output, self._gate_checks)
+
+
+class SupersetExperimentMixin:
+    """Mixin: superset experiment keys + graceful skip when they are absent.
+
+    ClimateEval's ``ComplexDiagnostic`` requires the data dict to match
+    ``_required_data_keys`` *exactly*. CB2 runs a whole Tier I suite from one
+    experiment dict (``Suite.get_database`` hands the same object to every
+    diagnostic), so CB2 complex diagnostics — and the CB2 gate wrappers around
+    upstream ClimateEval ones — accept a *superset* of their required keys.
+    With ``fail_on_missing_data=False`` (the CLI default) a gate whose
+    experiments were not supplied at all is skipped with a warning instead of
+    aborting the suite.
+
+    Mix in *before* :class:`GateMixin` so the skip short-circuits gating too.
+    """
+
+    def _check_required_dict_keys(self, dict_: dict[str, Any], dict_name: str) -> None:
+        """Require a *subset* match so one suite dict feeds every gate."""
+        required: tuple[str, ...] = self._required_data_keys  # type: ignore[attr-defined]
+        missing = set(required) - set(dict_)
+        if missing:
+            name = getattr(self, "name", type(self).__name__)
+            msg = (
+                f"Missing keys {sorted(missing)} for {dict_name} dictionary of "
+                f"diagnostic '{name}' (required: {required})"
+            )
+            raise ValueError(msg)
+
+    def get_output(self, data: Any, data_information: Any) -> DiagnosticOutput:
+        """Run the diagnostic; degrade to an empty output on missing keys."""
+        try:
+            self._check_required_dict_keys(data, "data")
+        except ValueError as exc:
+            if self._fail_on_missing_data:  # type: ignore[attr-defined]
+                raise
+            logger.warning(f"Skipping gate '{self.name}': {exc}")  # type: ignore[attr-defined]
+            return DiagnosticOutput(
+                raw_output=None,
+                metrics=None,
+                variables=None,  # type: ignore[arg-type] - Suite skips None tables
+                data_sources=None,  # type: ignore[arg-type]
+            )
+        return super().get_output(data, data_information)  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

@@ -170,19 +170,84 @@ def test_superset_keys_accepted() -> None:
 
 
 def test_all_tier1_gates_are_cb2_complex() -> None:
+    """The CB2-owned gates (no upstream provider) share the CB2 base class."""
     from climatebench2 import diags
 
     for name in (
         "EnergyBalanceGate",
         "ClosureGate",
         "ClearSkyFeedbackGate",
-        "LandOceanWarmingGate",
-        "ArcticAmplificationGate",
         "AerosolForcingGate",
-        "MeridionalHeatTransportGate",
         "ITCZEFEGate",
         "BjerknesGate",
         "CCScalingGate",
     ):
         assert issubclass(getattr(diags, name), CB2ComplexDiagnostic)
         assert getattr(diags, name)._gate_checks  # every gate has checks wired
+
+
+def test_upstream_gate_wrappers_subclass_climateeval_diagnostics() -> None:
+    """I.6a/b/c and I.8a are thin gates over ClimateEval's own diagnostics."""
+    from climateeval.diags.complex import (
+        ECS,
+        ArcticAmplification,
+        LandOceanWarmingRatio,
+        MeridionalHeatTransport,
+    )
+
+    from climatebench2 import diags
+    from climatebench2.diags.pass_fail import GateMixin, SupersetExperimentMixin
+
+    for gate, upstream in (
+        (diags.ECSGate, ECS),
+        (diags.LandOceanWarmingGate, LandOceanWarmingRatio),
+        (diags.ArcticAmplificationGate, ArcticAmplification),
+        (diags.MeridionalHeatTransportGate, MeridionalHeatTransport),
+    ):
+        assert issubclass(gate, upstream)
+        assert issubclass(gate, GateMixin)
+        assert issubclass(gate, SupersetExperimentMixin)
+        # No CB2 re-implementation of the upstream computation
+        assert "_calculate_raw_output" not in vars(gate)
+
+
+def test_upstream_gate_wrappers_carry_the_protocol_thresholds() -> None:
+    from climatebench2 import diags
+
+    (land_ocean,) = diags.LandOceanWarmingGate._gate_checks
+    assert land_ocean.check_id == "land_ocean_warming"
+    assert land_ocean.column == "land_ocean_warming_ratio"
+    assert (land_ocean.lower, land_ocean.upper) == (1.2, 1.6)
+
+    (arctic,) = diags.ArcticAmplificationGate._gate_checks
+    assert arctic.column == "arctic_amplification"
+    assert (arctic.lower, arctic.upper) == (1.5, None)
+
+    bounds = {
+        check.check_id: (check.column, check.lower, check.upper)
+        for check in diags.MeridionalHeatTransportGate._gate_checks
+    }
+    assert bounds["omet_peak"] == ("omet_peak", 1.5, 2.0)
+    assert bounds["omet_peak_lat"] == ("omet_peak_lat", 15.0, 20.0)
+    assert bounds["amet_peak"] == ("amet_peak", 4.0, 5.0)
+    assert bounds["amet_peak_lat"] == ("amet_peak_lat", 40.0, 50.0)
+
+
+def test_upstream_gate_wrappers_feed_thresholds_into_upstream_kwargs() -> None:
+    """Protocol constants reach the upstream diagnostic, not the suite YAML."""
+    from climatebench2 import diags
+
+    land_ocean = diags.LandOceanWarmingGate("land_ocean_warming")
+    assert land_ocean._equilibrium_years == 50
+
+    arctic = diags.ArcticAmplificationGate("arctic_amplification")
+    assert arctic._equilibrium_years == 50
+    assert arctic._arctic_latitude == pytest.approx(66.5)
+
+    mht = diags.MeridionalHeatTransportGate("meridional_heat_transport")
+    assert tuple(mht._omet_search_band) == (5, 30)
+    assert tuple(mht._amet_search_band) == (25, 55)
+
+    # An explicit suite kwarg still wins over the thresholds.yml default
+    override = diags.ArcticAmplificationGate("arctic", arctic_latitude=70.0)
+    assert override._arctic_latitude == pytest.approx(70.0)

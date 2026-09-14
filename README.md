@@ -72,9 +72,10 @@ The implementation was re-audited against the 2026-09 paper draft on
 are re-aligning the scoring engine to fair CRPS, multi-member ingestion, a
 post-2015 multi-member CMIP6 reference in ClimateEval, Required/Extended/N-A
 tagging of the Tier I gates, and wiring Tier III to the paleo pipeline's
-NetCDF outputs. ClimateEval `main` now provides the land–ocean, Arctic and
-meridional-heat-transport diagnostics upstream; CB2's copies are to be
-replaced by thin gate wrappers once the pin is bumped.
+NetCDF outputs. ClimateEval is pinned at `b0e941c`, which provides the
+land–ocean, Arctic and meridional-heat-transport diagnostics upstream; CB2's
+copies have been replaced by thin gate wrappers that add only the protocol's
+thresholds.
 
 ## Legacy remnant
 

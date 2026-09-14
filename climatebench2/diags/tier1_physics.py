@@ -6,10 +6,16 @@ computes the paper-spec quantity (pure math in ``climatebench2.physics``),
 emits it as scalar raw output, and gates it against ``thresholds.yml`` via
 the ``pass_fail`` machinery (metrics rows with a ``passes`` column).
 
-Unlike ClimateEval's ``ECS``, CB2 complex diagnostics accept a *superset* of
-their required data keys, so one Tier I suite can run every gate from a
-single experiment dict. Specs: docs/metrics_reference.md (section numbers on
-each class).
+Where ClimateEval already owns the physics (I.6a/b/c, I.8a), the gate is a
+thin ``_UpstreamGate`` wrapper that only feeds the protocol's constants into
+the upstream diagnostic and gates its output columns — CB2 keeps no copy of
+the computation.
+
+Unlike ClimateEval's own complex diagnostics, CB2 gates accept a *superset*
+of their required data keys (``SupersetExperimentMixin``), so one Tier I
+suite can run every gate from a single experiment dict, and a gate whose
+experiments are missing is skipped with a warning. Specs:
+docs/metrics_reference.md (section numbers on each class).
 """
 
 from __future__ import annotations
@@ -22,24 +28,30 @@ from esmvalcore.preprocessor import (
     annual_statistics,
     area_statistics,
     climate_statistics,
-    extract_region,
-    mask_landsea,
     regrid,
     zonal_statistics,
 )
 from iris.cube import Cube
-from loguru import logger
 
-from climateeval import Coordinate, Variable
+from climateeval import Variable
 from climateeval._config import setup_esmvaltool_config_and_logging
 from climateeval._utils import get_prepared_cube
 from climateeval.diags._utils import DEFAULT_GRID
-from climateeval.diags.complex import ECS
+from climateeval.diags.complex import (
+    ECS,
+    ArcticAmplification,
+    LandOceanWarmingRatio,
+    MeridionalHeatTransport,
+)
 from climateeval.diags.complex._base import ComplexDiagnostic
 
 from climatebench2 import physics
 from climatebench2._thresholds import get_threshold
-from climatebench2.diags.pass_fail import GateCheck, GateMixin
+from climatebench2.diags.pass_fail import (
+    GateCheck,
+    GateMixin,
+    SupersetExperimentMixin,
+)
 
 if TYPE_CHECKING:
     from iris.cube import CubeList
@@ -69,90 +81,18 @@ def _fx(name: str) -> Variable:
     return ScalarVariable(name, name, "fx")
 
 
-# Standard CMIP variables absent from ClimateEval's variables.yml (as of the
-# pinned commit). Defined CB2-side with full metadata; also queued as an
-# upstream variables.yml addition (delineation plan §7).
-_MISSING_FROM_REGISTRY: dict[str, dict[str, str]] = {
-    "rsds": {
-        "long_name": "Surface Downwelling Shortwave Radiation",
-        "standard_name": "surface_downwelling_shortwave_flux_in_air",
-    },
-    "rsus": {
-        "long_name": "Surface Upwelling Shortwave Radiation",
-        "standard_name": "surface_upwelling_shortwave_flux_in_air",
-    },
-    "rlds": {
-        "long_name": "Surface Downwelling Longwave Radiation",
-        "standard_name": "surface_downwelling_longwave_flux_in_air",
-    },
-    "rlus": {
-        "long_name": "Surface Upwelling Longwave Radiation",
-        "standard_name": "surface_upwelling_longwave_flux_in_air",
-    },
-}
-
-
-@dataclass(frozen=True)
-class RegistryFreeVariable(Variable):
-    """A monthly atmos input variable not (yet) in ClimateEval's registry."""
-
-    def __post_init__(self) -> None:
-        meta = _MISSING_FROM_REGISTRY[self.var_name]
-        object.__setattr__(
-            self,
-            "coordinates",
-            tuple(Coordinate(c) for c in ("time", "lat", "lon")),
-        )
-        object.__setattr__(self, "units", self.units or "W m-2")
-        object.__setattr__(self, "long_name", meta["long_name"])
-        object.__setattr__(self, "standard_name", meta["standard_name"])
-        object.__setattr__(self, "realm", "atmos")
-        object.__setattr__(self, "cmip6_table_id", "Amon")
-        object.__setattr__(self, "ndim", len(self.coordinates))
-
-
 def _mon(name: str) -> Variable:
-    """Monthly input variable (registry first, CB2 fallback for gaps)."""
-    if name in _MISSING_FROM_REGISTRY:
-        return RegistryFreeVariable(name, name, "mon")
+    """Monthly input variable from ClimateEval's registry.
+
+    ``rsds``/``rsus``/``rlds``/``rlus`` used to need a CB2-side definition;
+    they landed in ClimateEval's ``variables.yml`` with the pinned `b0e941c`,
+    so every Tier I input is now a plain registry lookup.
+    """
     return Variable(name, name, "mon")
 
 
-class CB2ComplexDiagnostic(GateMixin, ComplexDiagnostic):
+class CB2ComplexDiagnostic(SupersetExperimentMixin, GateMixin, ComplexDiagnostic):
     """Base for the Tier I gates: superset data keys + esmvalcore helpers."""
-
-    def _check_required_dict_keys(self, dict_: dict[str, Any], dict_name: str) -> None:
-        """Require a *subset* match so one suite dict feeds every gate."""
-        missing = set(self._required_data_keys) - set(dict_)
-        if missing:
-            msg = (
-                f"Missing keys {sorted(missing)} for {dict_name} dictionary of "
-                f"diagnostic '{self.name}' (required: {self._required_data_keys})"
-            )
-            raise ValueError(msg)
-
-    def get_output(self, data: Any, data_information: Any) -> Any:
-        """Run the gate; degrade to an empty output on missing experiments.
-
-        With ``fail_on_missing_data=False`` (the CLI default) a gate whose
-        experiment keys were not provided is skipped with a warning instead
-        of aborting the whole suite.
-        """
-        try:
-            self._check_required_dict_keys(data, "data")
-        except ValueError as exc:
-            if self._fail_on_missing_data:
-                raise
-            logger.warning(f"Skipping gate '{self.name}': {exc}")
-            from climateeval.diags._base import DiagnosticOutput
-
-            return DiagnosticOutput(
-                raw_output=None,
-                metrics=None,
-                variables=None,  # type: ignore[arg-type] - Suite skips None tables
-                data_sources=None,  # type: ignore[arg-type]
-            )
-        return super().get_output(data, data_information)
 
     # -- preprocessing helpers (all regrid to the common 2x2 grid first) ----
 
@@ -215,7 +155,7 @@ class CB2ComplexDiagnostic(GateMixin, ComplexDiagnostic):
             for name, value in values.items()
         }
 
-    # -- flux profiles shared by MHT / Bjerknes / ITCZ-EFE ------------------
+    # -- flux profiles shared by Bjerknes / ITCZ-EFE ------------------------
 
     _SFC_FLUXES: ClassVar[tuple[tuple[str, float], ...]] = (
         # (variable, sign in F_sfc = net downward surface flux)
@@ -227,42 +167,42 @@ class CB2ComplexDiagnostic(GateMixin, ComplexDiagnostic):
         ("hfls", -1.0),
     )
 
-    def _transport_profiles(
-        self,
-        data: CubeList | Dataset,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """(AMET, OMET, lats) in W from time-mean zonal-mean fluxes (I.8a)."""
-        toa_parts = {
-            name: self._timemean_zonal(data, _mon(name))
-            for name in ("rsdt", "rsut", "rlut")
-        }
-        lats = next(iter(toa_parts.values()))[1]
-        toa_net = toa_parts["rsdt"][0] - toa_parts["rsut"][0] - toa_parts["rlut"][0]
-        f_sfc = np.zeros_like(toa_net)
-        for name, sign in self._SFC_FLUXES:
-            f_sfc = f_sfc + sign * self._timemean_zonal(data, _mon(name))[0]
-        amet = physics.meridional_transport(toa_net - f_sfc, lats)
-        omet = physics.meridional_transport(f_sfc, lats)
-        return amet, omet, lats
-
 
 # ---------------------------------------------------------------------------
-# I.6c — ECS gate (superset-tolerant wrapper of ClimateEval's ECS)
+# Gate wrappers over upstream ClimateEval complex diagnostics
+#
+# ClimateEval `main` owns the generic physics of I.6a/b/c and I.8a; CB2 keeps
+# only the protocol layer — the thresholds and the pass/fail rows. Each
+# wrapper feeds its protocol constants from thresholds.yml into the upstream
+# kwargs (so the suite YAML keeps `additional_diagnostic_kwargs: {}`), gates
+# the upstream output columns, and inherits the superset-key / graceful-skip
+# behaviour of every CB2 complex diagnostic.
 # ---------------------------------------------------------------------------
 
 
-def _subset_keys_check(
-    diag: ComplexDiagnostic,
-    dict_: dict[str, Any],
-    dict_name: str,
-) -> None:
-    missing = set(diag._required_data_keys) - set(dict_)
-    if missing:
-        msg = f"Missing keys {sorted(missing)} for {dict_name} dictionary"
-        raise ValueError(msg)
+class _UpstreamGate(SupersetExperimentMixin, GateMixin):
+    """Common base of the CB2 wrappers over ClimateEval complex diagnostics.
+
+    ``_threshold_kwargs`` maps an upstream keyword argument to its
+    ``thresholds.yml`` key; values are applied with ``setdefault`` semantics,
+    so an explicit suite kwarg still wins.
+    """
+
+    _threshold_kwargs: ClassVar[dict[str, str]] = {}
+
+    def __init__(self, name: str, **kwargs: Any) -> None:
+        """Initialize class instance with the protocol's constants."""
+        for kwarg, threshold_key in self._threshold_kwargs.items():
+            kwargs.setdefault(kwarg, get_threshold(threshold_key))
+        super().__init__(name, **kwargs)
 
 
-class ECSGate(GateMixin, ECS):
+# ---------------------------------------------------------------------------
+# I.6c — ECS gate (wrapper of ClimateEval's ECS)
+# ---------------------------------------------------------------------------
+
+
+class ECSGate(_UpstreamGate, ECS):
     """I.6c: ECS (Gregory, 150 yr) ∈ tier1.ecs.range = [1, 7] K."""
 
     _gate_checks = (
@@ -273,9 +213,6 @@ class ECSGate(GateMixin, ECS):
             upper=get_threshold("tier1.ecs.range")[1],
         ),
     )
-
-    def _check_required_dict_keys(self, dict_: dict[str, Any], dict_name: str) -> None:
-        _subset_keys_check(self, dict_, dict_name)
 
 
 # ---------------------------------------------------------------------------
@@ -425,115 +362,46 @@ class ClearSkyFeedbackGate(CB2ComplexDiagnostic):
 # ---------------------------------------------------------------------------
 
 
-class _WarmingResponseGate(CB2ComplexDiagnostic):
-    """Shared machinery: equilibrium a4x anomaly vs the piControl mean."""
+class LandOceanWarmingGate(_UpstreamGate, LandOceanWarmingRatio):
+    """I.6a: ΔT_land/ΔT_ocean ∈ tier1.land_ocean_warming.range = [1.2, 1.6].
 
-    _required_data_keys = ("picontrol", "4xco2")
+    Thin gate over ``climateeval.diags.complex.LandOceanWarmingRatio`` (same
+    land/sea masks, same last-``equilibrium_years`` abrupt-4xCO2 window, plus
+    the CMIP6 r1i1p1f1 comparison ensemble). One strict-range check — the
+    earlier "> 1 required / [1.2, 1.6] expected" pair was superseded by the
+    2026-09 paper draft.
+    """
 
-    @property
-    def _equilibrium_years(self) -> int:
-        raise NotImplementedError
-
-    def _domain_mean_anomaly(
-        self,
-        complex_data_source: ComplexDataSource,
-        *,
-        region: tuple[float, float] | None = None,
-        mask_out: str | None = None,
-    ) -> float:
-        """a4x (last N yr) minus piControl (full) domain-mean tas."""
-
-        def domain_series(data: CubeList | Dataset) -> np.ndarray:
-            cube = self._cube(data, _mon("tas"))
-            with setup_esmvaltool_config_and_logging():
-                if region is not None:
-                    cube = extract_region(
-                        cube,
-                        start_longitude=0.0,
-                        end_longitude=360.0,
-                        start_latitude=region[0],
-                        end_latitude=region[1],
-                    )
-                if mask_out is not None:
-                    cube = mask_landsea(cube, mask_out)
-                cube = area_statistics(cube, "mean")
-                cube = annual_statistics(cube, "mean")
-            return np.asarray(cube.data, dtype=float)
-
-        a4x = domain_series(complex_data_source.data["4xco2"])
-        picontrol = domain_series(complex_data_source.data["picontrol"])
-        n_eq = self._equilibrium_years
-        return float(a4x[-n_eq:].mean() - picontrol.mean())
-
-
-class LandOceanWarmingGate(_WarmingResponseGate):
-    """I.6a: ΔT_land/ΔT_ocean > 1 required; expected range [1.2, 1.6]."""
-
+    _threshold_kwargs: ClassVar[dict[str, str]] = {
+        "equilibrium_years": "tier1.land_ocean_warming.equilibrium_years",
+    }
     _gate_checks = (
         GateCheck(
-            check_id="land_ocean_warming_required",
+            check_id="land_ocean_warming",
             column="land_ocean_warming_ratio",
-            lower=get_threshold("tier1.land_ocean_warming.required_min"),
-        ),
-        GateCheck(
-            check_id="land_ocean_warming_expected",
-            column="land_ocean_warming_ratio",
-            lower=get_threshold("tier1.land_ocean_warming.expected_range")[0],
-            upper=get_threshold("tier1.land_ocean_warming.expected_range")[1],
+            lower=get_threshold("tier1.land_ocean_warming.range")[0],
+            upper=get_threshold("tier1.land_ocean_warming.range")[1],
         ),
     )
 
-    @property
-    def _equilibrium_years(self) -> int:
-        return int(get_threshold("tier1.land_ocean_warming.equilibrium_years"))
 
-    def _calculate_raw_output(
-        self,
-        complex_data_source: ComplexDataSource,
-    ) -> dict[Variable, Cube]:
-        dt_land = self._domain_mean_anomaly(complex_data_source, mask_out="sea")
-        dt_ocean = self._domain_mean_anomaly(complex_data_source, mask_out="land")
-        return self._scalar_outputs(
-            {
-                "land_ocean_warming_ratio": dt_land / dt_ocean,
-                "delta_t_land": dt_land,
-                "delta_t_ocean": dt_ocean,
-            },
-        )
+class ArcticAmplificationGate(_UpstreamGate, ArcticAmplification):
+    """I.6b: ΔT(>66.5N)/ΔT(global) ≥ 1.5.
 
+    Thin gate over ``climateeval.diags.complex.ArcticAmplification``.
+    """
 
-class ArcticAmplificationGate(_WarmingResponseGate):
-    """I.6b: ΔT(>66.5N)/ΔT(global) ≥ 1.5."""
-
+    _threshold_kwargs: ClassVar[dict[str, str]] = {
+        "equilibrium_years": "tier1.arctic_amplification.equilibrium_years",
+        "arctic_latitude": "tier1.arctic_amplification.lat_min",
+    }
     _gate_checks = (
         GateCheck(
             check_id="arctic_amplification",
-            column="arctic_amplification_ratio",
+            column="arctic_amplification",
             lower=get_threshold("tier1.arctic_amplification.ratio_min"),
         ),
     )
-
-    @property
-    def _equilibrium_years(self) -> int:
-        return int(get_threshold("tier1.arctic_amplification.equilibrium_years"))
-
-    def _calculate_raw_output(
-        self,
-        complex_data_source: ComplexDataSource,
-    ) -> dict[Variable, Cube]:
-        lat_min = float(get_threshold("tier1.arctic_amplification.lat_min"))
-        dt_arctic = self._domain_mean_anomaly(
-            complex_data_source,
-            region=(lat_min, 90.0),
-        )
-        dt_global = self._domain_mean_anomaly(complex_data_source)
-        return self._scalar_outputs(
-            {
-                "arctic_amplification_ratio": dt_arctic / dt_global,
-                "delta_t_arctic": dt_arctic,
-                "delta_t_global": dt_global,
-            },
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -599,10 +467,19 @@ class AerosolForcingGate(CB2ComplexDiagnostic):
 # ---------------------------------------------------------------------------
 
 
-class MeridionalHeatTransportGate(CB2ComplexDiagnostic):
-    """I.8a: OMET peak 1.5–2.0 PW near 15–20N; AMET peak 4–5 PW near 45N."""
+class MeridionalHeatTransportGate(_UpstreamGate, MeridionalHeatTransport):
+    """I.8a: OMET peak 1.5–2.0 PW near 15–20N; AMET peak 4–5 PW near 45N.
 
-    _required_data_keys = ("picontrol",)
+    Thin gate over ``climateeval.diags.complex.MeridionalHeatTransport`` (the
+    residual method on piControl monthly fluxes, plus the CMIP6 piControl
+    comparison ensemble); the NH peak-search bands come from
+    ``thresholds.yml`` rather than the upstream defaults.
+    """
+
+    _threshold_kwargs: ClassVar[dict[str, str]] = {
+        "amet_search_band": "tier1.meridional_heat_transport.amet_search_band",
+        "omet_search_band": "tier1.meridional_heat_transport.omet_search_band",
+    }
 
     _omet_lat = get_threshold("tier1.meridional_heat_transport.omet_peak_lat_range")
     _amet_lat_ref = float(get_threshold("tier1.meridional_heat_transport.amet_peak_lat"))
@@ -612,7 +489,7 @@ class MeridionalHeatTransportGate(CB2ComplexDiagnostic):
     _gate_checks = (
         GateCheck(
             check_id="omet_peak",
-            column="omet_peak_pw",
+            column="omet_peak",
             lower=get_threshold("tier1.meridional_heat_transport.omet_peak_range")[0],
             upper=get_threshold("tier1.meridional_heat_transport.omet_peak_range")[1],
         ),
@@ -624,7 +501,7 @@ class MeridionalHeatTransportGate(CB2ComplexDiagnostic):
         ),
         GateCheck(
             check_id="amet_peak",
-            column="amet_peak_pw",
+            column="amet_peak",
             lower=get_threshold("tier1.meridional_heat_transport.amet_peak_range")[0],
             upper=get_threshold("tier1.meridional_heat_transport.amet_peak_range")[1],
         ),
@@ -635,24 +512,6 @@ class MeridionalHeatTransportGate(CB2ComplexDiagnostic):
             upper=_amet_lat_ref + _amet_lat_tol,
         ),
     )
-
-    def _calculate_raw_output(
-        self,
-        complex_data_source: ComplexDataSource,
-    ) -> dict[Variable, Cube]:
-        amet, omet, lats = self._transport_profiles(
-            complex_data_source.data["picontrol"],
-        )
-        omet_peak, omet_lat = physics.nh_peak(omet / 1e15, lats, 5.0, 30.0)
-        amet_peak, amet_lat = physics.nh_peak(amet / 1e15, lats, 25.0, 55.0)
-        return self._scalar_outputs(
-            {
-                "omet_peak_pw": omet_peak,
-                "omet_peak_lat": omet_lat,
-                "amet_peak_pw": amet_peak,
-                "amet_peak_lat": amet_lat,
-            },
-        )
 
 
 # ---------------------------------------------------------------------------

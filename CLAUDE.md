@@ -39,6 +39,11 @@ Key integration facts (verified against ClimateEval `main`):
 - ClimateEval's `Suite` loads any importable `diagnostic:` class path via
   `str_to_object` — CB2 diagnostics need only subclass
   `climateeval.diags._base.Diagnostic`.
+- Where ClimateEval already computes the quantity (ECS, land–ocean warming
+  ratio, Arctic amplification, meridional heat transport), the CB2 gate is a
+  **thin wrapper subclassing the upstream diagnostic** that only feeds
+  `thresholds.yml` constants into its kwargs and gates its output columns —
+  never a second copy of the physics.
 - Multi-experiment/ensemble inputs follow the `ECS` `ComplexDiagnostic`
   precedent (`_required_data_keys` + `ComplexDataSource`). CB2 complex
   diagnostics accept a *superset* of their required keys so one experiment

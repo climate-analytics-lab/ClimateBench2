@@ -33,7 +33,12 @@ every gate block in `thresholds.yml` carries a `requirement:` tag
 `applicable` columns, a submission can *declare* a test inapplicable
 (`score --not-applicable NAME`), the Pinatubo and hemispheric-asymmetry diagnostics
 moved out of the Tier I suite into `ClimateBench2_TierII_events`, and the leaderboard
-computes the entry ticket over the Required group alone. **Gap item 4 (CB2 side)** then
+computes the entry ticket over the Required group alone. **Gap item 3** then brought the
+**scoring-engine core** to the 2026-09 spec (`a4c5948`, `732e860`): fair (Ferro) CRPS
+with a hard M ≥ 2 rule, observational-uncertainty draws, a moving-block bootstrap, and
+a new post-suite pass (`climatebench2/scoring_pass.py`) that stacks a model's ensemble
+members into one forecast and writes the skill against the **median** per-model CMIP6
+fair CRPS with leave-one-out. **Gap item 4 (CB2 side)** had earlier
 fixed the data paths for a real CMIP6 run: a per-suite registry in `_cli.py` loads the
 `historical` experiment in full for the complex suites, feeds the variability suite the
 `picontrol` experiment, scores the Tier II suites over the reserved post-2015 test
@@ -794,6 +799,17 @@ parallel headline numbers:
 - **climatology baseline** — predicts the **1985–2014** monthly mean for every test year
   (note: 1985–2014, *not* 1990–2020; the old window overlapped the reserved test period);
   establishes the no-skill floor.
+
+  ⚠ **CB2 interpretation, needs Duncan's ruling.** A deterministic monthly mean is
+  M = 1, for which fair CRPS is *undefined* — so as written this baseline cannot be
+  scored by the protocol's own primary score. CB2 therefore scores it as the
+  **distribution** of the reference's baseline-window values for each calendar month
+  (30 pseudo-members for a monthly series, the 30 annual values for an annual one;
+  `baselines.climatology_pseudo_members`, 2026-09-14, `a4c5948`). This is the natural
+  probabilistic reading of "predict the climatology" and puts the no-skill floor on
+  the same fair-CRPS footing as every other row, but it is *not* what the manuscript
+  says; either the manuscript adopts the distributional reading or the baseline needs
+  a different score.
 - **pattern-scaling baseline** — multi-linear: global-mean temperature trajectory from a
   two-layer EBM calibrated to observations **through 2014**, multiplied by a fixed CMIP6
   multi-model-mean response pattern; the simplest defensible emulator.
@@ -820,6 +836,14 @@ reported uncertainty**, not to the point score:
 score = (1/T) Σ_t CRPS_fair,t
 SE    = std(CRPS_fair,t) / sqrt(T_eff),   T_eff = T·(1 − r1)/(1 + r1)
 ```
+A **moving-block bootstrap** of the per-step series (blocks of one year — 12 steps
+monthly, 3 steps annual — from `tier2.bootstrap`, optionally resampling ensemble
+members too) gives the reported confidence interval. Observational uncertainty enters
+as **common draws**: the fair CRPS is averaged over pseudo-observations
+`y_k ~ N(obs, σ_obs)` generated from a fixed seed, so a submission and its baselines
+see identical draws (`tier2.obs_uncertainty`). ✅ all three implemented 2026-09-14
+(`a4c5948`); σ_obs itself is still 0 everywhere because no observational error field
+is plumbed through (HadCRUT5's is the first candidate).
 
 **(b) Aggregated diagnostics and spatial fields** — climatologies, trends, variability
 amplitudes, seasonal-cycle amplitude/phase. Scored with fair CRPS in a projected basis:
@@ -859,9 +883,13 @@ inflates `E_ref` and makes almost any centred submission clear `S = 0`.
 §5.4 "Baselines and reference scores" defines the headline reference as "an unweighted
 **mixture** of the ensemble distributions from all CMIP6 models … with equal total weight
 assigned to each model", i.e. the pooled form, whereas the Fig. 4 caption defines
-`E_ref` as "the **median** E across the ensemble" (the form adopted here). Resolve in the
-manuscript before the code is aligned; the current code implements the *pooled* form
-(`CMIP6-MME` row, §II.0).
+`E_ref` as "the **median** E across the ensemble" (the form adopted here).
+**The code now implements the median-of-per-model form with leave-one-out**
+(2026-09-14, gap item 3, `732e860`): `scoring_pass` computes one fair CRPS per
+comparison model from that model's own members and takes the median, excluding any
+comparison model whose name equals the scored model's; the pooled `CMIP6-MME` row is
+deleted. **§5.4's "mixture" wording still needs Duncan's fix in the manuscript** — the
+code follows the Fig. 4 caption, not §5.4.
 
 ⚠ **Figure 4 of the paper** is being regenerated with fair CRPS; earlier versions of that
 figure used a weighted earth mover's distance. **EMD is not part of the protocol** — do
@@ -889,12 +917,15 @@ passes = abs(z) < 1.96                                       # two-sided p < 0.0
 ERA5Monthly/Hourly, ESACCICloud, ESACCISST, NOAAERSSTv5, HadISST, EN4, IAP, OSI450NH/SH,
 NSIDCG02202SH), with `CMIP6HistoricalR1I1P1F1` as the comparison ensemble. The
 **scoring layer** is CB2's — `climatebench2/scoring.py` (pure numpy),
-`diags/tier2_scores.py` (`ScoredAnnualMeanTimeSeries`, `ScoredMonthlyMeanTimeSeries`,
-`ScoredAnnualMaxTimeSeries`, `TrendConsistency`), `diags/tier2_diagnostics.py`
-(Pinatubo, hemispheric asymmetry), `baselines.py`, `leaderboard/` — and was built
-against the **previous** two-regime spec; it has **not yet been re-aligned** to the
-2026-09 fair-CRPS protocol. Nothing probabilistic exists in ClimateEval/ESMValTool (they
-are deterministic-only), so the scoring layer stays bespoke by design. The legacy
+`climatebench2/scoring_pass.py` (the post-suite pass), `diags/tier2_scores.py`
+(`ScoredAnnualMeanTimeSeries`, `ScoredMonthlyMeanTimeSeries`,
+`ScoredAnnualMaxTimeSeries` — thin aliases now — and `TrendConsistency`),
+`diags/tier2_diagnostics.py` (Pinatubo, hemispheric asymmetry), `baselines.py`,
+`leaderboard/`. ✅ **Re-aligned to the 2026-09 fair-CRPS protocol on 2026-09-14**
+(gap item 3) for regime (a) and the skill score; regime (b)'s reference-EOF engine is
+still the old model-variability z-test. Nothing probabilistic exists in
+ClimateEval/ESMValTool (they are deterministic-only), so the scoring layer stays
+bespoke by design. The legacy
 `esmvaltool/recipe_pr_rmse.yml` prototype and `benchmark_utils.MetricCalculation` are
 gone.
 
@@ -903,13 +934,13 @@ gone.
 | Diagnostic / component | Spec regime | Status (2026-09-14) | Code / provider |
 |---|---|---|---|
 | Deterministic metrics (weighted RMSE / Pearson / EMD; maps, zonal lines, annual cycles) | — | ✅ from ClimateEval for every suite variable; shown by `climateeval report` and `climatebench2 leaderboard --csv` — display only, EMD is **not** a protocol score | ClimateEval `SimpleDiagnostic` metrics |
-| **Fair** CRPS of ensemble time series | (a) | 🟡 `scoring.crps_ensemble` is the **empirical** estimator — spread term `½·(1/M²)ΣᵢΣⱼ\|xᵢ−xⱼ\|`, not `1/(2M(M−1))`; M = 1 silently falls through to \|x−y\| (paper: undefined) | `climatebench2/scoring.py`, `diags/tier2_scores.py` |
+| **Fair** CRPS of ensemble time series | (a) | ✅ (2026-09-14, gap item 3, `a4c5948`/`732e860`) `scoring.crps_fair` — spread term `1/(2M(M−1))ΣᵢΣⱼ\|xᵢ−xⱼ\|`, i.e. the average over the i ≠ j pairs; **M < 2 raises** (never \|x−y\|), and a single-member model is reported as `n/a (single member)`. The empirical `crps_ensemble` is deleted rather than left as a trap. Unit-tested for the two-member analytic case and for size-independence (M = 2 vs M = 20) | `climatebench2/scoring.py`, `scoring_pass.py` |
 | ESS correction on the reported SE | (a) | ✅ `crps_ess_score` (lag-1 r → T_eff; `crps_se`, `t_eff`, `r1` emitted) | `scoring.py` |
 | Fair CRPS on fixed pre-2015 **reference** EOFs, standardised coefficients, block bootstrap | (b) | ❌ — `eof_basis`/`project_onto_eofs` exist but build the basis from *model/piControl* variability and feed a Bonferroni z-test (`field_consistency`); no reference basis, no per-coefficient fair CRPS, no bootstrap; **no diagnostic wires them** | `scoring.py` (unwired) |
 | Ensemble-consistency test — complementary | (c) | 🟡 `ensemble_consistency` (Gaussian z, σ² = var_ens + σ_int² + σ_obs²) wired only through `TrendConsistency`; `sigma_internal` hard-wired 0 (`chunked_statistic_std` exists, never called), `sigma_obs` a kwarg defaulting to 0; no Mahalanobis / empirically calibrated null / variance-explained truncation | `scoring.py`, `tier2_scores.TrendConsistency` |
-| Skill score S = 1 − E/E_ref, E_ref = CMIP6 median, leave-one-out | — | 🟡 leaderboard shows skill vs the **Climatology** row only; the `CMIP6-MME` row is a **pooled** r1i1p1f1 mixture (the form ruled out above); no leave-one-out | `leaderboard/_crps_table_html`, `tier2_scores._ScoredTimeSeriesMixin` |
-| Moving-block-bootstrap CIs; observational-uncertainty draws | (a)/(b) | ❌ | — |
-| Multi-member submissions | — | 🟡 ingestion done (2026-09-14, gap item 4): `--member LABEL=PATH` and DRS `r*i*p*f*` auto-discovery run every cube suite once per member, appending rows with distinct `data_id`s (`variant`). **Scoring still treats each member as its own M = 1 "ensemble"** — stacking a model's members into one fair-CRPS forecast is gap item 3 | `_cli.py`, `tier2_scores.py` |
+| Skill score S = 1 − E/E_ref, E_ref = CMIP6 median, leave-one-out | — | ✅ **code** (2026-09-14, `732e860`): `E_ref` = median of the per-model fair CRPS over comparison models with M ≥ 2, excluding any whose name equals the scored model's; `skill`, `e_ref`, `n_ref_models` are metrics columns and the leaderboard shows S per model and variable (clipped at −1), the Climatology skill alongside. ❗ **numerically empty until the upstream post-2015 multi-member CMIP6 generator lands** — today's r1i1p1f1 comparison models are all M = 1, so `E_ref` has nothing to take a median of and the cells fall back to the raw CRPS. Pooled `CMIP6-MME` deleted | `scoring_pass.score_raw_output`, `leaderboard/_crps_table_html` |
+| Moving-block-bootstrap CIs; observational-uncertainty draws | (a)/(b) | ✅ for (a) (2026-09-14, `a4c5948`): `scoring.moving_block_bootstrap_ci` (blocks from `tier2.bootstrap`, optional member resampling; `crps_ci_lo`/`crps_ci_hi` columns) and `scoring.crps_fair_with_obs_draws` (common draws from `tier2.obs_uncertainty.seed`, σ_obs = 0 reproduces the plain fair CRPS exactly). 🟡 no σ_obs field is plumbed through yet, so the draws are a no-op in practice; ❌ for (b), which has no engine | `scoring.py`, `scoring_pass.py` |
+| Multi-member submissions | — | ✅ (2026-09-14, gap items 4 + 3, `a4cca38`/`732e860`): `--member LABEL=PATH` and DRS `r*i*p*f*` auto-discovery run every cube suite once per member, appending rows with distinct `data_id`s (`variant`); the scoring pass then **groups those rows by model name** (`data_sources` maps id → (name, variant)) and stacks the members on the times they share with the reference into one fair-CRPS forecast. `n_members` is reported per row | `_cli.py`, `scoring_pass.group_members`/`stack_members` |
 | tas monthly/annual anomalies | (a) | 🟡 scored vs **HadCRUT5 only** (paper: GISS, Berkeley Earth, HadCRUT, NOAA GlobalTemp — ClimateEval has no DataSource for the other three); no GSAT blending correction; HadCRUT5 error field not used as σ_obs | `ScoredAnnualMeanTimeSeries` + `climateeval.data.HadCRUT5` |
 | tas daily extremes (TXx, TNn, TX90p, warm-spell duration) | (b) | 🟡 only a TXx-like global-mean annual block maximum (`ScoredAnnualMaxTimeSeries`) on daily **`tasmax`** (id `tasmax_txx`, ✅ 2026-09-14), against a **placeholder `ERA5Monthly` reference** (wrong frequency) — no daily obs DataSource (Berkeley daily, HadGHCND) exists; TNn/TX90p/WSDI ❌ | `ClimateBench2_TierII_daily.yml` |
 | Perkins skill score (daily T and wet-day pr PDFs, 1 mm/day, ~1° conservative regrid, moving-baseline anomalies) | — | ❌ (ClimateEval `Histogram` yields EMD, not the protocol statistic; regridding is linear to 2°) | — |
@@ -928,7 +959,7 @@ gone.
 | Seasonal cycle: land annual T range; SST–low-cloud covariance; seasonal CRE–SST feedback | (b) | ❌ (ClimateEval `AnnualCycle` runs deterministically for the core variables; none of the three protocol statistics is computed) | — |
 | Diurnal cycle (first-harmonic amplitude/phase of pr and CRE, local solar time) | (b) | 🟡 ClimateEval `DiurnalCycle` of hourly pr vs `ERA5Hourly`, deterministic; `physics.first_harmonic` exists, unwired; CRE diurnal ❌; IMERG / CERES-SYN DataSources ❌ | `ClimateBench2_TierII_daily.yml` |
 | Held-out vs in-sample labelling | — | ❌ leaderboard has no such column | `leaderboard/` |
-| Baselines | — | 🟡 **Climatology** row wired (`_climatology_row`) from `tier2.climatology_baseline_period` (✅ now [1985, 2014] — no longer overlapping the reserved test window); **pattern scaling**: `baselines.two_layer_ebm` + `pattern_scaling_forecast` are pure functions — unwired, uncalibrated (Geoffroy-2013 defaults in `tier2.ebm`), no ERF series or CMIP6-MMM pattern in the package; **CMIP6 MME**: pooled (see skill-score row) | `baselines.py`, `tier2_scores.py` |
+| Baselines | — | 🟡 **Climatology** row wired as a *distribution* of the 1985–2014 values per calendar month (30 pseudo-members; ⚠ CB2 interpretation, see the Tier II preamble), scored on the test-window steps; it emits an explicit `reason` row when the database holds no baseline window at all — which is the normal case for a Tier II run, since the suite cuts the reference to the test window too (a data-path fix, not a scoring one). **Pattern scaling**: `two_layer_ebm` + `pattern_scaling_forecast` remain pure functions, unwired and uncalibrated; `scoring_pass.PATTERN_SCALING_DATA_ID` is the declared hook. **CMIP6 MME**: pooled row deleted; the headline reference is the median of per-model scores | `baselines.py`, `scoring_pass.py` |
 | **CMIP6 reference ensemble for the test window** | — | ❌ (*upstream*) ClimateEval's `CMIP6HistoricalR1I1P1F1` generator is hard-wired to `ensemble: r1i1p1f1` and `timerange: 19790101/20141231`; there is **no SSP2-4.5 or historical+SSP2-4.5 generator and no multi-member variant**, so neither a per-model fair CRPS of the CMIP6 reference (≥ 2 members) nor any post-2015 CMIP6 comparison can be assembled — an upstream `CMIP6HistoricalSSP245` generator with `ensemble: "r*i1p1f1"` is the blocking dependency. CB2 now runs the Tier II suites on the test window regardless and warns that the comparison rows will be empty until it lands | `climateeval/data/_cmip6_generators.py` |
 
 ## II.0 Machinery as built (`climatebench2/scoring.py`, `diags/tier2_scores.py`, `baselines.py`, `leaderboard/`)
@@ -953,13 +984,24 @@ are ClimateEval DataSources named in the suite YAML (`reference_data:` /
 `other_data:`), regridded to the common 2° grid and reduced with ESMValCore
 preprocessors. No data loading, regridding or unit handling remains in CB2.
 
-**Scoring engine (`scoring.py`, numpy/scipy only, 24 unit tests).**
-- `crps_ensemble(members, obs)` — per-time-step **empirical** CRPS
-  `E|X−y| − ½E|X−X′|` with the pairwise mean over all M² ordered pairs → 🟡 make it
-  fair (multiply the spread term by `M/(M−1)`, or average over i ≠ j) and raise for
-  M = 1 instead of returning |x − y|.
-- `lag1_autocorrelation`, `effective_sample_size`, `crps_ess_score` →
-  `CRPSScore(score, standard_error, t_eff, r1, n_members, n_time)` ✅ regime (a).
+**Scoring engine (`scoring.py`, numpy/scipy only, no protocol constants, 27 unit
+tests).**
+- `crps_fair(members, obs)` — per-time-step **fair (Ferro)** CRPS,
+  `E|X−y| − (1/(2M(M−1)))ΣᵢΣⱼ|xᵢ−xⱼ|`, i.e. the spread term averaged over the i ≠ j
+  pairs, so the expected score of a calibrated ensemble does not depend on M ✅.
+  **Raises for M < 2** — the paper's "undefined for a deterministic forecast" is
+  enforced, not approximated by |x − y|. The empirical `crps_ensemble` is deleted.
+- `crps_fair_with_obs_draws(members, obs, obs_sigma, n_draws, seed)` — the fair CRPS
+  averaged over pseudo-observations `y_k ~ N(obs, σ_obs)` drawn from a fixed seed, so
+  a submission and its baselines see the *same* draws; `σ_obs = 0` reproduces
+  `crps_fair` exactly and draws no random numbers ✅ (no σ_obs field is wired yet).
+- `moving_block_bootstrap_ci(crps_t, block_length, n_boot, alpha, seed, members, obs)`
+  — percentile CI of the time-mean CRPS from moving blocks of the per-step series,
+  optionally resampling ensemble members and recomputing the fair CRPS per replicate
+  ✅. Defaults for the protocol are in `thresholds.yml tier2.bootstrap`.
+- `lag1_autocorrelation`, `effective_sample_size`, `crps_ess_score`,
+  `crps_ess_from_series` → `CRPSScore(score, standard_error, t_eff, r1, n_members,
+  n_time)` ✅ regime (a); the ESS correction is on the SE only.
 - `chunked_statistic_std(series, chunk_length, "mean"|"trend")` — piControl
   internal-variability σ for an observation-length statistic ✅ (never called).
 - `ensemble_consistency(values, obs, sigma_internal, sigma_obs, p_threshold)` →
@@ -972,43 +1014,84 @@ preprocessors. No data loading, regridding or unit handling remains in CB2.
 - Tier III: `proxy_site_consistency`, `sample_at_sites`, `le_variance_ratio`,
   `le_spread_pattern_correlation` (§III).
 
-**Scored diagnostics (`diags/tier2_scores.py`).** `_ScoredTimeSeriesMixin.get_output`
-post-processes any ClimateEval time-series diagnostic's `raw_output`: per variable it
-(i) scores the submission and each `other` CMIP6 model as an M = 1 "ensemble" against
-the `reference` series (→ |x − y|, see above), (ii) pools **all** `other` members into
-one `CMIP6-MME` baseline row, (iii) adds a `Climatology` baseline row from the
-reference's own climatology over `tier2.climatology_baseline_period`; rows carry
-`crps`, `crps_se`, `t_eff`, `n_members`, `n_time`. `ScoredAnnualMaxTimeSeries`
-overrides `_preprocess` to a per-gridpoint annual maximum before the area mean.
-`TrendConsistency` emits `<var>_trend_consistency` rows (`value` = observed trend, `z`,
-`p_value`, `ensemble_mean`, `total_sigma`, `n_members`, `passes`) with the ensemble =
-submission + CMIP6 members' trends.
+**Scored diagnostics (`diags/tier2_scores.py`).** ✅ **Restructured 2026-09-14 (gap
+item 3, `732e860`).** `ScoredAnnualMeanTimeSeries` / `ScoredMonthlyMeanTimeSeries` /
+`ScoredAnnualMaxTimeSeries` are now **thin subclasses of the ClimateEval diagnostics**
+so the suite YAMLs stay valid; they emit the raw series and ClimateEval's
+deterministic metrics and nothing else (`ScoredAnnualMaxTimeSeries` still overrides
+`_preprocess` to a per-gridpoint annual maximum before the area mean). They no longer
+emit M = 1 CRPS rows, and the pooled `CMIP6-MME` row is gone.
+`TrendConsistency` is unchanged: `<var>_trend_consistency` rows (`value` = observed
+trend, `z`, `p_value`, `ensemble_mean`, `total_sigma`, `n_members`, `passes`) with the
+ensemble = submission + CMIP6 members' trends, σ_int still 0 (the next work package).
 
-**Baselines (`baselines.py`).** `climatology_forecast` ✅ (wired), `two_layer_ebm`
-(Held/Geoffroy two-layer, explicit Euler, parameters from `thresholds.yml tier2.ebm`)
-and `pattern_scaling_forecast` — pure functions, **not wired** into any diagnostic; no
-ERF series, no observational calibration through 2014, no CMIP6-MMM pattern in the
-package.
+**Scoring pass (`scoring_pass.py`, ✅ 2026-09-14, gap item 3, `732e860`).** The
+probabilistic score is a **post-processing pass over the finished database**, not a
+diagnostic: ensemble members are ingested as separate data sources (gap item 4), so a
+model's fair CRPS can only be formed after every member has run. `climatebench2 score`
+runs it over the databases it wrote (`--no-score` skips), and `climatebench2
+leaderboard --rescore DB…` re-runs it over existing ones. Per time-series diagnostic
+(a `raw_output` with a `time` column and a `reference` source) and per variable:
+1. `source_names` reads `data_sources` for `data_id → name` (the id is
+   `category_name_exp_variant`, so members differ only in `variant`), and
+   `group_members` groups the non-reference rows by **(data_type, name)** — one entry
+   per model, however many members it has. A `data_id` missing from `data_sources`
+   keeps its id as its name, so older/hand-built databases still work.
+2. `stack_members` inner-joins the members on the times they share with the reference
+   → `(M, T)` plus the observed series.
+3. M ≥ 2 → fair CRPS per step (through `crps_fair_with_obs_draws`, currently
+   σ_obs = 0), time mean, ESS-corrected SE, moving-block-bootstrap CI. M = 1 → a row
+   with `crps = NaN` and `reason = "single member"`, which the leaderboard renders
+   `n/a (single member)`.
+4. The `Climatology` baseline row (see Baselines above), and `E_ref` = **median of the
+   per-model fair CRPS over the `other` models with M ≥ 2, leaving out any whose name
+   equals the scored model's**; `skill = 1 − E/E_ref`.
+Rows are appended to the diagnostic's **own `metrics` table** — never a new schema —
+with `ALTER TABLE ADD COLUMN` for the new numeric columns
+(`scorer`, `reason`, `crps`, `crps_se`, `crps_ci_lo`, `crps_ci_hi`, `t_eff`, `r1`,
+`n_members`, `n_time`, `block_length`, `e_ref`, `n_ref_models`, `skill`) and
+`scorer = "climatebench2"` on every row, deleted before a re-run, so the pass is
+idempotent.
+
+**Baselines (`baselines.py`).** `climatology_pseudo_members` ✅ (wired through
+`scoring_pass`) — the climatology as a *distribution* rather than a deterministic mean
+(⚠ CB2 interpretation, Tier II preamble). `two_layer_ebm` (Held/Geoffroy two-layer,
+explicit Euler, parameters from `thresholds.yml tier2.ebm`) and
+`pattern_scaling_forecast` remain pure functions, **not wired**; no ERF series, no
+observational calibration through 2014, no CMIP6-MMM pattern in the package —
+`scoring_pass.PATTERN_SCALING_DATA_ID` is the hook they will write through.
 
 **Leaderboard (`leaderboard/__init__.py`).** `build_scores` classifies `metrics` rows
 into gates (`passes` without `p_value`, plus declared-N/A rows with `applicable = 0`),
-CRPS (`crps`), consistency (`p_value`), deterministic (`weighted_*`) and Tier III
+CRPS (`crps`, **plus every row the pass wrote — a NaN score with a `reason` is a
+result to show**), consistency (`p_value`), deterministic (`weighted_*`) and Tier III
 (`*_site_consistency` in `raw_output`), filling `requirement`/`applicable` from the gate
 classes for databases written before those columns existed; `render_html` writes a
 self-contained static page: the Tier I scorecard in its three groups (Required with the
-`Entry ticket` column, Extended, extra), the Tier II CRPS table with skill relative to
-the **Climatology** row only, the Tier II event flags, the consistency table and the
-Tier III fractions. `build_scores_table` reuses ClimateEval's `build_leaderboard_data`
-for the deterministic CSV summary. Missing versus the paper's scorecard (§5.6): `S`
-against the CMIP6 median with leave-one-out, held-out/in-sample labels, bootstrap
-intervals, per-region resolution, the "non-conforming" category.
+`Entry ticket` column, Extended, extra), the **Tier II skill table** (✅ 2026-09-14),
+the Tier II event flags, the consistency table and the Tier III fractions.
+The Tier II table shows, per model and variable, the headline
+`S = 1 − E/E_ref` against the CMIP6 median — **clipped at −1 for display** (▼), per
+the paper — with the Climatology-baseline skill in small text underneath, the fair
+CRPS, its bootstrap interval, SE and ensemble size in the cell tooltip,
+`n/a (single member)` where the protocol cannot score, and a final row giving the
+number of CMIP6 models behind `E_ref`. Where no comparison ensemble exists (today's
+normal case) the cell falls back to the raw CRPS and says so in the tooltip.
+`build_scores_table` reuses ClimateEval's `build_leaderboard_data` for the
+deterministic CSV summary (`--csv`, unchanged). Still missing versus the paper's
+scorecard (§5.6): held-out/in-sample labels, per-region resolution, the
+"non-conforming" category.
 
-**Mapping to the Tier II spec.** Present: ESS-corrected time-averaged CRPS, scalar
-consistency test, EOF primitives, climatology baseline, MME row, static leaderboard.
-Absent or misaligned: fair normalisation and the M = 1 rule, reference-EOF fair-CRPS
-scoring, block bootstrap, observational-uncertainty propagation, piControl σ wiring,
-CMIP6-median skill score, leave-one-out, multi-member ingestion, the 1985–2014 baseline
-window, and the post-2015 CMIP6 reference ensemble (an upstream ClimateEval gap).
+**Mapping to the Tier II spec (2026-09-14, after gap item 3).** Present: **fair CRPS
+with the M = 1 rule**, **member stacking by model name**, ESS-corrected SE, **moving-
+block bootstrap**, **observational-uncertainty draws** (machinery; σ_obs still 0),
+**CMIP6-median `E_ref` with leave-one-out**, the climatology baseline on the 1985–2014
+window, the scalar consistency test, EOF primitives, the static leaderboard with the
+skill table. Absent or misaligned: reference-EOF fair-CRPS scoring for regime (b),
+piControl σ_int wiring, the pattern-scaling baseline, an observational error field for
+σ_obs, held-out labels, and — **the binding constraint on every Tier II number** — the
+post-2015 multi-member CMIP6 reference ensemble (an upstream ClimateEval gap: without
+it `E_ref` has no models with M ≥ 2 and the skill column is empty).
 
 **Target pseudocode for regime (a) as specced:**
 ```python
@@ -1176,11 +1259,14 @@ normalized warming pattern (+ climatology) — the simplest defensible emulator,
 alongside. All three run through the identical scoring pipeline, but only (i) sets the
 headline `S`.
 
-*Status: 🟡.* (i) pooled `CMIP6-MME` row (single r1i1p1f1 member per model, all
-pooled) — not the median of per-model scores, and pending the paper's own
-mixture-vs-median resolution; (ii) `Climatology` row wired, from
-`tier2.climatology_baseline_period` = ✅ [1985, 2014]; (iii) `baselines.two_layer_ebm`
-+ `pattern_scaling_forecast` unwired, uncalibrated, no ERF series or MMM pattern.
+*Status: 🟡.* (i) ✅ **median of the per-model fair CRPS with leave-one-out**
+(2026-09-14, `732e860`; the pooled `CMIP6-MME` row is deleted) — but numerically empty
+until the upstream multi-member CMIP6 generator lands, and pending the paper's own
+§5.4 mixture-vs-median fix; (ii) `Climatology` row wired from
+`tier2.climatology_baseline_period` = ✅ [1985, 2014], scored as the **distribution**
+of that window's per-calendar-month values (⚠ CB2 interpretation, Tier II preamble);
+(iii) `baselines.two_layer_ebm` + `pattern_scaling_forecast` unwired, uncalibrated, no
+ERF series or MMM pattern — `scoring_pass.PATTERN_SCALING_DATA_ID` is the hook.
 
 ---
 
@@ -1334,7 +1420,7 @@ as on data.
 | Tier | Specced diagnostics | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|
 | I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras; all tagged Required / Extended / extra, entry ticket over the Required group only | 15 — I.1, I.2a, I.2b, I.3a, I.3b, I.4a, I.4b, I.5a, I.5b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 2 — I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
-| II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | ESS correction; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval; climatology-baseline row on the correct 1985–2014 pre-test window; static leaderboard | empirical (not fair) CRPS; single-member scoring; Gaussian consistency test without σ_int; pooled MME; sign-only Pinatubo & hemispheric asymmetry; TXx reference still a monthly placeholder; sea-ice area not extent; single obs product per variable | reference-EOF fair-CRPS scoring; block bootstrap; obs-uncertainty draws; CMIP6-median skill score; realized warming level & blending; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval)** |
+| II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | **fair CRPS with the M = 1 rule; member stacking by model name; ESS correction; moving-block bootstrap; observational-uncertainty draw machinery; CMIP6-median `E_ref` with leave-one-out; the skill table in the leaderboard**; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval; climatology baseline on the correct 1985–2014 pre-test window | climatology baseline scored as a distribution (CB2 interpretation, ⚠); σ_obs = 0 (no obs error field); Gaussian consistency test without σ_int; sign-only Pinatubo & hemispheric asymmetry; TXx reference still a monthly placeholder; sea-ice area not extent; single obs product per variable | reference-EOF fair-CRPS scoring for regime (b); realized warming level & blending; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval) — without it `E_ref` and every skill number stay empty** |
 | III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | monsoon gate | site-consistency fraction for the three periods — disconnected from the pipeline's NetCDFs, tas-only, DA products instead of raw proxies; LE-spread functions | fair CRPS with block pseudo-members; raw SST proxy compilations; perfect-model suite and data |
 
 **Cross-cutting discrepancies (paper vs current `climatebench2/` code) — complete list,
@@ -1364,19 +1450,32 @@ as on data.
 8. I.7 "2015" = last-30-yr mean (paper: decadal mean centred on 2015); no parallel-segment
    drift removal. Paper-side: App. B.8 writes `F = ΔN + λΔT` with a negative Gregory λ —
    sign should read `ΔN − λΔT` (code is right).
-9. **Fair vs empirical CRPS** — `scoring.crps_ensemble` uses the `M²` spread normalisation;
-   M = 1 falls through to |x − y| instead of being undefined.
-10. **`E_ref`** — the leaderboard's only skill is vs Climatology; the `CMIP6-MME` row is a
-    pooled mixture. The paper itself says "unweighted mixture" (§5.4) and "median E"
-    (Fig. 4 caption) — resolve in the manuscript, then implement median-of-per-model
-    with leave-one-out.
+9. ~~**Fair vs empirical CRPS** — `scoring.crps_ensemble` uses the `M²` spread
+   normalisation; M = 1 falls through to |x − y| instead of being undefined.~~
+   **DONE (2026-09-14, gap item 3, `a4c5948`):** `scoring.crps_fair` normalises the
+   spread term by `1/(2M(M−1))` and **raises** for M < 2; the empirical estimator is
+   deleted, and a single-member model is reported as `n/a (single member)` rather
+   than scored on |x − y|.
+10. **`E_ref`** — **code DONE (2026-09-14, gap item 3, `732e860`):** `E_ref` is the
+    median of the per-model fair CRPS over comparison models with M ≥ 2, excluding any
+    whose name equals the scored model's (leave-one-out); the pooled `CMIP6-MME` row is
+    deleted and the leaderboard's headline is `S` against that median, with the
+    Climatology skill alongside. *Still open, paper-side:* §5.4 still defines the
+    reference as an "unweighted **mixture**" while the Fig. 4 caption says "**median**
+    E" — the code follows Fig. 4, and §5.4 needs Duncan's fix. *Still open,
+    upstream:* with today's single-member r1i1p1f1 comparison ensemble no comparison
+    model reaches M ≥ 2, so `E_ref` is empty in practice (#13).
 11. ~~`tier2.climatology_baseline_period = [1990, 2020]` overlaps the reserved test
     window~~ — **DONE (2026-09-14, gap item 1):** `[1985, 2014]` for both the
     Climatology baseline and the Pinatubo reference; `baselines.py` docstrings follow,
     and the hemispheric-asymmetry era is now `tier2.hemispheric_asymmetry.era`.
-12. Aggregated-diagnostic scoring is the old model-variability-EOF z-test
+12. Aggregated-diagnostic scoring is still the old model-variability-EOF z-test
     (`field_consistency`, unwired); the paper wants reference-EOF fair CRPS with
-    standardised coefficients and a block bootstrap.
+    standardised coefficients and a block bootstrap. *Partly done (2026-09-14, gap
+    item 3):* the fair CRPS and the moving-block bootstrap now exist as engine
+    primitives and are wired for regime (a); what is missing for (b) is the
+    **reference's** fixed pre-2015 EOF basis, the per-coefficient standardisation and
+    the spatial (rather than temporal) blocks.
 13. **Test window** — ~~the CLI default `--timerange 19790101/20141231` applies to
     every suite~~ **CB2 side DONE 2026-09-14 (gap item 4):** each suite gets its own
     window from `_cli.SUITE_REGISTRY`, and the Tier II suites default to
@@ -1385,12 +1484,14 @@ as on data.
     ClimateEval's `CMIP6HistoricalR1I1P1F1` is hard-wired to 1979–2014 and r1i1p1f1 and
     there is no SSP2-4.5 generator, so the post-2015 CMIP6 reference rows are empty —
     the CLI says so rather than failing.
-14. Multi-member submissions — **ingestion DONE 2026-09-14 (gap item 4):** `--member
-    LABEL=PATH` plus `r*i*p*f*` DRS auto-discovery, one run per member per cube suite
-    with distinct `data_id`s appended into the same database (complex suites run once,
-    on the first member). *Still open:* the scoring layer treats each member as its own
-    M = 1 ensemble — stacking members by model name into one fair-CRPS forecast is gap
-    item 3.
+14. ~~Multi-member submissions — the scoring layer treats each member as its own
+    M = 1 ensemble.~~ **DONE:** ingestion 2026-09-14 (gap item 4, `a4cca38`) —
+    `--member LABEL=PATH` plus `r*i*p*f*` DRS auto-discovery, one run per member per
+    cube suite with distinct `data_id`s appended into the same database (complex
+    suites run once, on the first member) — and **stacking** the same day (gap item 3,
+    `732e860`): `scoring_pass` maps `data_id → (name, variant)` through the
+    `data_sources` table, groups by name and scores each model's members as one
+    fair-CRPS ensemble.
 15. Sea ice: ClimateEval computes area, the paper scores extent (15 % threshold).
 16. TXx now uses daily `tasmax` (registry variable, suite id `tasmax_txx`; **done**
     2026-09-14 with gap item 0) but still against an `ERA5Monthly` placeholder
@@ -1462,14 +1563,31 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    `Entry ticket` column computed over the Required group only — ✓ (all applicable
    Required passed, N/A allowed), ✗ (an applicable Required failed), ⚠ (a Required check
    has no row), — for cells that were never run (#17).
-3. **Scoring engine to the 2026-09 spec** (blocking for any Tier II number): fair CRPS
-   with the M = 1 rule (#9); **stack the ingested members** — `--member` / DRS discovery
-   now writes one `data_id` per member (gap item 4), so what is left is grouping those
-   rows by model name into a member dimension inside the scored diagnostics (#14);
-   `E_ref` = median per-model fair CRPS with leave-one-out once the paper settles #10;
-   reference-EOF fair-CRPS for fields, block bootstrap, observational-uncertainty draws
-   (#12); wire `chunked_statistic_std` as σ_int through a `picontrol` path.
-4. **Test-window data path** — **CB2 side DONE 2026-09-14 (this commit).** A per-suite
+3. **Scoring engine to the 2026-09 spec** — **core DONE 2026-09-14
+   (`a4c5948` + `732e860`).** `scoring.crps_fair` is Ferro's fair estimator with the
+   `1/(2M(M−1))` spread term and a hard `ValueError` for M < 2 (#9);
+   `crps_fair_with_obs_draws` averages over common pseudo-observation draws and
+   `moving_block_bootstrap_ci` gives the reported interval (part of #12);
+   `climatology_pseudo_members` makes the no-skill floor scorable under fair CRPS
+   (⚠ CB2 interpretation, Tier II preamble). The scoring layer moved out of the
+   diagnostics into **`climatebench2/scoring_pass.py`**, a post-processing pass over
+   the finished DuckDBs (`score` runs it, `--no-score` skips, `leaderboard --rescore`
+   re-runs; idempotent via a `scorer` column): it groups `raw_output` rows by model
+   **name** through the `data_sources` table, stacks a model's members into one
+   fair-CRPS ensemble (#14), computes `E_ref` = median of the per-model scores with
+   leave-one-out and writes `skill`, `e_ref`, `n_ref_models` next to `crps`,
+   `crps_se`, `crps_ci_lo/hi`, `t_eff`, `n_members`, `n_time` in the diagnostic's own
+   `metrics` table (#10, code side); the pooled `CMIP6-MME` row is deleted and the
+   leaderboard renders S per model and variable, clipped at −1.
+   *Still open here:* the regime-(b) engine — fair CRPS on the reference's fixed
+   pre-2015 EOFs with standardised coefficients and a spatial block bootstrap (#12);
+   an observational σ_obs field to make the draws bite (HadCRUT5's error field);
+   wiring `chunked_statistic_std` as σ_int through a `picontrol` path; the
+   pattern-scaling baseline (hook: `scoring_pass.PATTERN_SCALING_DATA_ID`).
+   *Blocking, upstream:* item 4's `CMIP6HistoricalSSP245` multi-member generator —
+   until it lands no comparison model has M ≥ 2, so `E_ref` is empty and the skill
+   column has nothing to show.
+4. **Test-window data path** — **CB2 side DONE 2026-09-14 (`a4cca38`).** A per-suite
    registry in `_cli.py` gives every suite the data shape and window the protocol asks
    for: the experiment-based suites load `historical` (and every other experiment) in
    **full**, so the aerosol-era, Pinatubo, clear-sky and ITCZ–EFE gates see the whole

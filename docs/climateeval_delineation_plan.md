@@ -42,7 +42,7 @@ lives* and *how CB2 calls ClimateEval* to produce it.
 
 | Decision | Choice | Consequence |
 |---|---|---|
-| Where the scoring layer lives (pass/fail thresholds, CRPS-ESS, ensemble-consistency, baselines) | **CB2 custom diagnostics (plug-in)** | CB2 ships `Diagnostic` subclasses that plug into ClimateEval's suite/DataSource/report framework by class-path reference. CB2 owns the protocol; ClimateEval does all I/O + preprocessing. |
+| Where the scoring layer lives (pass/fail thresholds, fair CRPS, ensemble-consistency, baselines) | **CB2 custom diagnostics (plug-in) + a CB2 post-suite pass** | CB2 ships `Diagnostic` subclasses that plug into ClimateEval's suite/DataSource/report framework by class-path reference. The Tier II *probabilistic* score cannot be one of them — ensemble members arrive as separate data sources, so it is a pass over the finished DuckDBs (`scoring_pass.py`) that appends rows to each diagnostic's own `metrics` table. CB2 owns the protocol; ClimateEval does all I/O + preprocessing. |
 | Leaderboard presentation | **New thin CB2 leaderboard** | A minimal standalone page generated from the scores table — not ClimateEval's report, not the legacy `ClimateBench_app`. |
 | Fate of bespoke `benchmark_scrips/` | **Retire as ClimateEval reaches parity** | Each bespoke script is deleted only once a CB2-diagnostic-on-ClimateEval covers it. No coverage gap. |
 | Relationship to ClimateEval | **Third-party dependency** (authors: M. Schlund, A. Paçal; `climate-federation` org — not us) | CB2 consumes it via pixi/pip and contributes via PRs. CB2 must **not** assume it can refactor ClimateEval internals; anything CB2-specific stays in CB2 unless upstream accepts it. |
@@ -142,6 +142,8 @@ climatebench2/                 # NEW: the installable package (was loose scripts
 │   ├── ClimateBench2_TierII.yml           # + _TierII_daily.yml, _TierII_events.yml
 │   └── ClimateBench2_TierIII.yml
 ├── thresholds.yml             # single source of truth for every pass/fail bound (from metrics_reference.md)
+├── scoring.py                 # the engine: fair CRPS, ESS + block bootstrap, consistency, EOF (numpy only)
+├── scoring_pass.py            # post-suite Tier II pass: stack members by name -> fair CRPS -> skill vs the CMIP6 median
 ├── leaderboard/               # thin renderer: .ddb -> scores table -> static HTML page
 └── _cli.py                    # `climatebench2 score <model>`  /  `climatebench2 leaderboard <ddb...>`
 pyproject.toml                 # depends on climateeval; entry point climatebench2 = climatebench2._cli:main

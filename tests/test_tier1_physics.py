@@ -39,15 +39,20 @@ def _monthly_cube(
     n_years: int = N_YEARS,
     trend_per_year: float = 0.0,
     series: np.ndarray | None = None,
+    start_year: int = 1850,
+    field: np.ndarray | None = None,
 ) -> Cube:
     """Global monthly cube with a constant (optionally drifting) field.
 
     ``series`` adds a per-timestep offset (length ``n_years * 12``), so a
-    cube can carry an arbitrary global-mean time series.
+    cube can carry an arbitrary global-mean time series; ``field`` (lat, lon)
+    multiplies that offset, so a cube can carry an arbitrary *pattern* times
+    a time series. ``start_year`` moves the record along the 360-day calendar
+    (the calendar-window logic of I.7 needs runs at different epochs).
     """
     n_time = n_years * 12
     time = DimCoord(
-        np.arange(n_time, dtype=float) * 30.0 + 15.0,
+        np.arange(n_time, dtype=float) * 30.0 + 15.0 + (start_year - 1850) * 360.0,
         standard_name="time",
         units=Unit("days since 1850-01-01", calendar="360_day"),
     )
@@ -69,10 +74,11 @@ def _monthly_cube(
     values = value + trend_per_year * years
     if series is not None:
         values = values + np.asarray(series, dtype=float)
-    data = np.broadcast_to(
-        values[:, None, None],
-        (n_time, 18, 36),
-    ).astype(np.float32)
+    if field is None:
+        data = np.broadcast_to(values[:, None, None], (n_time, 18, 36))
+    else:
+        data = value + (values - value)[:, None, None] * np.asarray(field)[None, :, :]
+    data = np.asarray(data, dtype=np.float32)
     return Cube(
         data.copy(),
         var_name=var_name,
@@ -257,6 +263,143 @@ def test_superset_keys_accepted() -> None:
 
     with pytest.raises(ValueError, match="Missing keys"):
         diag.get_output({"4xco2": CubeList([])}, _info())
+
+
+# ---------------------------------------------------------------------------
+# I.7 aerosol forcing: the decadal window and the parallel piControl segment
+# ---------------------------------------------------------------------------
+
+#: piControl 1850-1909 with a warming drift; hist-aer 1870-1899; the child
+#: branched from piControl 1860, i.e. 10 yr before its own first year.
+PI_DRIFT_PER_YEAR = 0.02
+PI_START, PI_YEARS = 1850, 60
+AER_START, AER_YEARS = 1870, 30
+BRANCH_YEAR = 1860
+
+
+def _flux_cubes(
+    toa_net: float,
+    tas: float,
+    *,
+    start_year: int,
+    n_years: int,
+    tas_trend: float = 0.0,
+    toa_trend: float = 0.0,
+) -> CubeList:
+    """tas + the three TOA fluxes of a run, with ``N = toa_net``."""
+    common = {"start_year": start_year, "n_years": n_years}
+    return CubeList(
+        [
+            _monthly_cube("tas", tas, "K", trend_per_year=tas_trend, **common),
+            _monthly_cube("rsdt", 340.0, "W m-2", **common),
+            _monthly_cube("rsut", 100.0, "W m-2", **common),
+            # N = rsdt - rsut - rlut, so a rising rlut lowers N
+            _monthly_cube(
+                "rlut",
+                240.0 - toa_net,
+                "W m-2",
+                trend_per_year=-toa_trend,
+                **common,
+            ),
+        ],
+    )
+
+
+def _aerosol_experiments(*, with_branch_metadata: bool) -> dict:
+    picontrol = _flux_cubes(
+        0.0,
+        288.0,
+        start_year=PI_START,
+        n_years=PI_YEARS,
+        tas_trend=PI_DRIFT_PER_YEAR,
+    )
+    # abrupt-4xCO2 with a Gregory slope of exactly -1 W/m2/K
+    a4x = _flux_cubes(
+        8.0,
+        289.0,
+        start_year=PI_START,
+        n_years=40,
+        tas_trend=0.02,
+        toa_trend=-0.02,
+    )
+    histaer = _flux_cubes(
+        -0.2,
+        287.5,
+        start_year=AER_START,
+        n_years=AER_YEARS,
+    )
+    if with_branch_metadata:
+        for cube in histaer:
+            cube.attributes["branch_time_in_parent"] = float(
+                (BRANCH_YEAR - PI_START) * 360,
+            )
+            cube.attributes["parent_time_units"] = "days since 1850-01-01"
+    return {"picontrol": picontrol, "4xco2": a4x, "histaer": histaer}
+
+
+def _pi_annual_tas(first_year: int, last_year: int) -> float:
+    """Mean of the synthetic control's annual tas over a calendar window."""
+    y = np.arange(first_year - PI_START, last_year - PI_START + 1, dtype=float)
+    # annual mean of `288 + drift * (y + m/12)` over the 12 months of year y
+    return float(288.0 + PI_DRIFT_PER_YEAR * (y + 5.5 / 12.0).mean())
+
+
+def _aerosol_values(*, with_branch_metadata: bool) -> dict[str, float]:
+    from climatebench2.diags import AerosolForcingGate
+
+    diag = AerosolForcingGate("aerosol_forcing", fail_on_missing_data=True)
+    output = diag.get_output(
+        _aerosol_experiments(with_branch_metadata=with_branch_metadata),
+        _info(),
+    )
+    # one row per emitted scalar (nothing joins them), so collapse the column
+    raw = output.raw_output.to_pandas().bfill().iloc[0]
+    metrics = output.metrics.to_pandas().set_index("var_id")
+    return {"raw": raw, "metrics": metrics}
+
+
+def test_aerosol_gate_uses_the_decadal_window_clipped_to_the_record() -> None:
+    """I.7: the 2010-2019 window slides back to the end of a short hist-aer."""
+    out = _aerosol_values(with_branch_metadata=True)
+    raw = out["raw"]
+    # hist-aer stops in 1899, so the last decade available is 1890-1899
+    assert raw["window_first_year"] == AER_START + AER_YEARS - 10
+    assert raw["window_last_year"] == AER_START + AER_YEARS - 1
+
+
+def test_aerosol_gate_removes_drift_with_the_parallel_control_segment() -> None:
+    """Anomalies are against the concurrent control years, not the whole run."""
+    out = _aerosol_values(with_branch_metadata=True)
+    raw = out["raw"]
+    assert raw["parallel_segment"] == 1.0
+    # window 1890-1899 branched at piControl 1860 from a run starting 1870
+    # -> the parallel control segment is 1880-1889
+    expected = 287.5 - _pi_annual_tas(1880, 1889)
+    assert raw["delta_t_end"] == pytest.approx(expected, abs=1e-3)
+    # ... which differs from the long-term-mean answer this used to give
+    assert raw["delta_t_end"] != pytest.approx(
+        287.5 - _pi_annual_tas(PI_START, PI_START + PI_YEARS - 1),
+        abs=1e-3,
+    )
+    assert raw["lambda_4x"] == pytest.approx(-1.0, abs=0.02)
+    assert raw["aerosol_erf_wm2"] == pytest.approx(
+        raw["delta_n_end"] - raw["lambda_4x"] * raw["delta_t_end"],
+        abs=1e-6,
+    )
+    metrics = out["metrics"]
+    assert metrics.loc["aerosol_cooling", "passes"] == 1.0
+    assert metrics.loc["aerosol_erf", "passes"] == 1.0
+
+
+def test_aerosol_gate_falls_back_to_the_long_term_control_mean() -> None:
+    """No branch metadata -> the long-term mean, flagged and warned about."""
+    out = _aerosol_values(with_branch_metadata=False)
+    raw = out["raw"]
+    assert raw["parallel_segment"] == 0.0
+    assert raw["delta_t_end"] == pytest.approx(
+        287.5 - _pi_annual_tas(PI_START, PI_START + PI_YEARS - 1),
+        abs=1e-3,
+    )
 
 
 def test_all_tier1_gates_are_cb2_complex() -> None:

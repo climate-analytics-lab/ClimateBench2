@@ -192,7 +192,7 @@ def parallel_control_window(
     branch_year_in_parent: int,
     child_first_year: int,
 ) -> tuple[int, int]:
-    """The piControl years running parallel to ``window`` of a child run.
+    """Return the piControl years parallel to ``window`` of a child run.
 
     CMIP6 records the branch point as ``branch_time_in_parent`` on the child
     run's own calendar-year axis; year *Y* of the child is then year

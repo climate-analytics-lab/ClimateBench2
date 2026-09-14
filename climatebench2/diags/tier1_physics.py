@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
+from cf_units import Unit
 from esmvalcore.preprocessor import (
     annual_statistics,
     anomalies,
@@ -84,6 +85,29 @@ def _fx(name: str) -> Variable:
     return ScalarVariable(name, name, "fx")
 
 
+def _filled(data: Any) -> np.ndarray:
+    """Return a float array with a masked array's mask turned into NaN.
+
+    ``np.asarray`` on a masked array silently exposes the values *under* the
+    mask, which for an SST product is land — so every array that may carry a
+    mask (an observational reference, a sub-surface pressure level) goes
+    through here.
+    """
+    if np.ma.isMaskedArray(data):
+        return np.ma.filled(data.astype(float), np.nan)
+    return np.asarray(data, dtype=float)
+
+
+def _cube_years_months(cube: Cube) -> tuple[np.ndarray, np.ndarray]:
+    """Calendar ``(years, months)`` of a cube's time coordinate."""
+    coord = cube.coord("time")
+    dates = coord.units.num2date(coord.points)
+    return (
+        np.array([d.year for d in dates], dtype=int),
+        np.array([d.month for d in dates], dtype=int),
+    )
+
+
 def _mon(name: str) -> Variable:
     """Monthly input variable from ClimateEval's registry.
 
@@ -99,26 +123,43 @@ class CB2ComplexDiagnostic(SupersetExperimentMixin, GateMixin, ComplexDiagnostic
 
     # -- preprocessing helpers (all regrid to the common 2x2 grid first) ----
 
+    def _regridded(self, cube: Cube) -> Cube:
+        """Any cube on ClimateEval's common 2°×2° grid (linear)."""
+        with setup_esmvaltool_config_and_logging():
+            cube = regrid(cube, DEFAULT_GRID, "linear", cache_weights=True)
+        return cube  # noqa: RET504
+
     def _cube(
         self,
         data: CubeList | Dataset,
         variable: Variable,
     ) -> Cube:
-        cube = get_prepared_cube(data, variable)
-        with setup_esmvaltool_config_and_logging():
-            cube = regrid(cube, DEFAULT_GRID, "linear", cache_weights=True)
-        return cube
+        return self._regridded(get_prepared_cube(data, variable))
 
     def _annual_global_series(
         self,
         data: CubeList | Dataset,
         variable: Variable,
     ) -> np.ndarray:
+        return self._annual_global_series_years(data, variable)[0]
+
+    def _annual_global_series_years(
+        self,
+        data: CubeList | Dataset,
+        variable: Variable,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """(global annual-mean series, its calendar years).
+
+        The years matter wherever the protocol names a *calendar* window
+        rather than a position in the record (I.7's decadal mean centred on
+        2015, and the parallel piControl segment it is drift-corrected with).
+        """
         cube = self._cube(data, variable)
         with setup_esmvaltool_config_and_logging():
             cube = area_statistics(cube, "mean")
             cube = annual_statistics(cube, "mean")
-        return np.asarray(cube.data, dtype=float)
+        years, _months = _cube_years_months(cube)
+        return _filled(cube.data), years
 
     def _monthly_global_series(
         self,
@@ -131,11 +172,26 @@ class CB2ComplexDiagnostic(SupersetExperimentMixin, GateMixin, ComplexDiagnostic
         return np.asarray(cube.data, dtype=float)
 
     def _toa_net_annual_global(self, data: CubeList | Dataset) -> np.ndarray:
-        rsdt = self._annual_global_series(data, _mon("rsdt"))
-        rsut = self._annual_global_series(data, _mon("rsut"))
-        rlut = self._annual_global_series(data, _mon("rlut"))
-        n = min(rsdt.size, rsut.size, rlut.size)
-        return rsdt[:n] - rsut[:n] - rlut[:n]
+        return self._toa_net_annual_global_years(data)[0]
+
+    def _toa_net_annual_global_years(
+        self,
+        data: CubeList | Dataset,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """(annual global-mean ``N = rsdt − rsut − rlut``, its years)."""
+        series = {
+            name: self._annual_global_series_years(data, _mon(name))
+            for name in ("rsdt", "rsut", "rlut")
+        }
+        years = series["rsdt"][1]
+        for _values, other in series.values():
+            years = np.intersect1d(years, other)
+
+        def aligned(name: str) -> np.ndarray:
+            values, own_years = series[name]
+            return values[np.isin(own_years, years)]
+
+        return aligned("rsdt") - aligned("rsut") - aligned("rlut"), years
 
     def _timemean_zonal(
         self,
@@ -443,10 +499,28 @@ class ArcticAmplificationGate(_UpstreamGate, ArcticAmplification):
 
 
 class AerosolForcingGate(CB2ComplexDiagnostic):
-    """I.7: aerosol ERF ∈ [−2.0, −0.5] W/m² and end-of-record cooling."""
+    """I.7: aerosol ERF ∈ [−2.0, −0.5] W/m² and cooling in 2015.
+
+    Two details of paper App. B.8 that the first implementation approximated
+    (metrics_reference.md discrepancy #8):
+
+    - "2015" is the **decadal mean centred on 2015**
+      (``tier1.aerosol_forcing.window`` = 2010–2019), not the last 30 yr of
+      whatever was supplied. DAMIP ``hist-aer`` runs that stop in 2014 get
+      the window slid back to the last decade they have
+      (:func:`physics.clip_window_to_record`), and the window actually used
+      is emitted with the gate.
+    - control drift is removed with the **parallel piControl segment** — the
+      control years concurrent with that window, located through the CMIP6
+      ``branch_time_in_parent`` / ``parent_time_units`` attributes — rather
+      than with the control's long-term mean, which is only used as a
+      fallback (with a warning) when the branch metadata is absent.
+
+    ERF is still ``ΔN − λ·ΔT`` with λ from the model's own 150-yr Gregory
+    regression (negative, hence the minus sign; see the doc's sign nit).
+    """
 
     _required_data_keys = ("picontrol", "4xco2", "histaer")
-    _end_period_years: ClassVar[int] = 30
 
     _gate_checks = (
         GateCheck(
@@ -464,6 +538,118 @@ class AerosolForcingGate(CB2ComplexDiagnostic):
         ),
     )
 
+    # -- control drift: the piControl segment parallel to the window --------
+
+    @staticmethod
+    def _global_attribute(data: CubeList | Dataset, key: str) -> Any:
+        """Return a CMIP6 global attribute of the cubes, if it survived.
+
+        ``load_cmor_dir`` runs ``equalise_attributes`` over the time-split
+        files of one variable, which drops attributes that *differ* between
+        them (``creation_date``, ``tracking_id``) but keeps the run-level
+        ones — ``branch_time_in_parent`` and ``parent_time_units`` are
+        identical across a run's files, and ``get_prepared_cube`` copies the
+        cube rather than rebuilding it, so they reach here.
+        """
+        attrs = getattr(data, "attrs", None)  # an xarray Dataset
+        if attrs is not None and key in attrs:
+            return attrs[key]
+        try:
+            cubes = list(data)
+        except TypeError:
+            return None
+        for cube in cubes:
+            value = getattr(cube, "attributes", {}).get(key)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
+    def _calendar(data: CubeList | Dataset) -> str | None:
+        """Calendar of the experiment's time axis (the parent shares it)."""
+        try:
+            cubes = list(data)
+        except TypeError:
+            return None
+        for cube in cubes:
+            try:
+                return str(cube.coord("time").units.calendar)
+            except Exception:  # noqa: BLE001, S112 - not every cube has time
+                continue
+        return None
+
+    def _branch_year_in_parent(self, data: CubeList | Dataset) -> int | None:
+        """Return the piControl calendar year the child run branched from."""
+        branch = self._global_attribute(data, "branch_time_in_parent")
+        units = self._global_attribute(data, "parent_time_units")
+        if branch is None or units is None:
+            logger.warning(
+                f"Diagnostic '{self.name}': hist-aer carries no "
+                f"branch_time_in_parent/parent_time_units",
+            )
+            return None
+        calendar = self._calendar(data)
+        try:
+            unit = (
+                Unit(str(units), calendar=calendar)
+                if calendar
+                else Unit(str(units))
+            )
+            return int(unit.num2date(float(branch)).year)
+        except Exception as exc:  # noqa: BLE001 - malformed metadata is common
+            logger.warning(
+                f"Diagnostic '{self.name}': cannot decode "
+                f"branch_time_in_parent={branch!r} in '{units}': {exc}",
+            )
+            return None
+
+    def _control_baseline(
+        self,
+        histaer: CubeList | Dataset,
+        window: tuple[int, int],
+        child_first_year: int,
+        pi_tas: tuple[np.ndarray, np.ndarray],
+        pi_toa_net: tuple[np.ndarray, np.ndarray],
+    ) -> tuple[float, float, bool]:
+        """(tas, N) control means the hist-aer anomalies are taken against.
+
+        The parallel segment when the branch metadata allows it (App. B.8),
+        the long-term control mean with a warning when it does not; the third
+        element records which, and is emitted as ``parallel_segment``.
+        """
+        tas_values, tas_years = pi_tas
+        n_values, n_years = pi_toa_net
+        branch = self._branch_year_in_parent(histaer)
+        if branch is not None:
+            first, last = physics.parallel_control_window(
+                window,
+                branch_year_in_parent=branch,
+                child_first_year=child_first_year,
+            )
+            tas_mask = (tas_years >= first) & (tas_years <= last)
+            n_mask = (n_years >= first) & (n_years <= last)
+            if tas_mask.any() and n_mask.any():
+                logger.info(
+                    f"Diagnostic '{self.name}': removing control drift with the "
+                    f"parallel piControl segment {first}-{last} "
+                    f"({int(tas_mask.sum())} yr; branch year {branch})",
+                )
+                return (
+                    float(tas_values[tas_mask].mean()),
+                    float(n_values[n_mask].mean()),
+                    True,
+                )
+            logger.warning(
+                f"Diagnostic '{self.name}': the parallel piControl segment "
+                f"{first}-{last} lies outside the control record "
+                f"{tas_years[0]}-{tas_years[-1]}",
+            )
+        logger.warning(
+            f"Diagnostic '{self.name}': falling back to the piControl long-term "
+            f"mean for the hist-aer anomalies (no parallel-segment drift removal)",
+        )
+        return float(tas_values.mean()), float(n_values.mean()), False
+
     def _calculate_raw_output(
         self,
         complex_data_source: ComplexDataSource,
@@ -471,8 +657,11 @@ class AerosolForcingGate(CB2ComplexDiagnostic):
         data = complex_data_source.data
         n_years_ecs = int(get_threshold("tier1.ecs.n_years"))
 
-        pi_tas = self._annual_global_series(data["picontrol"], _mon("tas"))
-        pi_n = self._toa_net_annual_global(data["picontrol"])
+        pi_tas, pi_tas_years = self._annual_global_series_years(
+            data["picontrol"],
+            _mon("tas"),
+        )
+        pi_n, pi_n_years = self._toa_net_annual_global_years(data["picontrol"])
 
         a4x_tas = self._annual_global_series(data["4xco2"], _mon("tas"))
         a4x_n = self._toa_net_annual_global(data["4xco2"])
@@ -482,17 +671,49 @@ class AerosolForcingGate(CB2ComplexDiagnostic):
             a4x_n[:n] - pi_n.mean(),
         )
 
-        aer_tas = self._annual_global_series(data["histaer"], _mon("tas"))
-        aer_n = self._toa_net_annual_global(data["histaer"])
-        end = self._end_period_years
-        dt_end = float(aer_tas[-end:].mean() - pi_tas.mean())
-        dn_end = float(aer_n[-end:].mean() - pi_n.mean())
+        aer_tas, aer_tas_years = self._annual_global_series_years(
+            data["histaer"],
+            _mon("tas"),
+        )
+        aer_n, aer_n_years = self._toa_net_annual_global_years(data["histaer"])
+        years = np.intersect1d(aer_tas_years, aer_n_years)
+        aer_tas = aer_tas[np.isin(aer_tas_years, years)]
+        aer_n = aer_n[np.isin(aer_n_years, years)]
+
+        window = tuple(get_threshold("tier1.aerosol_forcing.window"))
+        first, last = physics.clip_window_to_record(
+            window,  # type: ignore[arg-type]
+            int(years[0]),
+            int(years[-1]),
+        )
+        if (first, last) != window:
+            logger.warning(
+                f"Diagnostic '{self.name}': hist-aer covers "
+                f"{years[0]}-{years[-1]}, so the protocol's decadal window "
+                f"{window[0]}-{window[1]} is evaluated over {first}-{last}",
+            )
+        in_window = (years >= first) & (years <= last)
+
+        baseline_tas, baseline_n, parallel = self._control_baseline(
+            data["histaer"],
+            (first, last),
+            int(years[0]),
+            (pi_tas, pi_tas_years),
+            (pi_n, pi_n_years),
+        )
+
+        dt_end = float(aer_tas[in_window].mean() - baseline_tas)
+        dn_end = float(aer_n[in_window].mean() - baseline_n)
 
         return self._scalar_outputs(
             {
                 "aerosol_erf_wm2": physics.aerosol_erf(dn_end, dt_end, lambda_4x),
                 "delta_t_end": dt_end,
+                "delta_n_end": dn_end,
                 "lambda_4x": lambda_4x,
+                "window_first_year": float(first),
+                "window_last_year": float(last),
+                "parallel_segment": float(parallel),
             },
         )
 

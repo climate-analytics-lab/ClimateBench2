@@ -437,9 +437,10 @@ class ENSOGate(GateMixin, Nino34):
         Mirrors ``Nino34._preprocess`` (same region, same deseasonalisation,
         same output calendar) minus the smoothing step: iris refuses a
         rolling window shorter than two points, so the upstream chain cannot
-        express the paper's *unsmoothed* monthly index. Upstream-PR
-        candidate: accept ``window_length = 1`` as a no-op, after which this
-        override can go and only the ClassVar remains.
+        express the paper's *unsmoothed* monthly index. **ClimateEval PR #46**
+        (https://github.com/climate-federation/ClimateEval/pull/46) makes
+        ``window_length = 1`` a no-op upstream; once it merges this override
+        goes and only the ClassVar remains.
         """
         if self._rolling_window_length >= 2:
             return super()._preprocess(cube, variable)  # type: ignore[misc]

@@ -51,6 +51,7 @@ from climatebench2.diags.tier1_extended import (
     GeostrophicBalanceGate,
     GFMIPPatchGate,
     MJOGate,
+    PrecipBuoyancyGate,
 )
 from climatebench2.diags.tier2_diagnostics import (
     HemisphericAsymmetryGate,
@@ -98,6 +99,7 @@ __all__ = [
     "MidHoloceneMonsoonGate",
     "PaleoProxyConsistencyGate",
     "PinatuboResponseGate",
+    "PrecipBuoyancyGate",
     "ReferenceBaselineRecord",
     "ReferenceEOFProjection",
     "ScoredAnnualMaxTimeSeries",

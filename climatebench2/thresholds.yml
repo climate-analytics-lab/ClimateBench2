@@ -57,8 +57,19 @@ tier1:
 
   # I.3c Tropical precipitation–buoyancy (P′ vs column-MSE′, 20S–20N)
   precip_buoyancy:
-    requirement: required              # (no diagnostic yet — metrics_reference I.3c)
+    requirement: required
     rel_tolerance_vs_obs: 0.30         # slope within ±30% of GPCP/ERA5
+    # Satellite-era window the observational reference slope is taken over
+    # (GPCP starts 1979; never post-2015, which is the reserved test window).
+    obs_window: [1979, 2014]
+    # Reference slope of P' (mm/day) on column-MSE' (MJ m-2) from GPCP + ERA5
+    # over `obs_window`. `PrecipBuoyancyGate` computes it at run time when the
+    # observations are obtainable; this key is the stored fallback so a run
+    # without network access still gates.
+    # TODO(Duncan): pin the value once the reference has been computed once
+    # (as was done for the 2.2 W m-2 K-1 clear-sky constant); null until then,
+    # which leaves the gate reporting the model slope alone.
+    reference_slope: null
 
   # I.4a GFMIP SST patch experiments
   gfmip_patch:
@@ -75,13 +86,15 @@ tier1:
     requirement: required              # I.5a/b/c
     amplitude_range: [0.5, 1.4]        # K, σ(Niño-3.4)
     band_power_ratio_min: 1.5          # power(2–7 yr) / power(1–2 yr)
-    teleconnection_obs_factor: 2.0     # regressions within factor 2 of ERA5/GPCP
-    teleconnection_t_min: 0.0          # tropical ta500 regression > 0 (sign)
-    teleconnection_pr_max: 0.0         # Maritime Continent pr regression < 0
-    # TODO: observed regression coefficients (ERA5 ta500, GPCP pr on Niño-3.4)
-    # for the factor-2 amplitude check; null disables until wired
-    teleconnection_reference_t: null
-    teleconnection_reference_pr: null
+    # I.5c: centred, cos-weighted spatial correlation between the modelled
+    # and the observed regression of monthly ts / pr anomalies on the
+    # standardized Niño-3.4 index over 30S-30N. 0.7 == spatial R2 > 0.5.
+    # (Replaces the superseded scalar criterion: the ta500 / Maritime-Continent
+    # sign checks and their unwired factor-2 references were dropped 2026-09.)
+    teleconnection_pattern_corr_min: 0.7
+    # Satellite era the observed patterns are taken over (GPCP starts 1979;
+    # never post-2015, which is the reserved Tier II test window).
+    teleconnection_obs_window: [1979, 2014]
 
   # I.5d MJO Wheeler–Kiladis
   mjo:
@@ -112,6 +125,11 @@ tier1:
     requirement: required              # promoted from Extended, 2026-09
     erf_range: [-2.0, -0.5]            # W m-2, 2015 aerosol ERF
     require_cooling: true              # ΔT(2015) < 0
+    # "2015" is the DECADAL MEAN CENTRED ON 2015 (paper App. B.8). Many DAMIP
+    # hist-aer runs end in 2014, so the window keeps its length and slides
+    # back to the end of the record supplied (physics.clip_window_to_record);
+    # the window actually used is emitted with the gate.
+    window: [2010, 2019]
 
   # I.8a Meridional heat transport partitioning (piControl)
   meridional_heat_transport:

@@ -12,8 +12,13 @@
 # Cube-based Tier I checks (ENSO amplitude/spectrum) live in
 # ClimateBench2_TierI_variability; the Tier II aggregated event diagnostics
 # (Pinatubo, hemispheric asymmetry) moved to ClimateBench2_TierII_events —
-# they are not entry-ticket gates. Still missing from the protocol:
-# precip-buoyancy (I.3c, needs 3-D ta/hus/zg monthly anomaly machinery).
+# they are not entry-ticket gates. Every Tier I check of the paper's Table 1
+# now has a diagnostic here or there.
+#
+# Two gates fetch OBSERVATIONS through ClimateEval DataSources: I.3c
+# (GPCP + ERA5 reference slope) and I.5c (HadISST/GPCP teleconnection
+# patterns). Without network or CDS credentials they report the model's own
+# statistic and write no gate row, rather than failing the suite.
 #
 # Every gate here carries a Required / Extended / extra tag from
 # thresholds.yml (`requirement:`); only the Required ones gate entry, and a
@@ -34,6 +39,10 @@
 
 - name: clear_sky_feedback            # I.3a — historical
   diagnostic: climatebench2.diags.ClearSkyFeedbackGate
+  additional_diagnostic_kwargs: {}
+
+- name: precip_buoyancy               # I.3c — historical (pr + ta/zg/hus)
+  diagnostic: climatebench2.diags.PrecipBuoyancyGate
   additional_diagnostic_kwargs: {}
 
 - name: land_ocean_warming            # I.6a — piControl + abrupt-4xCO2

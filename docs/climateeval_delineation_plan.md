@@ -1,11 +1,18 @@
 # ClimateBench2 ⟷ ClimateEval — Delineation Plan
 
-> **Status (2026-07-12):** Phases 0–6 implemented, one commit per phase
-> (`git log --oneline --grep "Phase"`). Outstanding: numerical parity
-> spot-checks vs archived `results/` CSVs on a data-connected machine;
-> precip-buoyancy (I.3c); ENSO teleconnection obs references; perfect-model
-> suite wiring (functions landed, CESM-LE data path pending); the
-> `constants.py`/`utils.py`/`benchmark_utils.py` island kept for
+> **Status (2026-09-14):** Phases 0–6 implemented, one commit per phase
+> (`git log --oneline --grep "Phase"`). The §7 upstream track has started to
+> pay off: ClimateEval `main` (`b0e941c`) merged CB2's PR #35
+> (`LandOceanWarmingRatio`, `ArcticAmplification`, `MeridionalHeatTransport`
+> plus the `rsds`/`rsus`/`rlds`/`rlus`/`tasmax`/`tasmin` variables). The CB2
+> tests pass against it, so the next step is to bump the pin and replace the
+> three CB2 copies with gate wrappers (the `ECSGate` pattern). The full
+> re-audit of the implementation against the 2026-09 paper draft — including
+> what still blocks "run every suite against CMIP6" (fair CRPS, multi-member
+> ingestion, a post-2015 multi-member CMIP6 reference generator in ClimateEval,
+> entry-ticket tagging, the Tier III data contract) — is in
+> [`metrics_reference.md`](metrics_reference.md), §"Prioritized gap list".
+> The `constants.py`/`utils.py`/`benchmark_utils.py` island is still kept for
 > `paleo_scripts --use-picontrol`.
 
 **Purpose.** Turn ClimateBench2 (CB2) into a *thin protocol layer* that runs on top of

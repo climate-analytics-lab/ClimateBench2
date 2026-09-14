@@ -66,10 +66,15 @@ tests/                   # engine + diagnostics tests (see tests/README.md)
 Phases 0–6 of the [migration plan](docs/climateeval_delineation_plan.md#6-migration--phased-retire-as-parity)
 are implemented: tier suites, the probabilistic scoring engine, the Tier I
 physics gates, baselines, Tier III paleo protocol, and the leaderboard.
-Remaining: numerical parity spot-checks against the archived `results/` CSVs
-and first full data-connected runs; ENSO teleconnection obs-amplitude
-references and the precip-buoyancy check (I.3c) are still open
-(`thresholds.yml` marks every TODO).
+The implementation was re-audited against the 2026-09 paper draft on
+2026-09-14: see the status tables and the prioritized gap list in
+[docs/metrics_reference.md](docs/metrics_reference.md). Headline open items
+are re-aligning the scoring engine to fair CRPS, multi-member ingestion, a
+post-2015 multi-member CMIP6 reference in ClimateEval, Required/Extended/N-A
+tagging of the Tier I gates, and wiring Tier III to the paleo pipeline's
+NetCDF outputs. ClimateEval `main` now provides the land–ocean, Arctic and
+meridional-heat-transport diagnostics upstream; CB2's copies are to be
+replaced by thin gate wrappers once the pin is bumped.
 
 ## Legacy remnant
 

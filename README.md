@@ -67,7 +67,13 @@ submission's own name. A single-member submission is reported as
 Rows are appended to each diagnostic's own `metrics` table with
 `scorer = 'climatebench2'`, and re-running replaces them.
 
-The same pass also does the other two regimes. **Spatial fields** are scored on the
+Every row the pass writes carries a **held-out / in-sample** label from
+`tier2.window_labels` (paper §5.6): held-out entries are scored against observations
+from the reserved post-2015 test period, in-sample ones against the historical record
+the models were developed with. The leaderboard badges each column and puts the
+held-out ones first.
+
+The same pass also does the other regimes. **Spatial fields** are scored on the
 reference's *fixed pre-2015* EOF basis: `ReferenceEOFProjection` writes one
 standardised coefficient per (source, variable, mode) and the pass takes the fair CRPS
 per coefficient and its equal-weight mean. The **ensemble-consistency test** (regime c)
@@ -77,7 +83,12 @@ internal variability of `InternalVariability` (Tier I suite) and by σ_obs — t
 which are told apart from comparison models by `data_sources.category` and never
 ranked as if they were models. Because the Tier II suites are cut to the test window,
 `ReferenceBaselineRecord` carries the reference's 1985–2014 record into the database so
-the Climatology baseline has something to be built from.
+the Climatology baseline has something to be built from. **Aggregated scalars** — one
+number per member rather than a series — are the third shape: the realized warming
+level (the protocol's primary test-window statistic), the two GMST trends, the Pinatubo
+cooling and the aerosol-era NH−SH trend difference, each scored with fair CRPS against
+HadCRUT5 (corrected from its blended land-air/SST basis to a surface-air-temperature
+one) and reported as a consistency statement alongside.
 
 The Tier I scorecard is grouped by each gate's `requirement` tag
 (`climatebench2/thresholds.yml`): **Required** checks form the entry ticket — a model is
@@ -91,7 +102,8 @@ there is no single global slice of the submission:
 
 | Suite | Gets | Window |
 |---|---|---|
-| `ClimateBench2_TierI`, `_TierII_events`, `_TierIII` | an experiment dict (`historical` = the submission unless `--experiment historical=DIR`) | every experiment in **full** |
+| `ClimateBench2_TierI`, `_TierIII` | an experiment dict (`historical` = the submission unless `--experiment historical=DIR`), **once per model** | every experiment in **full** |
+| `ClimateBench2_TierII_events` | the same experiment dict, but **once per ensemble member**, each with its own `historical` record — its Tier II scalars are scored across the ensemble | full |
 | `ClimateBench2_TierI_variability` | the `picontrol` experiment (ENSO wants ≥ 100 yr of control) | full |
 | `ClimateBench2_TierII`, `_TierII_daily` | the model's cubes, once per ensemble member | the reserved post-2015 test window, `tier2.test_window_start` → last complete year |
 
@@ -134,12 +146,21 @@ The implementation was re-audited against the 2026-09 paper draft on
 the M = 1 rule, stacked ensemble members, observational-uncertainty draws with
 a real σ_obs, the moving-block bootstrap, the median-of-per-model `E_ref` with
 leave-one-out, reference-EOF fair CRPS for spatial fields, piControl σ_int in
-the consistency test, and one label per model across the tiers. Headline open
-items are a post-2015 multi-member CMIP6 reference in ClimateEval (without
-which `E_ref` has nothing to average and the Tier II cells fall back to the raw
-CRPS), the realized-warming-level statistic, the pattern-scaling baseline, and
+the consistency test, and one label per model across the tiers. **Gap item 6
+(work package 6a)** then built the Tier II scalar diagnostics of §II.1: the
+realized warming level (the protocol's primary test-window statistic) and the
+two GMST trends, the Pinatubo and hemispheric-asymmetry magnitudes as scored
+numbers rather than sign flags alone, all four against HadCRUT5 with the GSAT
+blending correction, a generic aggregated-scalar regime in the pass,
+held-out/in-sample labelling end to end, per-member runs of the Tier II events
+suite, and the suite's missing variables (clear-sky TOA, `clwvi`/`clivi`, OHC
+0–100 m). Headline open items are a post-2015 multi-member CMIP6 reference in
+ClimateEval (without which `E_ref` has nothing to average and the Tier II cells
+fall back to the raw CRPS), the ETCCDI/Perkins extremes and the seasonal- and
+diurnal-cycle statistics (work package 6b), the pattern-scaling baseline, and
 wiring Tier III to the paleo pipeline's NetCDF outputs. Every σ_obs value in
-`thresholds.yml` is provisional and needs Duncan's ruling.
+`thresholds.yml` — and the GSAT blending factor — is provisional and needs
+Duncan's ruling.
 Required/Extended/extra tagging of the Tier I gates, declared N/A and the
 Required-only entry ticket landed on 2026-09-14 (gap item 2). The same day
 (gap item 5) the three re-specced Tier I checks landed: I.5c is now the paper's

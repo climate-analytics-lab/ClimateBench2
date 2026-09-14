@@ -432,10 +432,14 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
                 )
                 runs = [(load(first_path, None), info_for(first_label))]
         else:
-            runs = [
-                (load(path, timerange), info_for(label))
-                for label, path in members.items()
-            ]
+            # `per_member` is authoritative for every shape, so a cube suite
+            # that is *not* per-member scores the first member only.
+            chosen = (
+                list(members.items())
+                if spec.per_member
+                else [(first_label, first_path)]
+            )
+            runs = [(load(path, timerange), info_for(label)) for label, path in chosen]
 
         if spec.window == "tier2":
             print(

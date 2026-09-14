@@ -53,9 +53,18 @@ Key integration facts (verified against ClimateEval `main`):
   dict feeds a whole Tier I suite; `Suite.get_database` passes the same data
   object to every diagnostic, so suites are split by data shape (cubes vs
   experiment dict).
+- `_cli.SuiteSpec` says, per suite, which data shape and window it gets and
+  whether it runs **once per ensemble member** (`per_member`): the cube
+  suites and `ClimateBench2_TierII_events` do, Tier I and Tier III do not.
+  A per-member experiment suite gets that member's own record as
+  `historical`, which is what the Tier II aggregated scalars need.
 - All output goes to ClimateEval's standard DuckDB schema (`raw_output`,
   `metrics`, `variables`, `data_sources` per diagnostic); CB2 scores add
-  columns to `metrics`, never a new schema.
+  columns to `metrics`, never a new schema. `scoring_pass` recognises three
+  `raw_output` shapes — a **time series** (regime a), an **EOF-coefficient**
+  table (regime b) and **aggregated scalars** with no time axis (§II.1) —
+  and every row it writes carries a `held-out` / `in-sample` `window` label
+  from `tier2.window_labels`.
 - ClimateEval is a **third-party dependency** (DLR; `climate-federation` org),
   pinned by commit in `pyproject.toml`. Never vendor or patch it; contribute
   upstream via PR or keep the code here.

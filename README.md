@@ -67,6 +67,18 @@ submission's own name. A single-member submission is reported as
 Rows are appended to each diagnostic's own `metrics` table with
 `scorer = 'climatebench2'`, and re-running replaces them.
 
+The same pass also does the other two regimes. **Spatial fields** are scored on the
+reference's *fixed pre-2015* EOF basis: `ReferenceEOFProjection` writes one
+standardised coefficient per (source, variable, mode) and the pass takes the fair CRPS
+per coefficient and its equal-weight mean. The **ensemble-consistency test** (regime c)
+compares the observed trend with the model's own ensemble, widened by the piControl
+internal variability of `InternalVariability` (Tier I suite) and by σ_obs — the
+`tier2.obs_sigma` constants plus the measured spread across observational products,
+which are told apart from comparison models by `data_sources.category` and never
+ranked as if they were models. Because the Tier II suites are cut to the test window,
+`ReferenceBaselineRecord` carries the reference's 1985–2014 record into the database so
+the Climatology baseline has something to be built from.
+
 The Tier I scorecard is grouped by each gate's `requirement` tag
 (`climatebench2/thresholds.yml`): **Required** checks form the entry ticket — a model is
 scored only if every applicable one passes — while **Extended** checks are reported for
@@ -100,6 +112,7 @@ climatebench2/           # the installable package
 ├── thresholds.yml       # single source of truth for every pass/fail bound
 ├── scoring.py           # fair CRPS, ESS + block bootstrap, consistency, EOF, proxy
 ├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
+├── windows.py           # the protocol's time windows (test / baseline / long trend)
 ├── physics.py           # pure Tier I physics (numpy only)
 ├── baselines.py         # climatology pseudo-members, two-layer EBM × pattern scaling
 ├── leaderboard/         # .ddb results → static HTML leaderboard
@@ -117,13 +130,16 @@ physics gates, baselines, Tier III paleo protocol, and the leaderboard.
 The implementation was re-audited against the 2026-09 paper draft on
 2026-09-14: see the status tables and the prioritized gap list in
 [docs/metrics_reference.md](docs/metrics_reference.md). The scoring-engine core is now on the
-2026-09 spec (gap item 3): fair CRPS with the M = 1 rule, stacked ensemble
-members, observational-uncertainty draws, the moving-block bootstrap and the
-median-of-per-model `E_ref` with leave-one-out. Headline open items are the
-reference-EOF fair CRPS for aggregated diagnostics and spatial fields, a
-post-2015 multi-member CMIP6 reference in ClimateEval (without which `E_ref`
-has nothing to average and the Tier II cells fall back to the raw CRPS), and
-wiring Tier III to the paleo pipeline's NetCDF outputs.
+2026-09 spec (gap item 3 and its second half, work package 3b): fair CRPS with
+the M = 1 rule, stacked ensemble members, observational-uncertainty draws with
+a real σ_obs, the moving-block bootstrap, the median-of-per-model `E_ref` with
+leave-one-out, reference-EOF fair CRPS for spatial fields, piControl σ_int in
+the consistency test, and one label per model across the tiers. Headline open
+items are a post-2015 multi-member CMIP6 reference in ClimateEval (without
+which `E_ref` has nothing to average and the Tier II cells fall back to the raw
+CRPS), the realized-warming-level statistic, the pattern-scaling baseline, and
+wiring Tier III to the paleo pipeline's NetCDF outputs. Every σ_obs value in
+`thresholds.yml` is provisional and needs Duncan's ruling.
 Required/Extended/extra tagging of the Tier I gates, declared N/A and the
 Required-only entry ticket landed on 2026-09-14 (gap item 2). ClimateEval is pinned at `b0e941c`, which provides the
 land–ocean, Arctic and meridional-heat-transport diagnostics upstream; CB2's

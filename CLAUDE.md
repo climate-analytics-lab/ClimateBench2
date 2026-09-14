@@ -31,6 +31,7 @@ climatebench2/
 │                        #   (required/extended/extra/diagnostic) — never hard-code one
 ├── scoring.py           # pure fair-CRPS / bootstrap / consistency / EOF engine (numpy only)
 ├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
+├── windows.py           # the protocol's time windows (test / 1985-2014 baseline / 1950-)
 ├── physics.py           # pure Tier I physics functions (numpy only)
 ├── leaderboard/         # .ddb results → scores table (→ static HTML page, Phase 6)
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`

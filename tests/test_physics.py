@@ -234,3 +234,178 @@ def test_cc_scaling_slope() -> None:
     prw = 25.0 * (1 + 0.07 * (tas - 288.0)) + rng.normal(0, 0.05, 200)
     slope = physics.cc_scaling_slope(prw, tas)
     assert slope == pytest.approx(7.0, abs=0.5)
+
+
+# ---------------------------------------------------------------------------
+# I.3c tropical precipitation-buoyancy (column MSE, pooled regression)
+# ---------------------------------------------------------------------------
+
+
+def test_moist_static_energy_sums_its_three_terms() -> None:
+    h = physics.moist_static_energy(np.array([300.0]), np.array([1000.0]), np.array([0.01]))
+    expected = (
+        physics.SPECIFIC_HEAT_DRY_AIR * 300.0
+        + physics.GRAVITY * 1000.0
+        + physics.LATENT_HEAT_VAPORIZATION * 0.01
+    )
+    assert h[0] == pytest.approx(expected)
+
+
+def test_mass_weighted_column_integral_of_a_uniform_column() -> None:
+    """A constant h integrates to h·Δp/g whatever the level ordering."""
+    plev = np.array([100000.0, 85000.0, 50000.0, 25000.0, 10000.0])
+    field = np.full((plev.size, 3, 4), 3.2e5)
+    integral = physics.mass_weighted_column_integral(field, plev, axis=0)
+    expected = 3.2e5 * (100000.0 - 10000.0) / physics.GRAVITY
+    assert integral.shape == (3, 4)
+    np.testing.assert_allclose(integral, expected, rtol=1e-12)
+    # descending levels (the CMOR order) give the same answer
+    np.testing.assert_allclose(
+        physics.mass_weighted_column_integral(field[::-1], plev[::-1], axis=0),
+        expected,
+    )
+    with pytest.raises(ValueError, match="pressure coordinate"):
+        physics.mass_weighted_column_integral(field, plev[:-1], axis=0)
+
+
+def test_mass_weighted_column_integral_over_a_middle_axis() -> None:
+    plev = np.array([100000.0, 50000.0])
+    field = np.ones((7, 2, 5, 6))
+    integral = physics.mass_weighted_column_integral(field, plev, axis=1)
+    assert integral.shape == (7, 5, 6)
+    np.testing.assert_allclose(integral, 50000.0 / physics.GRAVITY)
+
+
+def test_hydrostatic_height_matches_the_isothermal_atmosphere() -> None:
+    """Dry isothermal column: z = (R_d T / g) ln(p0/p) above the base level."""
+    plev = np.array([100000.0, 85000.0, 70000.0, 50000.0, 25000.0])
+    temperature = 250.0
+    ta = np.full((plev.size, 2, 3), temperature)
+    hus = np.zeros_like(ta)
+    z = physics.hydrostatic_height(ta, hus, plev, axis=0)
+    expected = (
+        physics.GAS_CONSTANT_DRY_AIR * temperature / physics.GRAVITY
+    ) * np.log(plev[0] / plev)
+    np.testing.assert_allclose(z[:, 0, 0], expected, rtol=1e-6)
+    # moisture makes the column thicker (virtual temperature)
+    z_moist = physics.hydrostatic_height(ta, np.full_like(ta, 0.01), plev, axis=0)
+    assert (z_moist[1:] > z[1:]).all()
+
+
+def test_pooled_regression_slope_recovers_a_known_slope() -> None:
+    rng = np.random.default_rng(11)
+    x = rng.normal(0.0, 1.0, (60, 10, 20))  # (time, lat, lon) anomalies
+    y = 0.35 * x + rng.normal(0.0, 0.02, x.shape)
+    assert physics.pooled_regression_slope(y, x) == pytest.approx(0.35, abs=0.01)
+    # NaNs are dropped pairwise, not propagated
+    y_masked = y.copy()
+    y_masked[:, 0, :] = np.nan
+    assert physics.pooled_regression_slope(y_masked, x) == pytest.approx(0.35, abs=0.01)
+    assert np.isnan(physics.pooled_regression_slope(np.array([1.0]), np.array([1.0])))
+    with pytest.raises(ValueError, match="equal shapes"):
+        physics.pooled_regression_slope(np.zeros(4), np.zeros(5))
+
+
+def test_deseasonalised_anomalies_removes_the_monthly_climatology() -> None:
+    months = np.tile(np.arange(1, 13), 5)
+    seasonal = 5.0 * np.sin(2 * np.pi * months / 12.0)
+    field = (seasonal[:, None, None] + 2.0) * np.ones((months.size, 3, 4))
+    anom = physics.deseasonalised_anomalies(field, months)
+    assert np.abs(anom).max() < 1e-10
+    with pytest.raises(ValueError, match="time steps"):
+        physics.deseasonalised_anomalies(np.zeros((5, 2)), np.arange(4))
+
+
+# ---------------------------------------------------------------------------
+# I.5c pattern correlation over an arbitrary latitude band
+# ---------------------------------------------------------------------------
+
+
+def test_banded_pattern_correlation_over_the_tropics() -> None:
+    rng = np.random.default_rng(12)
+    lats = np.linspace(-88.0, 88.0, 45)
+    pattern = rng.normal(0.0, 1.0, (45, 36))
+    band = (-30.0, 30.0)
+    assert physics.banded_pattern_correlation(
+        pattern, pattern, lats, band=band,
+    ) == pytest.approx(1.0)
+    assert physics.banded_pattern_correlation(
+        pattern, -pattern, lats, band=band,
+    ) == pytest.approx(-1.0)
+    # only the band matters: scrambling the extratropics changes nothing
+    other = pattern.copy()
+    other[np.abs(lats) > 30.0] = rng.normal(0.0, 5.0, other[np.abs(lats) > 30.0].shape)
+    assert physics.banded_pattern_correlation(
+        pattern, other, lats, band=band,
+    ) == pytest.approx(1.0)
+
+
+def test_banded_pattern_correlation_is_centred_and_nan_aware() -> None:
+    lats = np.linspace(-30.0, 30.0, 31)
+    rng = np.random.default_rng(13)
+    a = rng.normal(0.0, 1.0, (31, 20))
+    # a constant offset is removed by the centring
+    assert physics.banded_pattern_correlation(a, a + 7.0, lats) == pytest.approx(1.0)
+    # points missing in one field (an SST reference over land) drop from both
+    b = a.copy()
+    b[:, :5] = np.nan
+    a_land = a.copy()
+    a_land[:, :5] = 99.0  # would ruin the correlation if it were not masked
+    assert physics.banded_pattern_correlation(a_land, b, lats) == pytest.approx(1.0)
+
+
+def test_midlatitude_pattern_correlation_still_spans_both_hemispheres() -> None:
+    lats = np.linspace(-80.0, 80.0, 41)
+    rng = np.random.default_rng(14)
+    field = rng.normal(0.0, 1.0, (41, 36))
+    other = field.copy()
+    other[np.abs(lats) < 30.0] = rng.normal(0.0, 9.0, other[np.abs(lats) < 30.0].shape)
+    assert physics.midlatitude_pattern_correlation(
+        field, other, lats,
+    ) == pytest.approx(1.0)
+
+
+def test_standardised_series() -> None:
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    z = physics.standardised(x)
+    assert z.mean() == pytest.approx(0.0)
+    assert z.std(ddof=1) == pytest.approx(1.0)
+    assert np.isnan(physics.standardised(np.ones(5))).all()
+
+
+# ---------------------------------------------------------------------------
+# I.7 the decadal window and the parallel piControl segment
+# ---------------------------------------------------------------------------
+
+
+def test_clip_window_to_record() -> None:
+    window = (2010, 2019)
+    # a record covering the window keeps it
+    assert physics.clip_window_to_record(window, 1850, 2020) == (2010, 2019)
+    assert physics.clip_window_to_record(window, 1850, 2019) == (2010, 2019)
+    # a hist-aer run ending in 2014 gets the last 10 yr it has
+    assert physics.clip_window_to_record(window, 1850, 2014) == (2005, 2014)
+    # the window never slides before the start of the record
+    assert physics.clip_window_to_record(window, 2001, 2014) == (2005, 2014)
+    # a record shorter than the window is used whole
+    assert physics.clip_window_to_record(window, 2012, 2014) == (2012, 2014)
+    assert physics.clip_window_to_record(window, 2008, 2014) == (2008, 2014)
+    with pytest.raises(ValueError, match="empty window"):
+        physics.clip_window_to_record((2019, 2010), 1850, 2020)
+    with pytest.raises(ValueError, match="empty record"):
+        physics.clip_window_to_record(window, 2020, 1850)
+
+
+def test_parallel_control_window() -> None:
+    # a child starting in 1850 that branched from control year 3200
+    assert physics.parallel_control_window(
+        (2010, 2019),
+        branch_year_in_parent=3200,
+        child_first_year=1850,
+    ) == (3360, 3369)
+    # a control whose calendar matches the child's is the identity
+    assert physics.parallel_control_window(
+        (1990, 1999),
+        branch_year_in_parent=1850,
+        child_first_year=1850,
+    ) == (1990, 1999)

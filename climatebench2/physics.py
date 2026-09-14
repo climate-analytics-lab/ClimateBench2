@@ -18,8 +18,13 @@ import numpy as np
 from scipy import stats
 
 EARTH_RADIUS_M = 6.371e6
-LATENT_HEAT_VAPORIZATION = 2.5008e6  # J/kg
+LATENT_HEAT_VAPORIZATION = 2.5008e6  # J/kg  (L_v)
 SECONDS_PER_DAY = 86400.0
+
+# Thermodynamic constants of the column moist static energy (I.3c)
+SPECIFIC_HEAT_DRY_AIR = 1004.6  # J/kg/K  (c_p)
+GAS_CONSTANT_DRY_AIR = 287.04  # J/kg/K  (R_d)
+VIRTUAL_TEMPERATURE_FACTOR = 0.608  # T_v = T (1 + 0.608 q)
 
 
 # ---------------------------------------------------------------------------
@@ -140,8 +145,63 @@ def gregory_regression(
 
 
 def aerosol_erf(delta_n_end: float, delta_t_end: float, lambda_4x: float) -> float:
-    """λ-corrected aerosol ERF (Forster et al. 2021): ERF = ΔN − λ·ΔT."""
+    """λ-corrected aerosol ERF (Forster et al. 2021): ERF = ΔN − λ·ΔT.
+
+    ``lambda_4x`` is the Gregory slope, which is *negative*; the paper's
+    App. B.8 writes ``F = ΔN + λΔT``, correct only for λ as a positive
+    feedback magnitude (see metrics_reference.md I.7).
+    """
     return float(delta_n_end - lambda_4x * delta_t_end)
+
+
+def clip_window_to_record(
+    window: tuple[int, int],
+    first_year: int,
+    last_year: int,
+) -> tuple[int, int]:
+    """Fit the protocol's fixed year window into the record actually supplied.
+
+    I.7 asks for the decadal mean **centred on 2015** (``[2010, 2019]``), but
+    many DAMIP ``hist-aer`` runs stop in 2014. The window keeps its length
+    and slides back so that it ends at the last year available; a record
+    shorter than the window is used whole. Returns ``(first, last)``
+    inclusive — the window actually used, which the diagnostic reports.
+    """
+    first_req, last_req = int(window[0]), int(window[1])
+    length = last_req - first_req + 1
+    if length < 1:
+        msg = f"empty window {window}"
+        raise ValueError(msg)
+    first_year, last_year = int(first_year), int(last_year)
+    if last_year < first_year:
+        msg = f"empty record {first_year}-{last_year}"
+        raise ValueError(msg)
+    if last_year - first_year + 1 <= length:
+        return (first_year, last_year)
+    last = min(last_req, last_year)
+    first = last - length + 1
+    if first < first_year:
+        first = first_year
+        last = first + length - 1
+    return (first, last)
+
+
+def parallel_control_window(
+    window: tuple[int, int],
+    *,
+    branch_year_in_parent: int,
+    child_first_year: int,
+) -> tuple[int, int]:
+    """The piControl years running parallel to ``window`` of a child run.
+
+    CMIP6 records the branch point as ``branch_time_in_parent`` on the child
+    run's own calendar-year axis; year *Y* of the child is then year
+    ``Y − child_first_year + branch_year_in_parent`` of the control. Used by
+    I.7 to remove control drift with the *parallel* piControl segment rather
+    than the control's long-term mean (paper App. B.8).
+    """
+    offset = int(branch_year_in_parent) - int(child_first_year)
+    return (int(window[0]) + offset, int(window[1]) + offset)
 
 
 # ---------------------------------------------------------------------------
@@ -299,22 +359,32 @@ def geostrophic_wind_u(
     return ug
 
 
-def midlatitude_pattern_correlation(
+def banded_pattern_correlation(
     a: np.ndarray,
     b: np.ndarray,
     lats: np.ndarray,
     *,
-    band: tuple[float, float] = (30.0, 60.0),
+    band: tuple[float, float] = (-90.0, 90.0),
+    absolute_latitude: bool = False,
 ) -> float:
-    """cos(lat)-weighted correlation of two fields over both 30–60° bands.
+    """Centred, cos(lat)-weighted correlation of two fields over a lat band.
 
-    Fields ``(..., lat, lon)`` are pooled over every leading dimension (time)
-    and both hemispheres' midlatitude bands; NaNs excluded pairwise.
+    Fields ``(..., lat, lon)`` are pooled over every leading dimension (time,
+    if any) and over the latitude band; NaNs are excluded **pairwise**, so a
+    field that is masked somewhere (an SST reference over land, say) masks
+    both sides of the comparison consistently. "Centred" means both fields
+    have their own weighted band mean removed before the covariance — the
+    statistic the protocol gates in I.5c.
+
+    ``band`` is a ``(low, high)`` latitude interval; with
+    ``absolute_latitude`` the interval is applied to ``|lat|``, i.e. to the
+    same band in *both* hemispheres (I.3b's 30–60°).
     """
     a = np.asarray(a, dtype=float)
     b = np.asarray(b, dtype=float)
     lats = np.asarray(lats, dtype=float)
-    band_mask = (np.abs(lats) >= band[0]) & (np.abs(lats) <= band[1])
+    lat_key = np.abs(lats) if absolute_latitude else lats
+    band_mask = (lat_key >= band[0]) & (lat_key <= band[1])
     a_band = a[..., band_mask, :]
     b_band = b[..., band_mask, :]
     w = np.broadcast_to(
@@ -336,9 +406,157 @@ def midlatitude_pattern_correlation(
     return float(cov / np.sqrt(vx * vy))
 
 
+def midlatitude_pattern_correlation(
+    a: np.ndarray,
+    b: np.ndarray,
+    lats: np.ndarray,
+    *,
+    band: tuple[float, float] = (30.0, 60.0),
+) -> float:
+    """cos(lat)-weighted correlation of two fields over both 30–60° bands (I.3b)."""
+    return banded_pattern_correlation(a, b, lats, band=band, absolute_latitude=True)
+
+
+# ---------------------------------------------------------------------------
+# I.3c Tropical precipitation–buoyancy (column moist static energy)
+# ---------------------------------------------------------------------------
+
+
+def moist_static_energy(
+    ta: np.ndarray,
+    zg: np.ndarray,
+    hus: np.ndarray,
+) -> np.ndarray:
+    """Moist static energy ``h = c_p·T + g·z + L_v·q`` (J/kg).
+
+    ``zg`` is geopotential *height* in m (the CMIP6 ``zg`` variable), so the
+    potential-energy term is ``g·zg``.
+    """
+    return (
+        SPECIFIC_HEAT_DRY_AIR * np.asarray(ta, dtype=float)
+        + GRAVITY * np.asarray(zg, dtype=float)
+        + LATENT_HEAT_VAPORIZATION * np.asarray(hus, dtype=float)
+    )
+
+
+def mass_weighted_column_integral(
+    field: np.ndarray,
+    plev: np.ndarray,
+    *,
+    axis: int = 0,
+) -> np.ndarray:
+    """Mass-weighted vertical integral ``∫ field dp / g`` (I.3c).
+
+    ``plev`` is the pressure of each level in Pa, in any order; the integral
+    runs over the levels actually available (CMIP6 Amon data are on the
+    truncated ``plev19``, so this is a *partial*-column integral — the same
+    truncation must be applied to the observational reference for the slopes
+    to be comparable). For ``field`` in J/kg the result is J/m².
+    """
+    field = np.asarray(field, dtype=float)
+    plev = np.asarray(plev, dtype=float)
+    if plev.size != field.shape[axis]:
+        msg = (
+            f"pressure coordinate has {plev.size} levels but the field has "
+            f"{field.shape[axis]} along axis {axis}"
+        )
+        raise ValueError(msg)
+    order = np.argsort(plev)  # ascending pressure: top of the column first
+    integral = np.trapezoid(np.take(field, order, axis=axis), plev[order], axis=axis)
+    return integral / GRAVITY
+
+
+def hydrostatic_height(
+    ta: np.ndarray,
+    hus: np.ndarray,
+    plev: np.ndarray,
+    *,
+    axis: int = 0,
+) -> np.ndarray:
+    """Geopotential height (m) from the hypsometric equation, bottom-up.
+
+    ``z(p) = ∫ (R_d T_v / g) d ln p`` integrated upward from the lowest
+    available level, whose height is taken as 0. Used only as a fallback for
+    an observational product that provides ``ta``/``hus`` but no ``zg``
+    (ERA5 through ClimateEval, see I.3c): the missing surface term is
+    constant in time and therefore drops out of the monthly *anomalies* the
+    precipitation–buoyancy regression is taken over.
+    """
+    ta = np.asarray(ta, dtype=float)
+    hus = np.asarray(hus, dtype=float)
+    plev = np.asarray(plev, dtype=float)
+    if plev.size != ta.shape[axis]:
+        msg = f"pressure coordinate has {plev.size} levels, field has {ta.shape[axis]}"
+        raise ValueError(msg)
+    order = np.argsort(plev)[::-1]  # descending pressure: bottom of the column first
+    t_v = np.moveaxis(
+        ta * (1.0 + VIRTUAL_TEMPERATURE_FACTOR * hus),
+        axis,
+        0,
+    )[order]
+    p = plev[order]
+    z = np.zeros_like(t_v)
+    scale = GAS_CONSTANT_DRY_AIR / GRAVITY
+    for k in range(p.size - 1):
+        d_z = scale * 0.5 * (t_v[k] + t_v[k + 1]) * np.log(p[k] / p[k + 1])
+        z[k + 1] = z[k] + d_z
+    out = np.empty_like(z)
+    out[order] = z
+    return np.moveaxis(out, 0, axis)
+
+
+def pooled_regression_slope(y: np.ndarray, x: np.ndarray) -> float:
+    """OLS slope of ``y`` on ``x`` with every (time, space) pair pooled (I.3c).
+
+    Both inputs are anomaly fields of the same shape; they are flattened and
+    regressed together, so one slope summarises the whole tropical band.
+    Non-finite pairs are dropped.
+    """
+    y = np.asarray(y, dtype=float).ravel()
+    x = np.asarray(x, dtype=float).ravel()
+    if y.size != x.size:
+        msg = f"pooled regression needs equal shapes, got {y.size} and {x.size}"
+        raise ValueError(msg)
+    valid = np.isfinite(x) & np.isfinite(y)
+    if valid.sum() < 3:  # noqa: PLR2004
+        return float("nan")
+    return float(stats.linregress(x[valid], y[valid]).slope)
+
+
+def deseasonalised_anomalies(
+    field: np.ndarray,
+    months: np.ndarray,
+) -> np.ndarray:
+    """Remove the per-calendar-month climatology along the leading axis.
+
+    The numpy counterpart of ESMValCore's ``anomalies(period="month")``, for
+    fields CB2 derives itself (the column MSE of I.3c) and therefore never
+    holds as a cube. ``months`` is the calendar month of each time step.
+    """
+    field = np.asarray(field, dtype=float)
+    months = np.asarray(months)
+    if months.size != field.shape[0]:
+        msg = f"got {months.size} months for {field.shape[0]} time steps"
+        raise ValueError(msg)
+    out = field.copy()
+    for month in np.unique(months):
+        idx = months == month
+        out[idx] = field[idx] - np.nanmean(field[idx], axis=0)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # I.5c ENSO teleconnections
 # ---------------------------------------------------------------------------
+
+
+def standardised(series: np.ndarray) -> np.ndarray:
+    """``(x − mean) / std`` of a 1-D series (I.5c's standardized Niño-3.4)."""
+    x = np.asarray(series, dtype=float)
+    sigma = np.nanstd(x, ddof=1)
+    if not np.isfinite(sigma) or sigma == 0.0:
+        return np.full_like(x, np.nan)
+    return (x - np.nanmean(x)) / sigma
 
 
 def regression_on_index(series: np.ndarray, index: np.ndarray) -> float:

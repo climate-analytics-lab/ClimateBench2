@@ -1,21 +1,32 @@
-"""The three ClimateBench v2 baselines (metrics_reference.md Tier II).
+"""The ClimateBench v2 Tier II baselines (metrics_reference.md Tier II).
 
-Every submission's Tier II score is reported relative to:
+The headline skill of every scorecard entry is taken against the CMIP6
+reference ensemble (``E_ref`` = median of the per-model fair CRPS, computed
+in :mod:`climatebench2.scoring_pass`). Two further baselines are computed
+and reported *alongside* it:
 
-(i)   **Climatology persistence** — forecast = the 1985–2014 (monthly or
-      annual) climatology of the observations, held fixed. The window is the
-      pre-test baseline `tier2.climatology_baseline_period`; it deliberately
-      stops in 2014 so it cannot overlap the reserved post-2015 test period.
+(i)   **Climatology** — the 1985–2014 pre-test climatology of the
+      observations (`tier2.climatology_baseline_period`; it deliberately
+      stops in 2014 so it cannot overlap the reserved post-2015 test period).
+
+      ⚠ **CB2 interpretation.** The paper describes this baseline as the
+      deterministic 1985–2014 monthly mean, which fair CRPS leaves
+      *undefined* (M = 1). CB2 therefore scores the climatology as the
+      **distribution** of the reference's baseline-window values for each
+      calendar month — 30 pseudo-members for a monthly series, the 30 annual
+      values for an annual one (:func:`climatology_pseudo_members`). This is
+      the natural probabilistic reading of "predict the climatology" and it
+      keeps the no-skill floor on the same fair-CRPS footing as every other
+      row. Flagged for resolution in the manuscript.
+
 (ii)  **Pattern scaling** — ΔT_global(t) from a two-layer energy-balance
       model driven by an ERF series, times the CMIP6 multi-model-mean
-      normalized warming pattern, plus the climatology.
-(iii) **CMIP6 multi-model ensemble** — the pooled CMIP6 comparison members
-      scored as one ensemble (implemented in
-      ``climatebench2.diags.tier2_scores`` as the ``CMIP6-MME`` row).
+      normalized warming pattern, plus the climatology. The functions below
+      are the pure-maths hook; wiring it (an ERF series, calibration through
+      2014 and a CMIP6-MMM pattern) is a later work package.
 
-All three run through the identical scoring pipeline (CRPS-ESS /
-consistency), never a special-cased metric. Pure numpy here; wiring lives in
-the scored diagnostics and the leaderboard.
+Everything here is pure numpy; the wiring lives in
+:mod:`climatebench2.scoring_pass` and the leaderboard.
 """
 
 from __future__ import annotations
@@ -25,31 +36,69 @@ import numpy as np
 MONTHS_PER_YEAR = 12
 
 
-def climatology_forecast(
-    reference_series: np.ndarray,
+def climatology_pseudo_members(
+    window_values: np.ndarray,
     *,
-    monthly: bool,
-    n_time: int,
-    baseline_slice: slice | None = None,
+    window_months: np.ndarray | None = None,
+    target_months: np.ndarray | None = None,
+    n_time: int | None = None,
 ) -> np.ndarray:
-    """Baseline (i): persistence of the reference climatology.
+    """Baseline (i): the climatology as an ensemble of pseudo-members.
 
-    ``reference_series``: the observed series (monthly or annual) from which
-    the climatology is taken — restricted to ``baseline_slice`` (the
-    1985–2014 pre-test window) if given. Returns a forecast of length ``n_time``:
-    the repeating 12-month climatology (``monthly=True``) or the constant
-    mean (``monthly=False``).
+    Instead of a single deterministic climatological mean (undefined under
+    fair CRPS), the forecast for a target step is the **set of
+    baseline-window values** for that calendar month — one pseudo-member per
+    baseline year.
+
+    Parameters
+    ----------
+    window_values:
+        The reference series restricted to the baseline window
+        (1985–2014), shape ``(n_window,)``.
+    window_months:
+        Calendar month (1–12) of each ``window_values`` entry. Given for a
+        **monthly** series; omit for an annual one.
+    target_months:
+        Calendar month of each target step (monthly series only).
+    n_time:
+        Number of target steps (annual series only).
+
+    Returns
+    -------
+    :
+        ``(n_members, n_time)``. For a monthly series the members are the
+        baseline years — truncated to the smallest per-month count, so every
+        month contributes the same number of members and the fair-CRPS
+        spread term is not month-dependent. For an annual series every
+        target step sees the same ``n_members`` baseline values.
     """
-    x = np.asarray(reference_series, dtype=float)
-    if baseline_slice is not None:
-        x = x[baseline_slice]
-    if monthly:
-        clim = np.array(
-            [np.nanmean(x[m::MONTHS_PER_YEAR]) for m in range(MONTHS_PER_YEAR)],
-        )
-        reps = int(np.ceil(n_time / MONTHS_PER_YEAR))
-        return np.tile(clim, reps)[:n_time]
-    return np.full(n_time, np.nanmean(x))
+    values = np.asarray(window_values, dtype=float)
+    if window_months is None:
+        if n_time is None:
+            msg = "annual climatology needs n_time"
+            raise ValueError(msg)
+        members = values[np.isfinite(values)]
+        if members.size == 0:
+            msg = "no finite values in the climatology baseline window"
+            raise ValueError(msg)
+        return np.tile(members[:, None], (1, int(n_time)))
+
+    if target_months is None:
+        msg = "monthly climatology needs target_months"
+        raise ValueError(msg)
+    months = np.asarray(window_months, dtype=int)
+    targets = np.asarray(target_months, dtype=int)
+    per_month = {
+        m: values[(months == m) & np.isfinite(values)]
+        for m in np.unique(targets)
+    }
+    counts = [v.size for v in per_month.values()]
+    n_members = min(counts) if counts else 0
+    if n_members == 0:
+        msg = "no finite baseline-window values for some target month"
+        raise ValueError(msg)
+    stacked = {m: v[:n_members] for m, v in per_month.items()}
+    return np.stack([stacked[int(m)] for m in targets], axis=1)
 
 
 def two_layer_ebm(

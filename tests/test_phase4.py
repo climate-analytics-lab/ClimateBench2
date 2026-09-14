@@ -104,21 +104,54 @@ def test_ols_trend_and_first_harmonic() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_climatology_forecast_annual_and_monthly() -> None:
-    annual = baselines.climatology_forecast(
+def test_climatology_pseudo_members_annual() -> None:
+    """Annual series: every target step sees all baseline-window values."""
+    members = baselines.climatology_pseudo_members(
         np.array([1.0, 2.0, 3.0]),
-        monthly=False,
         n_time=5,
     )
-    np.testing.assert_allclose(annual, np.full(5, 2.0))
+    assert members.shape == (3, 5)
+    np.testing.assert_allclose(members[:, 0], [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(members[:, 4], [1.0, 2.0, 3.0])
 
-    monthly_series = np.tile(np.arange(12, dtype=float), 3)  # 3 identical years
-    monthly = baselines.climatology_forecast(
-        monthly_series,
-        monthly=True,
-        n_time=18,
+
+def test_climatology_pseudo_members_monthly() -> None:
+    """Monthly series: the members of a step are that calendar month's years."""
+    window_months = np.tile(np.arange(1, 13), 3)  # 3 baseline years
+    window_values = np.arange(36, dtype=float)
+    target_months = np.array([1, 2, 12])
+    members = baselines.climatology_pseudo_members(
+        window_values,
+        window_months=window_months,
+        target_months=target_months,
     )
-    np.testing.assert_allclose(monthly, np.tile(np.arange(12.0), 2)[:18])
+    assert members.shape == (3, 3)  # 3 baseline years x 3 target steps
+    np.testing.assert_allclose(members[:, 0], [0.0, 12.0, 24.0])  # Januarys
+    np.testing.assert_allclose(members[:, 2], [11.0, 23.0, 35.0])  # Decembers
+
+
+def test_climatology_pseudo_members_truncates_to_equal_member_counts() -> None:
+    """A ragged final year must not make one month's spread term different."""
+    window_months = np.array([1, 2, 1, 2, 1])  # 3 Januarys, 2 Februaries
+    window_values = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    members = baselines.climatology_pseudo_members(
+        window_values,
+        window_months=window_months,
+        target_months=np.array([1, 2]),
+    )
+    assert members.shape == (2, 2)
+
+
+def test_climatology_pseudo_members_errors() -> None:
+    with pytest.raises(ValueError, match="n_time"):
+        baselines.climatology_pseudo_members(np.array([1.0]))
+    with pytest.raises(ValueError, match="target_months"):
+        baselines.climatology_pseudo_members(
+            np.array([1.0]),
+            window_months=np.array([1]),
+        )
+    with pytest.raises(ValueError, match="no finite"):
+        baselines.climatology_pseudo_members(np.array([np.nan]), n_time=3)
 
 
 def test_two_layer_ebm_step_forcing_approaches_equilibrium() -> None:

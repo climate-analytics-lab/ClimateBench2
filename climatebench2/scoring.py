@@ -1,22 +1,29 @@
 """The ClimateBench v2 probabilistic scoring engine (pure functions).
 
-Implements the two Tier II scoring regimes of the protocol
+Implements the Tier II scoring machinery of the protocol
 (docs/metrics_reference.md, Tier II preamble):
 
-(a) **Time-resolved quantities** — CRPS of an ensemble against an observed
-    series, time-averaged with an effective-sample-size (lag-1
-    autocorrelation) correction on the average's uncertainty.
+(a) **Time-resolved quantities** — **fair** (Ferro) CRPS of an ensemble
+    against an observed series, time-averaged, with an effective-sample-size
+    (lag-1 autocorrelation) correction on the *uncertainty* of that average
+    and a moving-block bootstrap confidence interval.
 
-(b) **Aggregated scalar diagnostics** — ensemble-consistency test: is the
+(b) **Aggregated diagnostics and spatial fields** — fair CRPS in a projected
+    basis (EOFs of the reference, fixed pre-2015) — the reference-EOF basis
+    is a later work package; the primitives here are ``eof_basis`` /
+    ``project_onto_eofs``.
+
+(c) **Ensemble-consistency test** (complementary diagnostic) — is the
     observed value consistent with the model-ensemble distribution, whose
     spread combines ensemble spread, internal variability (piControl chunks)
     and observational uncertainty in quadrature; two-sided test at p < 0.05.
     Spatial fields are first projected onto a small number of EOFs and each
     PC tested (Bonferroni-corrected).
 
-Everything here is numpy/scipy only — no ClimateEval imports — so the engine
-is unit-testable anywhere. The ClimateEval ``Diagnostic`` wrappers live in
-``climatebench2.diags.tier2_scores``.
+Everything here is numpy/scipy only — no ClimateEval imports, no protocol
+constants (those live in ``thresholds.yml`` and are passed in by the caller)
+— so the engine is unit-testable anywhere. The pass that applies it to a
+results database is ``climatebench2.scoring_pass``.
 """
 
 from __future__ import annotations
@@ -26,15 +33,28 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import stats
 
+_MIN_FAIR_MEMBERS = 2
+
 # ---------------------------------------------------------------------------
-# Regime (a): CRPS with effective-sample-size correction
+# Regime (a): fair CRPS with effective-sample-size correction
 # ---------------------------------------------------------------------------
 
 
-def crps_ensemble(members: np.ndarray, obs: np.ndarray) -> np.ndarray:
-    """Empirical CRPS of an ensemble forecast, per time step.
+def crps_fair(members: np.ndarray, obs: np.ndarray) -> np.ndarray:
+    """Fair (Ferro) CRPS of an ensemble forecast, per time step.
 
-    CRPS(F, y) = E|X − y| − ½ E|X − X′| (Gneiting & Raftery 2007, eq. 21).
+    The protocol's primary probabilistic score throughout Tiers II and III
+    (metrics_reference.md, Tier II preamble)::
+
+        CRPS_fair(x_1..M, y) = (1/M) Σ_i |x_i − y|
+                             − (1/(2M(M−1))) Σ_i Σ_j |x_i − x_j|
+
+    Note the ``M(M−1)`` normalisation of the spread term: the double sum runs
+    over all ordered pairs, so pairs with ``i = j`` (which contribute zero)
+    are excluded from the average. This makes the *expected* score of a
+    calibrated ensemble independent of the ensemble size, so submissions with
+    3 and with 50 members are directly comparable; the empirical estimator
+    (``M²`` normalisation) penalises small ensembles.
 
     Parameters
     ----------
@@ -47,11 +67,27 @@ def crps_ensemble(members: np.ndarray, obs: np.ndarray) -> np.ndarray:
     Returns
     -------
     :
-        CRPS per time step, shape ``(n_time,)``. For ``n_members == 1`` this
-        reduces to the absolute error |x − y|.
+        Fair CRPS per time step, shape ``(n_time,)``.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two members are given: **fair CRPS is undefined for a
+        deterministic forecast** and must never fall through to |x − y|
+        (paper §5.3). Deterministic references are handled explicitly by the
+        caller (``climatebench2.scoring_pass``).
     """
     members = np.atleast_2d(np.asarray(members, dtype=float))  # (m, t)
     obs = np.atleast_1d(np.asarray(obs, dtype=float))  # (t,)
+    n_members = members.shape[0]
+    if n_members < _MIN_FAIR_MEMBERS:
+        msg = (
+            f"fair CRPS is undefined for {n_members} member(s): it needs at "
+            f"least {_MIN_FAIR_MEMBERS} (a deterministic forecast has no "
+            f"spread term). Handle M = 1 explicitly rather than falling "
+            f"through to the absolute error."
+        )
+        raise ValueError(msg)
     if members.shape[1] != obs.shape[0]:
         msg = (
             f"members has {members.shape[1]} time steps but obs has "
@@ -59,9 +95,49 @@ def crps_ensemble(members: np.ndarray, obs: np.ndarray) -> np.ndarray:
         )
         raise ValueError(msg)
     mae_term = np.abs(members - obs[None, :]).mean(axis=0)
-    # pairwise |X - X'| over members, per time step
-    pairwise = np.abs(members[:, None, :] - members[None, :, :]).mean(axis=(0, 1))
-    return mae_term - 0.5 * pairwise
+    # Σ_i Σ_j |x_i − x_j| over all ordered pairs, per time step; the fair
+    # normalisation 1/(2M(M−1)) is the average over the i ≠ j pairs only.
+    pairwise = np.abs(members[:, None, :] - members[None, :, :]).sum(axis=(0, 1))
+    spread_term = pairwise / (2.0 * n_members * (n_members - 1))
+    return mae_term - spread_term
+
+
+def crps_fair_with_obs_draws(
+    members: np.ndarray,
+    obs: np.ndarray,
+    *,
+    obs_sigma: float | np.ndarray = 0.0,
+    n_draws: int = 100,
+    seed: int = 0,
+) -> np.ndarray:
+    """Fair CRPS averaged over draws of the observational uncertainty.
+
+    The protocol's treatment of observational error (metrics_reference.md
+    Tier II, "observational variance term"): instead of widening the
+    forecast, the score is averaged over pseudo-observations
+    ``y_k ~ N(obs, σ_obs)``::
+
+        CRPS_obs = (1/K) Σ_k CRPS_fair(x_1..M, y_k)
+
+    The draws are generated from ``seed`` alone, so a submission and its
+    baselines — scored with the same seed, the same ``n_draws`` and the same
+    aligned time axis — see the **identical** pseudo-observations and remain
+    directly comparable.
+
+    ``obs_sigma`` may be a scalar or a per-time-step array. With
+    ``obs_sigma = 0`` (or ``n_draws < 1``) this reproduces :func:`crps_fair`
+    exactly, with no random numbers drawn at all.
+    """
+    obs = np.atleast_1d(np.asarray(obs, dtype=float))
+    sigma = np.broadcast_to(np.asarray(obs_sigma, dtype=float), obs.shape)
+    if n_draws < 1 or not np.any(sigma > 0.0):
+        return crps_fair(members, obs)
+    rng = np.random.default_rng(seed)
+    draws = rng.standard_normal((int(n_draws), obs.size))
+    total = np.zeros(obs.size)
+    for draw in draws:
+        total += crps_fair(members, obs + sigma * draw)
+    return total / float(n_draws)
 
 
 def lag1_autocorrelation(x: np.ndarray) -> float:
@@ -99,15 +175,18 @@ class CRPSScore:
     n_time: int
 
 
-def crps_ess_score(members: np.ndarray, obs: np.ndarray) -> CRPSScore:
-    """Regime-(a) score: mean CRPS over time, SE from the effective T.
+def crps_ess_from_series(crps_t: np.ndarray, n_members: int) -> CRPSScore:
+    """Regime-(a) summary of an already-computed per-time-step CRPS series.
 
     ``score = (1/T) Σ_t CRPS_t``; ``SE = std(CRPS_t) / sqrt(T_eff)`` where
-    T_eff uses the lag-1 autocorrelation of the CRPS series.
+    T_eff uses the lag-1 autocorrelation of the CRPS series (the ESS
+    correction applies to the *uncertainty*, never to the point score).
     """
-    members = np.atleast_2d(np.asarray(members, dtype=float))
-    crps_t = crps_ensemble(members, obs)
-    valid = crps_t[np.isfinite(crps_t)]
+    valid = np.asarray(crps_t, dtype=float)
+    valid = valid[np.isfinite(valid)]
+    if valid.size == 0:
+        msg = "CRPS series has no finite values"
+        raise ValueError(msg)
     t_eff = effective_sample_size(valid)
     se = float(valid.std(ddof=1) / np.sqrt(t_eff)) if valid.size > 1 else np.nan
     return CRPSScore(
@@ -115,9 +194,90 @@ def crps_ess_score(members: np.ndarray, obs: np.ndarray) -> CRPSScore:
         standard_error=se,
         t_eff=t_eff,
         r1=lag1_autocorrelation(valid),
-        n_members=members.shape[0],
+        n_members=int(n_members),
         n_time=int(valid.size),
     )
+
+
+def crps_ess_score(members: np.ndarray, obs: np.ndarray) -> CRPSScore:
+    """Regime-(a) score of an ensemble: mean **fair** CRPS with its ESS SE.
+
+    Raises ``ValueError`` for a single member (see :func:`crps_fair`).
+    """
+    members = np.atleast_2d(np.asarray(members, dtype=float))
+    return crps_ess_from_series(crps_fair(members, obs), members.shape[0])
+
+
+# ---------------------------------------------------------------------------
+# Regime (a): moving-block bootstrap confidence interval
+# ---------------------------------------------------------------------------
+
+
+def moving_block_bootstrap_ci(
+    crps_t: np.ndarray,
+    *,
+    block_length: int,
+    n_boot: int = 1000,
+    alpha: float = 0.05,
+    seed: int = 0,
+    members: np.ndarray | None = None,
+    obs: np.ndarray | None = None,
+) -> tuple[float, float]:
+    """Percentile CI of the time-mean CRPS from a moving-block bootstrap.
+
+    The per-time-step CRPS series is serially correlated, so the interval is
+    built from **moving blocks** of ``block_length`` consecutive steps
+    (protocol defaults in ``thresholds.yml`` ``tier2.bootstrap``: 12 steps —
+    one year — for a monthly series, 3 for an annual one). ``ceil(T/L)``
+    blocks are drawn with replacement and concatenated to length ``T``, and
+    the mean of each resample forms the bootstrap distribution.
+
+    When ``members`` and ``obs`` are given, each replicate **also resamples
+    the ensemble members** with replacement and recomputes the fair CRPS
+    from the resampled ensemble, so the interval covers ensemble-sampling as
+    well as time-sampling uncertainty. Member resampling costs
+    ``O(n_boot · M² · T)``; pass only ``crps_t`` to skip it.
+
+    Returns
+    -------
+    :
+        ``(lo, hi)``, the ``alpha/2`` and ``1 − alpha/2`` percentiles of the
+        resampled means. ``(nan, nan)`` for a series shorter than two steps.
+    """
+    series = np.asarray(crps_t, dtype=float)
+    series = series[np.isfinite(series)]
+    n_time = series.size
+    if n_time < 2:  # noqa: PLR2004 - a CI needs at least two points
+        return (float("nan"), float("nan"))
+    length = int(np.clip(block_length, 1, n_time))
+    n_blocks = int(np.ceil(n_time / length))
+    rng = np.random.default_rng(seed)
+    offsets = np.arange(length)
+
+    def block_index(size: int) -> np.ndarray:
+        starts = rng.integers(0, n_time - length + 1, size=(size, n_blocks))
+        idx = starts[:, :, None] + offsets[None, None, :]
+        return idx.reshape(size, n_blocks * length)[:, :n_time]
+
+    resample_members = (
+        members is not None
+        and obs is not None
+        # Member resampling recomputes the series, so it needs the raw series
+        # to be gap-free (otherwise the block indices no longer line up).
+        and np.asarray(crps_t, dtype=float).size == n_time
+    )
+    if not resample_members:
+        means = series[block_index(int(n_boot))].mean(axis=1)
+    else:
+        ensemble = np.atleast_2d(np.asarray(members, dtype=float))
+        n_members = ensemble.shape[0]
+        means = np.empty(int(n_boot))
+        for i in range(int(n_boot)):
+            picked = rng.integers(0, n_members, size=n_members)
+            replicate = crps_fair(ensemble[picked], obs)
+            means[i] = replicate[block_index(1)[0]].mean()
+    lo, hi = np.percentile(means, [100 * alpha / 2.0, 100 * (1.0 - alpha / 2.0)])
+    return (float(lo), float(hi))
 
 
 # ---------------------------------------------------------------------------

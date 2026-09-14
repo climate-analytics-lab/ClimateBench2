@@ -148,9 +148,28 @@ tier2:
   # post-2015 test window). Used by the Climatology baseline row and as the
   # Pinatubo reference climatology.
   climatology_baseline_period: [1985, 2014]
-  # Regime (a): CRPS with effective-sample-size correction
+  # Regime (a): fair (Ferro) CRPS with effective-sample-size correction on the
+  # reported uncertainty. Fair CRPS is undefined for a deterministic forecast,
+  # so a single-member model is reported as "n/a (single member)", never as
+  # the absolute error.
   crps_ess_correction: true
-  # Regime (b): ensemble-consistency test
+  # Moving-block bootstrap of the time-mean fair CRPS (scoring_pass).
+  bootstrap:
+    block_length_monthly: 12           # steps (1 yr) for a monthly series
+    block_length_annual: 3             # steps (3 yr) for an annual series
+    n_boot: 1000                       # bootstrap replicates
+    alpha: 0.05                        # -> 95% percentile interval
+    resample_members: true             # also resample ensemble members
+    seed: 20260914                     # fixed: every model gets the same resamples
+  # Observational-uncertainty draws: fair CRPS averaged over K pseudo-
+  # observations y_k ~ N(obs, sigma_obs), the SAME draws for a submission and
+  # its baselines. n_draws applies only where a sigma_obs field is available;
+  # none is plumbed through yet (HadCRUT5's error field is the first candidate),
+  # so today every score runs at sigma_obs = 0 and the draws are a no-op.
+  obs_uncertainty:
+    n_draws: 100
+    seed: 20260914
+  # Regime (c): ensemble-consistency test
   consistency_p_value: 0.05            # two-sided
   eof_modes: 5                         # spatial fields: leading EOFs tested
   # Pinatubo response (1991-07 .. 1993-12 vs the climatology_baseline_period

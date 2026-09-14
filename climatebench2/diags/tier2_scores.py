@@ -1,21 +1,27 @@
-"""Tier II probabilistic scoring diagnostics (regimes a and b).
+"""Tier II scoring diagnostics.
 
-These wrap ClimateEval time-series diagnostics and post-process their raw
-output through the ClimateBench2 scoring engine (``climatebench2.scoring``):
+- :class:`ScoredAnnualMeanTimeSeries` / :class:`ScoredMonthlyMeanTimeSeries` /
+  :class:`ScoredAnnualMaxTimeSeries` — the time-series diagnostics the Tier II
+  suites name. They are **thin subclasses of the ClimateEval diagnostics**
+  (``ScoredAnnualMaxTimeSeries`` additionally takes a per-gridpoint annual
+  maximum before the area mean): they emit the raw series and ClimateEval's
+  deterministic metrics, and nothing else.
 
-- :class:`ScoredAnnualMeanTimeSeries` / :class:`ScoredMonthlyMeanTimeSeries` —
-  regime (a): per-data-source CRPS against the reference series with the
-  effective-sample-size correction, appended to the metrics table. All
-  ``other`` data sources (the CMIP6 comparison ensemble) are additionally
-  pooled into one multi-model ensemble row (``data_id = "CMIP6-MME"``),
-  which is the protocol's MME baseline scored through the identical pipeline.
+  The probabilistic score is *not* computed here. Since ensemble members
+  arrive as separate data sources (``--member`` / DRS discovery, one run per
+  member), the fair CRPS across a model's members can only be formed once
+  every member has run — so it is a post-processing pass over the finished
+  database, :mod:`climatebench2.scoring_pass`, which ``climatebench2 score``
+  runs after the suites and ``climatebench2 leaderboard --rescore`` can
+  re-run. Scoring each source separately, as this module used to, made every
+  model an M = 1 "ensemble" whose fair CRPS is undefined.
 
-- :class:`TrendConsistency` — regime (b) applied to the OLS trend of the
+- :class:`TrendConsistency` — regime (c) applied to the OLS trend of the
   series: is the observed trend consistent with the ensemble trend
   distribution? Ensemble = the benchmarked model + CMIP6 comparison members.
-  The internal-variability term (piControl chunking) is wired in Phase 4 via
-  a piControl data path; until then ``sigma_internal`` defaults to 0 and the
-  test is spread+obs-error only (documented limitation).
+  The internal-variability term (piControl chunking) still needs a piControl
+  data path; until then ``sigma_internal`` defaults to 0 and the test is
+  spread+obs-error only (documented limitation).
 
 Metrics rows use the numeric-column convention of ``pass_fail``:
 ``value``/``passes`` plus score-specific columns.
@@ -43,14 +49,12 @@ from climateeval.diags._base import DiagnosticOutput
 from climateeval.diags._utils import DEFAULT_GRID
 from climateeval.diags.simple import AnnualMeanTimeSeries, MeanTimeSeries
 
-from climatebench2 import baselines, scoring
+from climatebench2 import scoring
 from climatebench2._thresholds import get_threshold
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-MME_DATA_ID = "CMIP6-MME"
-CLIMATOLOGY_DATA_ID = "Climatology"
 _META_COLUMNS = {"data_id", "data_type", "time"}
 
 
@@ -69,190 +73,24 @@ def _series_by_source(
     return groups, var_columns
 
 
-def _aligned(
-    frame: pd.DataFrame,
-    reference: pd.DataFrame,
-    column: str,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Align one series with the reference on the time column (inner join)."""
-    merged = pd.merge(
-        frame[["time", column]].rename(columns={column: "x"}),
-        reference[["time", column]].rename(columns={column: "y"}),
-        on="time",
-        how="inner",
-    ).dropna()
-    return merged["x"].to_numpy(float), merged["y"].to_numpy(float)
+class ScoredAnnualMeanTimeSeries(AnnualMeanTimeSeries):
+    """Annual-mean series scored by :mod:`climatebench2.scoring_pass`.
+
+    A thin alias of ClimateEval's diagnostic so the Tier II suite YAMLs keep
+    naming a CB2 class (and so the protocol's scored variables stay visible
+    in the suite); the fair CRPS, its ESS standard error, the block-bootstrap
+    interval and the skill against the CMIP6 median are appended to this
+    diagnostic's ``metrics`` table by the post-processing pass, once every
+    ensemble member has been ingested.
+    """
 
 
-def _stack_members(
-    members: list[pd.DataFrame],
-    reference: pd.DataFrame,
-    column: str,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Stack member series on the times every member shares with the obs."""
-    obs = reference[["time", column]].rename(columns={column: "obs"}).dropna()
-    merged = obs
-    for i, member in enumerate(members):
-        merged = pd.merge(
-            merged,
-            member[["time", column]].rename(columns={column: f"m{i}"}),
-            on="time",
-            how="inner",
-        )
-    merged = merged.dropna()
-    member_matrix = merged[[f"m{i}" for i in range(len(members))]].to_numpy(float).T
-    return member_matrix, merged["obs"].to_numpy(float)
+class ScoredMonthlyMeanTimeSeries(MeanTimeSeries):
+    """Monthly-mean series scored by :mod:`climatebench2.scoring_pass`."""
 
 
-class _ScoredTimeSeriesMixin:
-    """Append regime-(a) CRPS-ESS rows to a time-series diagnostic's metrics."""
-
-    _min_overlap: ClassVar[int] = 3
-
-    def get_output(self, data: Any, data_information: Any) -> DiagnosticOutput:
-        output = super().get_output(data, data_information)  # type: ignore[misc]
-        if output.raw_output is None:
-            return output
-        raw_df = output.raw_output.to_pandas()
-        if "time" not in raw_df.columns:
-            return output
-        groups, var_columns = _series_by_source(raw_df)
-
-        rows: list[dict[str, Any]] = []
-        for column in var_columns:
-            references = [
-                g for (_, data_type), g in groups.items() if data_type == "reference"
-            ]
-            if not references:
-                continue
-            reference = references[0]
-
-            # Individual sources (the submission and each comparison model)
-            for (data_id, data_type), frame in groups.items():
-                if data_type == "reference":
-                    continue
-                x, y = _aligned(frame, reference, column)
-                if x.size < self._min_overlap:
-                    continue
-                rows.append(
-                    self._crps_row(column, data_id, data_type, x[None, :], y),
-                )
-
-            # Pooled CMIP6 comparison ensemble = the MME baseline
-            member_frames = [
-                g for (_, data_type), g in groups.items() if data_type == "other"
-            ]
-            if len(member_frames) > 1:
-                members, y = _stack_members(member_frames, reference, column)
-                if members.shape[1] >= self._min_overlap:
-                    rows.append(
-                        self._crps_row(column, MME_DATA_ID, "baseline", members, y),
-                    )
-
-            # Climatology-persistence baseline from the reference itself
-            clim_row = self._climatology_row(column, reference)
-            if clim_row is not None:
-                rows.append(clim_row)
-
-        if not rows:
-            return output
-        scores_df = pd.DataFrame(rows)
-        if output.metrics is not None:
-            scores_df = pd.concat(
-                [output.metrics.to_pandas(), scores_df],
-                ignore_index=True,
-                sort=False,
-            )
-        return DiagnosticOutput(
-            raw_output=output.raw_output,
-            metrics=ibis.memtable(scores_df),
-            variables=output.variables,
-            data_sources=output.data_sources,
-        )
-
-    def _climatology_row(
-        self,
-        column: str,
-        reference: pd.DataFrame,
-    ) -> dict[str, Any] | None:
-        """Baseline (i): score the reference's own climatology persistence.
-
-        The climatology comes from the protocol's baseline window
-        (``tier2.climatology_baseline_period``); monthly series get the
-        repeating 12-month climatology, annual series the constant mean.
-        Skipped when the reference doesn't cover the window.
-        """
-        ref = reference[["time", column]].dropna().sort_values("time")
-        if ref.empty:
-            return None
-        times = pd.to_datetime(ref["time"])
-        y0, y1 = get_threshold("tier2.climatology_baseline_period")
-        in_window = (times.dt.year >= int(y0)) & (times.dt.year <= int(y1))
-        if in_window.sum() < self._min_overlap:
-            return None
-        window = ref.loc[in_window.to_numpy(), column].to_numpy(float)
-        obs = ref[column].to_numpy(float)
-        monthly = (
-            times.size > 1
-            and times.diff().dropna().dt.days.median() < 200  # noqa: PLR2004
-        )
-        if monthly:
-            clim = np.array(
-                [
-                    np.nanmean(
-                        window[
-                            times[in_window.to_numpy()].dt.month.to_numpy() == m
-                        ],
-                    )
-                    for m in range(1, 13)
-                ],
-            )
-            forecast = clim[times.dt.month.to_numpy() - 1]
-        else:
-            forecast = baselines.climatology_forecast(
-                window,
-                monthly=False,
-                n_time=obs.size,
-            )
-        return self._crps_row(
-            column,
-            CLIMATOLOGY_DATA_ID,
-            "baseline",
-            forecast[None, :],
-            obs,
-        )
-
-    @staticmethod
-    def _crps_row(
-        column: str,
-        data_id: str,
-        data_type: str,
-        members: np.ndarray,
-        obs: np.ndarray,
-    ) -> dict[str, Any]:
-        result = scoring.crps_ess_score(members, obs)
-        return {
-            "data_id": data_id,
-            "data_type": data_type,
-            "var_id": column,
-            "crps": result.score,
-            "crps_se": result.standard_error,
-            "t_eff": result.t_eff,
-            "n_members": result.n_members,
-            "n_time": result.n_time,
-        }
-
-
-class ScoredAnnualMeanTimeSeries(_ScoredTimeSeriesMixin, AnnualMeanTimeSeries):
-    """Annual-mean time series with regime-(a) CRPS-ESS scoring."""
-
-
-class ScoredMonthlyMeanTimeSeries(_ScoredTimeSeriesMixin, MeanTimeSeries):
-    """Monthly-mean time series with regime-(a) CRPS-ESS scoring."""
-
-
-class ScoredAnnualMaxTimeSeries(_ScoredTimeSeriesMixin, AnnualMeanTimeSeries):
-    """TXx-style annual block maxima with regime-(a) CRPS-ESS scoring.
+class ScoredAnnualMaxTimeSeries(AnnualMeanTimeSeries):
+    """TXx-style annual block maxima, scored by the post-processing pass.
 
     Per-gridpoint annual maximum first, then the area mean — the global-mean
     TXx series of metrics_reference.md §II.1 "Daily tas extremes". Feed it
@@ -275,7 +113,7 @@ class ScoredAnnualMaxTimeSeries(_ScoredTimeSeriesMixin, AnnualMeanTimeSeries):
 
 
 class TrendConsistency(AnnualMeanTimeSeries):
-    """Regime-(b) consistency of the observed trend with the ensemble.
+    """Regime-(c) consistency of the observed trend with the ensemble.
 
     Post-processes the annual-mean series: OLS trend per data source; the
     ensemble distribution pools the benchmarked model and the CMIP6
@@ -283,9 +121,9 @@ class TrendConsistency(AnnualMeanTimeSeries):
     :func:`climatebench2.scoring.ensemble_consistency` at the protocol's
     ``tier2.consistency_p_value``.
 
-    ``sigma_internal`` (piControl-chunk trend variability) is wired in
-    Phase 4; ``sigma_obs`` may be passed as a diagnostic kwarg per variable
-    until observational error fields are plumbed through.
+    ``sigma_internal`` (piControl-chunk trend variability) still needs a
+    piControl data path; ``sigma_obs`` may be passed as a diagnostic kwarg
+    per variable until observational error fields are plumbed through.
     """
 
     _trend_statistic: ClassVar[Callable[[np.ndarray], float]] = staticmethod(  # type: ignore[assignment]

@@ -17,12 +17,10 @@ import ibis  # noqa: E402
 from climateeval.diags._base import DiagnosticOutput  # noqa: E402
 
 from climatebench2.diags.tier2_scores import (  # noqa: E402
-    CLIMATOLOGY_DATA_ID,
-    MME_DATA_ID,
+    ScoredAnnualMaxTimeSeries,
     ScoredAnnualMeanTimeSeries,
+    ScoredMonthlyMeanTimeSeries,
     TrendConsistency,
-    _aligned,
-    _stack_members,
 )
 
 N_YEARS = 20
@@ -64,45 +62,35 @@ def _output_from(raw_df: pd.DataFrame) -> DiagnosticOutput:
     )
 
 
-def test_scored_time_series_appends_crps_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    raw_df = _raw_output_df()
-    base_output = _output_from(raw_df)
+def test_scored_time_series_emit_no_crps_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scored classes are thin aliases now: no M = 1 fair-CRPS rows.
+
+    Members arrive as separate data sources, so the fair CRPS is formed by
+    the post-processing pass (``climatebench2.scoring_pass``) once every
+    member has run — never per data source inside the diagnostic, where the
+    ensemble would always be M = 1 and the fair score undefined.
+    """
+    base_output = _output_from(_raw_output_df())
     monkeypatch.setattr(
         "climateeval.diags.simple.AnnualMeanTimeSeries.get_output",
         lambda self, data, info: base_output,
     )
     diag = ScoredAnnualMeanTimeSeries.__new__(ScoredAnnualMeanTimeSeries)
     output = diag.get_output(None, None)
+    assert output.metrics is None
+    assert output is base_output
 
-    metrics = output.metrics.to_pandas()
-    assert set(metrics["data_id"]) == {
-        "MyModel",
-        "CMIP6_A",
-        "CMIP6_B",
-        MME_DATA_ID,
-        CLIMATOLOGY_DATA_ID,
-    }
-    # Climatology persistence: constant forecast against a trending truth
-    # must score worse (higher CRPS) than the truth-tracking model
-    by_id = metrics.set_index("data_id")
-    assert by_id.loc[CLIMATOLOGY_DATA_ID, "data_type"] == "baseline"
-    assert by_id.loc[CLIMATOLOGY_DATA_ID, "crps"] > by_id.loc["MyModel", "crps"]
-    my = metrics.set_index("data_id").loc["MyModel"]
-    assert my["var_id"] == "tas"
-    assert my["crps"] > 0
-    assert my["n_members"] == 1
-    assert my["n_time"] == N_YEARS
-    # single member: CRPS == MAE against the reference
-    x, y = _aligned(
-        raw_df[raw_df.data_id == "MyModel"],
-        raw_df[raw_df.data_id == "OBS"],
-        "tas",
-    )
-    assert my["crps"] == pytest.approx(np.abs(x - y).mean())
 
-    mme = metrics.set_index("data_id").loc[MME_DATA_ID]
-    assert mme["n_members"] == 2
-    assert mme["data_type"] == "baseline"
+def test_scored_classes_are_climateeval_diagnostics() -> None:
+    from climateeval.diags.simple import AnnualMeanTimeSeries, MeanTimeSeries
+
+    assert issubclass(ScoredAnnualMeanTimeSeries, AnnualMeanTimeSeries)
+    assert issubclass(ScoredMonthlyMeanTimeSeries, MeanTimeSeries)
+    assert issubclass(ScoredAnnualMaxTimeSeries, AnnualMeanTimeSeries)
+    # the TXx variant keeps its own preprocessing
+    assert "_preprocess" in vars(ScoredAnnualMaxTimeSeries)
 
 
 def test_trend_consistency_passes_for_consistent_obs(
@@ -143,13 +131,3 @@ def test_trend_consistency_fails_for_wild_obs(
     diag._sigma_obs = 0.0
     output = diag.get_output(None, None)
     assert output.metrics.to_pandas().iloc[0]["passes"] == 0.0
-
-
-def test_stack_members_aligns_on_common_times() -> None:
-    raw_df = _raw_output_df()
-    ref = raw_df[raw_df.data_id == "OBS"]
-    m1 = raw_df[raw_df.data_id == "CMIP6_A"].iloc[2:]  # missing first 2 years
-    m2 = raw_df[raw_df.data_id == "CMIP6_B"]
-    members, obs = _stack_members([m1, m2], ref, "tas")
-    assert members.shape == (2, N_YEARS - 2)
-    assert obs.shape == (N_YEARS - 2,)

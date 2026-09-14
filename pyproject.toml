@@ -33,4 +33,7 @@ climatebench2 = "climatebench2._cli:main"
 include = ["climatebench2*"]
 
 [tool.setuptools.package-data]
-climatebench2 = ["thresholds.yml", "suites/*.yml"]
+# thresholds.yml — every protocol bound; suites/*.yml — the suite definitions;
+# data/*.csv — packaged protocol data tables (the ERF series driving the
+# pattern-scaling baseline's EBM).
+climatebench2 = ["thresholds.yml", "suites/*.yml", "data/*.csv"]

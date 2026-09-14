@@ -409,3 +409,160 @@ def test_parallel_control_window() -> None:
         branch_year_in_parent=1850,
         child_first_year=1850,
     ) == (1990, 1999)
+
+
+# ---------------------------------------------------------------------------
+# Tier II — the first harmonic (seasonal and diurnal, work package 6b)
+# ---------------------------------------------------------------------------
+
+
+def test_first_harmonic_recovers_a_known_seasonal_wave() -> None:
+    months = np.arange(12)
+    cycle = 3.0 + 2.5 * np.cos(2 * np.pi * months / 12 - 2 * np.pi * 7 / 12)
+    amplitude, phase = physics.first_harmonic(cycle)
+    assert amplitude == pytest.approx(2.5)
+    assert phase == pytest.approx(7.0)
+
+
+def test_first_harmonic_generalises_to_any_sampling() -> None:
+    """The diurnal cycle needs 24 (or 8) points, not 12."""
+    for n, peak in ((24, 16.0), (8, 3.0)):
+        hours = np.arange(n)
+        cycle = 1.0 + 0.75 * np.cos(2 * np.pi * (hours - peak) / n)
+        amplitude, phase = physics.first_harmonic(cycle)
+        assert amplitude == pytest.approx(0.75)
+        assert phase == pytest.approx(peak)
+
+
+def test_first_harmonic_rejects_too_few_points_and_nans() -> None:
+    with pytest.raises(ValueError, match="at least 3 points"):
+        physics.first_harmonic(np.array([1.0, 2.0]))
+    amplitude, phase = physics.first_harmonic(np.array([1.0, np.nan, 2.0, 3.0]))
+    assert np.isnan(amplitude) and np.isnan(phase)
+
+
+def test_phase_components_are_the_unit_vector_of_the_phase() -> None:
+    # 6 h of a 24 h cycle is a quarter turn
+    cos, sin = physics.phase_components(6.0, 24)
+    assert (cos, sin) == pytest.approx((0.0, 1.0), abs=1e-12)
+    # ... and the wrap is continuous: 23 h and 1 h are two hours apart
+    late = np.array(physics.phase_components(23.0, 24))
+    early = np.array(physics.phase_components(1.0, 24))
+    assert np.linalg.norm(late - early) < np.linalg.norm(
+        late - np.array(physics.phase_components(11.0, 24)),
+    )
+    assert all(np.isnan(physics.phase_components(np.nan, 24)))
+
+
+# ---------------------------------------------------------------------------
+# Tier II — ETCCDI daily extremes (work package 6b)
+#
+# Every array below is built so the index is known by construction.
+# ---------------------------------------------------------------------------
+
+#: Three 360-day years of daily data at two grid points.
+_ETCCDI_YEARS = np.repeat([2001, 2002, 2003], 360)
+_ETCCDI_MONTHS = np.tile(np.repeat(np.arange(1, 13), 30), 3)
+
+
+def test_annual_extreme_picks_the_block_max_and_min() -> None:
+    values = np.zeros((_ETCCDI_YEARS.size, 2))
+    values[100, 0] = 5.0  # 2001 spike at point 0
+    values[500, 1] = -4.0  # 2002 dip at point 1
+    years, txx = physics.annual_extreme(values, _ETCCDI_YEARS, "max")
+    np.testing.assert_array_equal(years, [2001, 2002, 2003])
+    np.testing.assert_allclose(txx[:, 0], [5.0, 0.0, 0.0])
+    _years, tnn = physics.annual_extreme(values, _ETCCDI_YEARS, "min")
+    np.testing.assert_allclose(tnn[:, 1], [0.0, -4.0, 0.0])
+    with pytest.raises(ValueError, match="'max' or 'min'"):
+        physics.annual_extreme(values, _ETCCDI_YEARS, "mean")
+
+
+def test_calendar_percentile_uses_only_base_period_days_of_that_month() -> None:
+    """The threshold of a month must not see another month, or another era."""
+    values = np.zeros((_ETCCDI_YEARS.size, 1))
+    values[_ETCCDI_MONTHS == 1] = 10.0  # every January
+    values[(_ETCCDI_MONTHS == 1) & (_ETCCDI_YEARS == 2003)] = 100.0  # outside base
+    base = _ETCCDI_YEARS <= 2002
+    threshold = physics.calendar_percentile(values, _ETCCDI_MONTHS, base, 90.0)
+    # January's threshold is 10 (the base-period Januarys), not 100
+    assert threshold[_ETCCDI_MONTHS == 1].max() == pytest.approx(10.0)
+    assert threshold[_ETCCDI_MONTHS == 2].max() == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="selects no time steps"):
+        physics.calendar_percentile(values, _ETCCDI_MONTHS, np.zeros(1080, bool), 90.0)
+
+
+def test_exceedance_fraction_is_a_percentage_of_days() -> None:
+    values = np.zeros((_ETCCDI_YEARS.size, 1))
+    values[:36] = 1.0  # 36 warm days in 2001 == 10% of a 360-day year
+    threshold = np.full_like(values, 0.5)
+    years, tx90p = physics.exceedance_fraction(values, _ETCCDI_YEARS, threshold)
+    np.testing.assert_array_equal(years, [2001, 2002, 2003])
+    np.testing.assert_allclose(tx90p[:, 0], [10.0, 0.0, 0.0])
+
+
+def test_spell_duration_counts_only_runs_of_at_least_six_days() -> None:
+    exceed = np.zeros((_ETCCDI_YEARS.size, 1), dtype=bool)
+    exceed[10:16] = True  # exactly 6 days -> counts
+    exceed[100:105] = True  # 5 days -> does not
+    exceed[200:210] = True  # 10 days -> counts
+    years, wsdi = physics.spell_duration_days(exceed, _ETCCDI_YEARS, min_length=6)
+    np.testing.assert_allclose(wsdi[:, 0], [16.0, 0.0, 0.0])
+    np.testing.assert_array_equal(years, [2001, 2002, 2003])
+
+
+def test_spell_duration_keeps_a_spell_that_straddles_new_year() -> None:
+    """The spell is found over the whole record; its days count in their year."""
+    exceed = np.zeros((_ETCCDI_YEARS.size, 1), dtype=bool)
+    exceed[356:364] = True  # 4 days in 2001, 4 in 2002 — one 8-day spell
+    _years, wsdi = physics.spell_duration_days(exceed, _ETCCDI_YEARS, min_length=6)
+    np.testing.assert_allclose(wsdi[:, 0], [4.0, 4.0, 0.0])
+
+
+def test_annual_max_running_sum_is_rx1day_and_rx5day() -> None:
+    pr = np.zeros((_ETCCDI_YEARS.size, 1))
+    pr[50] = 40.0  # one very wet day
+    pr[100:105] = 12.0  # five wet days: 60 mm over 5 days
+    _years, rx1day = physics.annual_max_running_sum(pr, _ETCCDI_YEARS, window=1)
+    _years, rx5day = physics.annual_max_running_sum(pr, _ETCCDI_YEARS, window=5)
+    assert rx1day[0, 0] == pytest.approx(40.0)
+    assert rx5day[0, 0] == pytest.approx(60.0)
+    with pytest.raises(ValueError, match="window must be"):
+        physics.annual_max_running_sum(pr, _ETCCDI_YEARS, window=0)
+
+
+def test_heavy_precipitation_fraction_is_r95ptot() -> None:
+    pr = np.full((_ETCCDI_YEARS.size, 1), 2.0)  # a uniformly damp world
+    pr[0:10] = 50.0  # ten downpours in 2001
+    base = _ETCCDI_YEARS <= 2002
+    threshold = physics.wet_day_percentile(pr, base, 95.0, wet_day_threshold=1.0)
+    _years, r95 = physics.heavy_precipitation_fraction(pr, _ETCCDI_YEARS, threshold)
+    total_2001 = 10 * 50.0 + 350 * 2.0
+    assert r95[0, 0] == pytest.approx(10 * 50.0 / total_2001)
+    assert r95[2, 0] == pytest.approx(0.0)
+
+
+def test_wet_day_percentile_ignores_dry_days_and_flags_dry_points() -> None:
+    pr = np.zeros((_ETCCDI_YEARS.size, 2))
+    pr[:, 0] = np.where(np.arange(_ETCCDI_YEARS.size) % 2 == 0, 10.0, 0.0)
+    base = np.ones(_ETCCDI_YEARS.size, dtype=bool)
+    threshold = physics.wet_day_percentile(pr, base, 95.0)
+    assert threshold[0] == pytest.approx(10.0)  # only the wet days enter
+    assert np.isnan(threshold[1])  # a point that never rains has no threshold
+
+
+def test_max_consecutive_dry_days_truncates_at_the_year_boundary() -> None:
+    pr = np.full((_ETCCDI_YEARS.size, 1), 5.0)
+    pr[10:30] = 0.0  # a 20-day drought in 2001
+    pr[350:370] = 0.0  # 10 days at the end of 2001, 10 at the start of 2002
+    _years, cdd = physics.max_consecutive_dry_days(pr, _ETCCDI_YEARS, 1.0)
+    np.testing.assert_allclose(cdd[:, 0], [20.0, 10.0, 0.0])
+
+
+def test_extreme_indices_propagate_a_fully_masked_point() -> None:
+    """An ocean point under the land mask is NaN, never a silent zero."""
+    values = np.full((_ETCCDI_YEARS.size, 2), 1.0)
+    values[:, 1] = np.nan
+    _years, txx = physics.annual_extreme(values, _ETCCDI_YEARS, "max")
+    assert np.isfinite(txx[:, 0]).all()
+    assert np.isnan(txx[:, 1]).all()

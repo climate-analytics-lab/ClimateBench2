@@ -351,6 +351,41 @@ def chunked_statistic_std(
     return float(np.std(values, ddof=1))
 
 
+def perkins_skill_score(pdf_model: np.ndarray, pdf_obs: np.ndarray) -> float:
+    """Perkins skill score: the overlap of two binned distributions.
+
+    ``S = Σ_b min(f_model,b, f_obs,b)`` over a **common** set of bins
+    (Perkins et al. 2007), the protocol's PDF-shape statistic for daily
+    temperature anomalies and wet-day precipitation intensity
+    (metrics_reference.md §II.1 "Daily tas extremes / pr intensity PDF").
+    ``S = 1`` is a perfect overlap and ``S = 0`` disjoint distributions.
+
+    Both inputs are renormalised to sum to one first, so bin *frequencies*
+    (Σf = 1) and bin *densities* (∫f dx = 1, what ESMValCore's ``histogram``
+    with ``normalization="integral"`` returns) give the same answer as long as
+    the bins are the pre-registered common ones (``tier2.perkins.bins``). A
+    bin that is NaN in either distribution is dropped from both.
+
+    Unlike fair CRPS this is a **skill score, not an error**: it is reported
+    in its own column and never enters ``E_ref`` or ``S = 1 − E/E_ref``.
+    """
+    model = np.asarray(pdf_model, dtype=float)
+    obs = np.asarray(pdf_obs, dtype=float)
+    if model.shape != obs.shape:
+        msg = f"Perkins score needs a common set of bins, got {model.shape} and {obs.shape}"
+        raise ValueError(msg)
+    valid = np.isfinite(model) & np.isfinite(obs)
+    if not valid.any():
+        return float("nan")
+    model = model[valid]
+    obs = obs[valid]
+    model_sum = model.sum()
+    obs_sum = obs.sum()
+    if model_sum <= 0.0 or obs_sum <= 0.0:
+        return float("nan")
+    return float(np.minimum(model / model_sum, obs / obs_sum).sum())
+
+
 def ols_trend(y: np.ndarray) -> float:
     """OLS slope of a series against its own index (units per step).
 

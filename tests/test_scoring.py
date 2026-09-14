@@ -538,3 +538,48 @@ def test_ols_trend_sigma_matches_a_monte_carlo() -> None:
     # Degenerate inputs are 0, never NaN or a division by zero
     assert scoring.ols_trend_sigma(0.0, 30) == 0.0
     assert scoring.ols_trend_sigma(0.05, 2) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Perkins skill score (work package 6b)
+# ---------------------------------------------------------------------------
+
+
+def test_perkins_skill_score_identical_distributions_is_one() -> None:
+    pdf = np.array([0.1, 0.4, 0.3, 0.2])
+    assert scoring.perkins_skill_score(pdf, pdf) == pytest.approx(1.0)
+
+
+def test_perkins_skill_score_disjoint_distributions_is_zero() -> None:
+    model = np.array([1.0, 1.0, 0.0, 0.0])
+    obs = np.array([0.0, 0.0, 1.0, 1.0])
+    assert scoring.perkins_skill_score(model, obs) == pytest.approx(0.0)
+
+
+def test_perkins_skill_score_is_the_overlap() -> None:
+    model = np.array([0.5, 0.3, 0.2])
+    obs = np.array([0.2, 0.3, 0.5])
+    assert scoring.perkins_skill_score(model, obs) == pytest.approx(0.2 + 0.3 + 0.2)
+
+
+def test_perkins_skill_score_normalises_densities_and_frequencies_alike() -> None:
+    """A density (integral 1) and a frequency (sum 1) must score the same."""
+    frequencies_m = np.array([0.1, 0.4, 0.3, 0.2])
+    frequencies_o = np.array([0.25, 0.25, 0.25, 0.25])
+    width = 0.5
+    assert scoring.perkins_skill_score(
+        frequencies_m / width,
+        frequencies_o / width,
+    ) == pytest.approx(scoring.perkins_skill_score(frequencies_m, frequencies_o))
+
+
+def test_perkins_skill_score_handles_empty_and_mismatched_input() -> None:
+    with pytest.raises(ValueError, match="common set of bins"):
+        scoring.perkins_skill_score(np.zeros(3), np.zeros(4))
+    assert np.isnan(scoring.perkins_skill_score(np.zeros(3), np.ones(3)))
+    assert np.isnan(scoring.perkins_skill_score(np.full(3, np.nan), np.ones(3)))
+    # a bin missing from one side is dropped from both
+    assert scoring.perkins_skill_score(
+        np.array([0.5, 0.5, np.nan]),
+        np.array([0.5, 0.5, 0.2]),
+    ) == pytest.approx(1.0)

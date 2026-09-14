@@ -14,6 +14,8 @@ Conventions (metrics_reference.md "Conventions"):
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from scipy import stats
 
@@ -631,13 +633,286 @@ def ols_trend(series: np.ndarray) -> float:
     return float(stats.linregress(t[valid], y[valid]).slope)
 
 
-def first_harmonic(seasonal_cycle: np.ndarray) -> tuple[float, float]:
-    """(amplitude, phase in months) of the first harmonic of a 12-pt cycle."""
-    x = np.asarray(seasonal_cycle, dtype=float)
-    if x.size != 12:  # noqa: PLR2004
-        msg = f"expected a 12-month climatology, got length {x.size}"
+def first_harmonic(cycle: np.ndarray) -> tuple[float, float]:
+    """(amplitude, phase) of the first harmonic of a closed cycle.
+
+    ``cycle`` is one period sampled at ``n`` equally spaced points — the
+    12-month seasonal cycle of §II.1 or the ``n``-point diurnal cycle of the
+    same section (24 hourly, 8 three-hourly, …). The fit is
+    ``A·cos(2π t / n − φ)``; the phase is returned **in units of the input's
+    own step**, i.e. months for a 12-point seasonal cycle and hours for a
+    24-point hourly one, in ``[0, n)``.
+
+    Generalised from the 12-point-only form (work package 6b) so the diurnal
+    diagnostic can use it at any sub-daily sampling; ``n = 12`` is unchanged.
+    """
+    x = np.asarray(cycle, dtype=float)
+    n = x.size
+    if n < 3:  # noqa: PLR2004 - two points cannot separate amplitude and phase
+        msg = f"a first harmonic needs at least 3 points, got {n}"
         raise ValueError(msg)
+    if not np.isfinite(x).all():
+        return (float("nan"), float("nan"))
     coeff = np.fft.rfft(x)[1]
-    amplitude = 2.0 * np.abs(coeff) / 12.0
-    phase_months = float((-np.angle(coeff)) % (2 * np.pi) / (2 * np.pi) * 12.0)
-    return float(amplitude), phase_months
+    amplitude = 2.0 * np.abs(coeff) / n
+    phase = float((-np.angle(coeff)) % (2 * np.pi) / (2 * np.pi) * n)
+    return float(amplitude), phase
+
+
+def phase_components(phase: float, n_points: int) -> tuple[float, float]:
+    """``(cos, sin)`` of a phase expressed in cycle steps (§II.1, diurnal).
+
+    Fair CRPS is defined on the real line, so it cannot score a phase
+    directly: the distance between 23 h and 1 h is 2 h, not 22 h, and a
+    circular mean of an ensemble is not the mean of its values. The protocol
+    layer therefore scores the **two components of the unit vector**
+    ``(cos φ, sin φ)`` — each an ordinary real number — and leaves the
+    reconstruction of the angle to the reader (⚠ CB2 interpretation, recorded
+    in docs/metrics_reference.md §II.1 "Diurnal cycle").
+    """
+    if not np.isfinite(phase):
+        return (float("nan"), float("nan"))
+    angle = 2.0 * np.pi * float(phase) / float(n_points)
+    return (float(np.cos(angle)), float(np.sin(angle)))
+
+
+# ---------------------------------------------------------------------------
+# Tier II — ETCCDI daily extremes (§II.1 "Daily tas extremes / pr intensity")
+#
+# Every function here takes a daily field of shape ``(n_time, ...)`` (the
+# trailing axes are grid points, already conservatively regridded and
+# land-masked by the diagnostic) plus the calendar year of each step, and
+# returns one value per year: ``(years, index)``. Keeping them pure means the
+# indices are unit-testable on hand-built arrays whose answer is known by
+# construction, which is how tests/test_physics.py checks them.
+# ---------------------------------------------------------------------------
+
+
+def _year_index(years: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(unique years, position of each step in them)``."""
+    unique, inverse = np.unique(np.asarray(years, dtype=int), return_inverse=True)
+    return unique, inverse
+
+
+def _annual_reduce(
+    values: np.ndarray,
+    years: np.ndarray,
+    reducer: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-year NaN-aware reduction along the leading (time) axis."""
+    x = np.asarray(values, dtype=float)
+    unique, inverse = _year_index(years)
+    if inverse.size != x.shape[0]:
+        msg = f"got {inverse.size} years for {x.shape[0]} time steps"
+        raise ValueError(msg)
+    func = {
+        "max": np.nanmax,
+        "min": np.nanmin,
+        "sum": np.nansum,
+        "mean": np.nanmean,
+    }[reducer]
+    out = np.empty((unique.size, *x.shape[1:]), dtype=float)
+    with warnings.catch_warnings():
+        # A grid point that is masked all year (ocean under a land mask) is an
+        # all-NaN slice: NaN is the right answer, not a warning.
+        warnings.filterwarnings("ignore", r"(All-NaN|Mean of empty) slice")
+        warnings.filterwarnings("ignore", "invalid value encountered")
+        for i in range(unique.size):
+            block = x[inverse == i]
+            out[i] = np.nan if block.size == 0 else func(block, axis=0)
+    return unique, out
+
+
+def annual_extreme(
+    values: np.ndarray,
+    years: np.ndarray,
+    statistic: str = "max",
+) -> tuple[np.ndarray, np.ndarray]:
+    """TXx / TNn: the annual block maximum (or minimum) per grid point."""
+    if statistic not in ("max", "min"):
+        msg = f"expected 'max' or 'min', got '{statistic}'"
+        raise ValueError(msg)
+    return _annual_reduce(values, years, statistic)
+
+
+def calendar_percentile(
+    values: np.ndarray,
+    calendar_unit: np.ndarray,
+    base_period: np.ndarray,
+    percentile: float,
+) -> np.ndarray:
+    """Base-period percentile of each step, from its own calendar unit.
+
+    ``calendar_unit`` is the calendar month (CB2's choice, see below) or day
+    of year of each step and ``base_period`` a boolean mask selecting the
+    fixed base-period days (1985-2014). The percentile is taken over the
+    base-period days *of the same calendar unit*, then broadcast back to
+    **every** step, so the caller can compare the whole record against it.
+
+    ⚠ CB2 reads "percentile threshold from the base period, per calendar day
+    or month" as **per calendar month**: the ETCCDI calendar-day definition
+    needs a 5-day window and Zhang et al.'s bootstrap to avoid an
+    inhomogeneity at the base-period edge, which a monthly threshold sidesteps
+    at the cost of a slightly smoother annual cycle of the threshold.
+    """
+    x = np.asarray(values, dtype=float)
+    unit = np.asarray(calendar_unit)
+    base = np.asarray(base_period, dtype=bool)
+    if unit.size != x.shape[0] or base.size != x.shape[0]:
+        msg = "calendar_unit and base_period must have one entry per time step"
+        raise ValueError(msg)
+    if not base.any():
+        msg = "the base period selects no time steps"
+        raise ValueError(msg)
+    out = np.full(x.shape, np.nan, dtype=float)
+    for value in np.unique(unit):
+        sample = x[base & (unit == value)]
+        if sample.size == 0:
+            continue
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", "All-NaN slice encountered")
+            threshold = np.nanpercentile(sample, float(percentile), axis=0)
+        out[unit == value] = threshold
+    return out
+
+
+def _forward_run_lengths(mask: np.ndarray, reset: np.ndarray | None = None) -> np.ndarray:
+    """Length of the run of ``True`` ending at each step (0 where ``False``).
+
+    ``reset`` (one bool per step) starts a fresh run *before* that step, which
+    is how an annual index truncates a spell at the year boundary.
+    """
+    m = np.asarray(mask, dtype=bool)
+    out = np.zeros(m.shape, dtype=np.int32)
+    running = np.zeros(m.shape[1:], dtype=np.int32)
+    for t in range(m.shape[0]):
+        if reset is not None and bool(reset[t]):
+            running = np.zeros_like(running)
+        running = np.where(m[t], running + 1, 0).astype(np.int32)
+        out[t] = running
+    return out
+
+
+def spell_duration_days(
+    exceedance: np.ndarray,
+    years: np.ndarray,
+    min_length: int = 6,
+) -> tuple[np.ndarray, np.ndarray]:
+    """WSDI: days per year inside runs of ``>= min_length`` exceedance days.
+
+    Spells are found over the **whole record** (so one that straddles New
+    Year is not broken in two) and each day is then counted in the year it
+    falls in, which is the ETCCDI attribution rule.
+    """
+    exceed = np.asarray(exceedance, dtype=bool)
+    forward = _forward_run_lengths(exceed)
+    backward = _forward_run_lengths(exceed[::-1])[::-1]
+    total = forward + backward - 1
+    in_spell = exceed & (total >= int(min_length))
+    return _annual_reduce(in_spell.astype(float), years, "sum")
+
+
+def exceedance_fraction(
+    values: np.ndarray,
+    years: np.ndarray,
+    threshold: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """TX90p: percentage of days per year above a per-step threshold."""
+    x = np.asarray(values, dtype=float)
+    known = np.isfinite(x) & np.isfinite(threshold)
+    exceed = np.where(known, (x > threshold).astype(float), np.nan)
+    unique, fraction = _annual_reduce(exceed, years, "mean")
+    return unique, fraction * 100.0
+
+
+def annual_max_running_sum(
+    values: np.ndarray,
+    years: np.ndarray,
+    window: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rx1day / Rx5day: annual maximum of the ``window``-day running total.
+
+    Each window is attributed to the year of its **last** day, so a window
+    straddling New Year counts towards the new year (the ETCCDI convention).
+    Daily precipitation is expected in mm day⁻¹, so a 1-day "total" is the
+    day's own value.
+    """
+    x = np.asarray(values, dtype=float)
+    n = int(window)
+    if n < 1:
+        msg = f"window must be >= 1 day, got {n}"
+        raise ValueError(msg)
+    if n == 1:
+        totals = x
+    else:
+        filled = np.nan_to_num(x, nan=0.0)
+        cumulative = np.cumsum(filled, axis=0)
+        totals = np.full(x.shape, np.nan, dtype=float)
+        totals[n - 1 :] = cumulative[n - 1 :] - np.concatenate(
+            [np.zeros((1, *x.shape[1:])), cumulative[: -n]],
+            axis=0,
+        )
+    return _annual_reduce(totals, years, "max")
+
+
+def wet_day_percentile(
+    values: np.ndarray,
+    base_period: np.ndarray,
+    percentile: float,
+    wet_day_threshold: float = 1.0,
+) -> np.ndarray:
+    """Base-period percentile of **wet-day** precipitation, per grid point.
+
+    Wet days are those with ``pr >= wet_day_threshold`` (1 mm/day). Grid
+    points with no wet day in the base period get NaN, which propagates to a
+    NaN index rather than a spurious zero.
+    """
+    x = np.asarray(values, dtype=float)
+    base = np.asarray(base_period, dtype=bool).reshape((-1, *([1] * (x.ndim - 1))))
+    wet = np.where(base & np.isfinite(x) & (x >= float(wet_day_threshold)), x, np.nan)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", "All-NaN slice encountered")
+        return np.nanpercentile(wet, float(percentile), axis=0)
+
+
+def heavy_precipitation_fraction(
+    values: np.ndarray,
+    years: np.ndarray,
+    threshold: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """R95pTOT: fraction of the annual total falling on days above ``threshold``.
+
+    ``threshold`` is the base-period wet-day 95th percentile per grid point
+    (:func:`wet_day_percentile`). The denominator is the **annual total**
+    precipitation (not the wet-day total), which is the reading of "fraction
+    of annual precipitation" in the paper's §5.2 list.
+    """
+    x = np.asarray(values, dtype=float)
+    threshold = np.asarray(threshold, dtype=float)
+    heavy = np.where(np.isfinite(x) & (x > threshold), x, 0.0)
+    years_out, heavy_total = _annual_reduce(heavy, years, "sum")
+    _years, total = _annual_reduce(np.nan_to_num(x, nan=0.0), years, "sum")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        fraction = np.where(total > 0.0, heavy_total / total, np.nan)
+    # A grid point with no base-period wet day has no threshold, so it has no
+    # index either — never a spurious zero.
+    return years_out, np.where(np.isfinite(threshold)[None, ...], fraction, np.nan)
+
+
+def max_consecutive_dry_days(
+    values: np.ndarray,
+    years: np.ndarray,
+    dry_day_threshold: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """CDD: longest run of days with ``pr < dry_day_threshold``, per year.
+
+    Runs are truncated at the year boundary (the annual ETCCDI index), so a
+    dry spell spanning New Year contributes its within-year part to each of
+    the two years.
+    """
+    x = np.asarray(values, dtype=float)
+    dry = np.isfinite(x) & (x < float(dry_day_threshold))
+    years_array = np.asarray(years, dtype=int)
+    new_year = np.concatenate([[True], years_array[1:] != years_array[:-1]])
+    runs = _forward_run_lengths(dry, reset=new_year)
+    return _annual_reduce(runs.astype(float), years, "max")

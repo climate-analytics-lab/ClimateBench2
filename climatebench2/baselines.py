@@ -21,19 +21,46 @@ and reported *alongside* it:
 
 (ii)  **Pattern scaling** — ΔT_global(t) from a two-layer energy-balance
       model driven by an ERF series, times the CMIP6 multi-model-mean
-      normalized warming pattern, plus the climatology. The functions below
-      are the pure-maths hook; wiring it (an ERF series, calibration through
-      2014 and a CMIP6-MMM pattern) is a later work package.
+      normalized warming pattern, plus the climatology. Since work package 6b
+      the GMST half is wired: :func:`load_erf_series` reads the packaged
+      annual ERF table, :func:`calibrate_two_layer_ebm` fits **one**
+      parameter (the feedback λ) by least squares to the observed GMST
+      through 2014, and :func:`ebm_pseudo_members` turns the resulting
+      deterministic trajectory into an ensemble fair CRPS can score.
 
-Everything here is pure numpy; the wiring lives in
-:mod:`climatebench2.scoring_pass` and the leaderboard.
+      ⚠ **CB2 interpretation.** As with the Climatology baseline, a
+      deterministic emulator is M = 1 and fair CRPS is undefined for it. CB2
+      gives the trajectory pseudo-members by displacing it with the
+      **detrended observed residuals of the 1985-2014 baseline window** — one
+      member per baseline year — which is the same "the baseline's own
+      historical scatter is its uncertainty" reading used for the
+      climatology. Flagged for Duncan in docs/metrics_reference.md.
+
+      The **spatial** half (a normalized CMIP6 MMM warming pattern) needs
+      CMIP6 baseline-window maps that the databases only carry once
+      ClimateEval PR #44 lands; :func:`pattern_scaling_forecast` is the maths
+      and :func:`scoring_pass.pattern_scaling_rows` emits a ``reason`` row
+      until the data are there.
+
+Everything here is pure numpy/scipy plus one packaged CSV of protocol data;
+the wiring lives in :mod:`climatebench2.scoring_pass` and the leaderboard.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from importlib import resources
+
 import numpy as np
+from scipy import optimize
 
 MONTHS_PER_YEAR = 12
+
+#: Packaged annual effective-radiative-forcing table driving the pattern-
+#: scaling baseline's two-layer EBM (``climatebench2/data/``). Its own header
+#: carries the provenance and the ⚠ that it is a provisional interpolation of
+#: published AR6 anchor values rather than the AR6 annual series itself.
+ERF_DATA_PACKAGE = "climatebench2.data"
 
 
 def climatology_pseudo_members(
@@ -132,6 +159,170 @@ def two_layer_ebm(
         t_upper[i] = t_upper[i - 1] + dt_upper * dt_years
         t_deep[i] = t_deep[i - 1] + dt_deep * dt_years
     return t_upper
+
+
+def load_erf_series(filename: str = "erf_ar6_ssp245.csv") -> tuple[np.ndarray, np.ndarray]:
+    """``(years, ERF)`` of the packaged annual effective-radiative-forcing table.
+
+    The forcing that drives the pattern-scaling baseline's EBM: total
+    anthropogenic (plus natural, where the source provides it) ERF relative
+    to 1750, in W m⁻², one value per year, extended beyond the historical
+    period with SSP2-4.5. Provenance and the ⚠ on the current table are in
+    the file's own header; it is *protocol data*, not model or observational
+    data, which is why it is packaged here rather than fetched through a
+    ClimateEval DataSource.
+    """
+    text = resources.files(ERF_DATA_PACKAGE).joinpath(filename).read_text()
+    rows = [
+        line.split(",")
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if rows and not rows[0][0].strip().lstrip("-").isdigit():
+        rows = rows[1:]  # a header line
+    years = np.array([int(r[0]) for r in rows], dtype=int)
+    forcing = np.array([float(r[1]) for r in rows], dtype=float)
+    order = np.argsort(years)
+    return years[order], forcing[order]
+
+
+def detrended_residuals(values: np.ndarray) -> np.ndarray:
+    """Residuals of a series about its own OLS straight line (NaNs dropped).
+
+    The spread the pattern-scaling baseline is given as pseudo-members: what
+    the observations do around their trend over the baseline window, which is
+    the closest thing to "the internal variability the emulator does not
+    simulate" that the observations alone can supply.
+    """
+    y = np.asarray(values, dtype=float)
+    finite = y[np.isfinite(y)]
+    if finite.size < 3:  # noqa: PLR2004 - a trend needs three points
+        msg = f"need at least 3 finite values to detrend, got {finite.size}"
+        raise ValueError(msg)
+    index = np.arange(finite.size, dtype=float)
+    slope, intercept = np.polyfit(index, finite, 1)
+    return finite - (slope * index + intercept)
+
+
+@dataclass(frozen=True)
+class EBMCalibration:
+    """One-parameter calibration of the two-layer EBM to observed GMST."""
+
+    parameter: str
+    value: float
+    years: np.ndarray
+    trajectory: np.ndarray
+    rmse: float
+    n_years: int
+
+
+def calibrate_two_layer_ebm(  # noqa: PLR0913
+    forcing: np.ndarray,
+    forcing_years: np.ndarray,
+    observed: np.ndarray,
+    observed_years: np.ndarray,
+    *,
+    baseline: tuple[int, int],
+    calibration_end: int,
+    parameter: str = "lambda_feedback",
+    bracket: tuple[float, float] = (-3.0, -0.3),
+    **ebm_kwargs: float,
+) -> EBMCalibration:
+    """Fit **one** EBM parameter by least squares to observed GMST.
+
+    The protocol's pattern-scaling baseline is "a two-layer EBM calibrated to
+    observations **through 2014**" — deliberately a single degree of freedom
+    (the feedback λ by default, or a scaling of the forcing), with the other
+    Geoffroy parameters held at their ``tier2.ebm`` values, so the emulator
+    stays the "simplest defensible" reference rather than a tuned competitor.
+
+    Both series are reduced to anomalies about the same ``baseline`` window
+    before they are compared, so the EBM's arbitrary absolute level (it starts
+    from 0 K in 1750) cancels. Only years up to ``calibration_end`` enter the
+    fit — the reserved test window must never be seen by a baseline.
+
+    Returns the fitted value together with the **full** trajectory (as a
+    baseline-window anomaly) over ``forcing_years``, which is what the scoring
+    pass turns into a forecast.
+    """
+    if parameter not in ("lambda_feedback", "forcing_scale"):
+        msg = f"cannot calibrate unknown parameter '{parameter}'"
+        raise ValueError(msg)
+    f_years = np.asarray(forcing_years, dtype=int)
+    f_values = np.asarray(forcing, dtype=float)
+    o_years = np.asarray(observed_years, dtype=int)
+    o_values = np.asarray(observed, dtype=float)
+
+    first, last = int(baseline[0]), int(baseline[1])
+    fit_mask = (
+        np.isin(o_years, f_years) & (o_years <= int(calibration_end)) & np.isfinite(o_values)
+    )
+    if fit_mask.sum() < 3:  # noqa: PLR2004
+        msg = "too few overlapping years to calibrate the EBM"
+        raise ValueError(msg)
+    observed_baseline = o_values[(o_years >= first) & (o_years <= last)]
+    if observed_baseline.size == 0 or not np.isfinite(observed_baseline).any():
+        msg = f"the observations do not cover the {first}-{last} baseline window"
+        raise ValueError(msg)
+    target = o_values[fit_mask] - float(np.nanmean(observed_baseline))
+    target_years = o_years[fit_mask]
+    positions = np.searchsorted(f_years, target_years)
+
+    def trajectory_for(value: float) -> np.ndarray:
+        kwargs = dict(ebm_kwargs)
+        driver = f_values
+        if parameter == "lambda_feedback":
+            kwargs["lambda_feedback"] = float(value)
+        else:
+            driver = f_values * float(value)
+        series = two_layer_ebm(driver, **kwargs)
+        window = series[(f_years >= first) & (f_years <= last)]
+        return series - (float(np.mean(window)) if window.size else 0.0)
+
+    def cost(value: float) -> float:
+        return float(np.sum((trajectory_for(value)[positions] - target) ** 2))
+
+    result = optimize.minimize_scalar(
+        cost,
+        bounds=(float(bracket[0]), float(bracket[1])),
+        method="bounded",
+    )
+    best = float(result.x)
+    series = trajectory_for(best)
+    residual = series[positions] - target
+    return EBMCalibration(
+        parameter=parameter,
+        value=best,
+        years=f_years,
+        trajectory=series,
+        rmse=float(np.sqrt(np.mean(residual**2))),
+        n_years=int(fit_mask.sum()),
+    )
+
+
+def ebm_pseudo_members(
+    trajectory: np.ndarray,
+    residuals: np.ndarray,
+) -> np.ndarray:
+    """Baseline (ii) as an ensemble: the trajectory displaced by each residual.
+
+    ⚠ **CB2 interpretation** (see the module docstring). Fair CRPS is
+    undefined for the deterministic emulator, so each pseudo-member is the
+    EBM trajectory shifted by one of the ``residuals`` — the detrended
+    observed departures over the baseline window. The members therefore
+    differ by a constant offset: the ensemble expresses "we do not know which
+    phase of internal variability the real world is in", not a simulated
+    year-by-year noise process.
+
+    Returns ``(n_members, n_time)``.
+    """
+    mean_trajectory = np.asarray(trajectory, dtype=float)
+    offsets = np.asarray(residuals, dtype=float)
+    offsets = offsets[np.isfinite(offsets)]
+    if offsets.size < 2:  # noqa: PLR2004 - fair CRPS needs two members
+        msg = f"need at least 2 residuals for pseudo-members, got {offsets.size}"
+        raise ValueError(msg)
+    return mean_trajectory[None, :] + offsets[:, None]
 
 
 def pattern_scaling_forecast(

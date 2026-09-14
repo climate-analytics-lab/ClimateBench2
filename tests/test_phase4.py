@@ -95,8 +95,12 @@ def test_ols_trend_and_first_harmonic() -> None:
     amplitude, phase = physics.first_harmonic(cycle)
     assert amplitude == pytest.approx(5.0, rel=1e-6)
     assert phase == pytest.approx(6.0, abs=0.01)
-    with pytest.raises(ValueError, match="12-month"):
-        physics.first_harmonic(np.zeros(10))
+    # Since work package 6b the harmonic is defined for any sampling (the
+    # diurnal cycle needs 24 or 8 points), so a 10-point cycle is legal and
+    # only fewer than three points is not.
+    assert physics.first_harmonic(np.zeros(10)) == (0.0, 0.0)
+    with pytest.raises(ValueError, match="at least 3 points"):
+        physics.first_harmonic(np.zeros(2))
 
 
 # ---------------------------------------------------------------------------
@@ -174,3 +178,112 @@ def test_pattern_scaling_forecast_shapes() -> None:
     assert fields.shape == (3, 4)
     np.testing.assert_allclose(fields[0], clim)
     np.testing.assert_allclose(fields[2], 10.0 + 2.0 * pattern)
+
+
+# ---------------------------------------------------------------------------
+# Pattern-scaling baseline (work package 6b)
+# ---------------------------------------------------------------------------
+
+
+def test_load_erf_series_is_annual_monotone_and_anchored() -> None:
+    years, erf = baselines.load_erf_series()
+    assert years[0] == 1750
+    assert years[-1] >= 2030  # extended with SSP2-4.5
+    np.testing.assert_array_equal(np.diff(years), 1)
+    assert erf[0] == pytest.approx(0.0)
+    # the AR6 headline anchor the table is built around
+    assert erf[years == 2019][0] == pytest.approx(2.72, abs=0.01)
+    assert np.all(np.diff(erf) >= -1e-9)  # no natural forcing: monotone
+
+
+def test_detrended_residuals_remove_the_line_not_the_scatter() -> None:
+    index = np.arange(30, dtype=float)
+    wobble = 0.3 * np.sin(index)
+    residuals = baselines.detrended_residuals(5.0 + 0.1 * index + wobble)
+    assert residuals.mean() == pytest.approx(0.0, abs=1e-12)
+    np.testing.assert_allclose(residuals, wobble - np.polyval(
+        np.polyfit(index, wobble, 1), index), atol=1e-12)
+    with pytest.raises(ValueError, match="at least 3"):
+        baselines.detrended_residuals(np.array([1.0, np.nan]))
+
+
+def _synthetic_ebm_target(lam: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """An ERF series and the EBM's own answer for a known lambda."""
+    years, erf = baselines.load_erf_series()
+    truth = baselines.two_layer_ebm(erf, lambda_feedback=lam)
+    return years, erf, truth
+
+
+def test_calibrate_two_layer_ebm_recovers_a_synthetic_lambda() -> None:
+    """Fit the EBM to its own output: the parameter must come back."""
+    years, erf, truth = _synthetic_ebm_target(-1.05)
+    calibration = baselines.calibrate_two_layer_ebm(
+        erf,
+        years,
+        truth,
+        years,
+        baseline=(1985, 2014),
+        calibration_end=2014,
+    )
+    assert calibration.parameter == "lambda_feedback"
+    assert calibration.value == pytest.approx(-1.05, abs=0.02)
+    assert calibration.rmse < 1e-3
+    assert calibration.n_years == int((years <= 2014).sum())
+    # the trajectory is returned as an anomaly about the baseline window
+    window = (calibration.years >= 1985) & (calibration.years <= 2014)
+    assert calibration.trajectory[window].mean() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_calibrate_two_layer_ebm_never_sees_the_test_window() -> None:
+    """Post-2014 observations must not move the fit."""
+    years, erf, truth = _synthetic_ebm_target(-1.2)
+    spoiled = truth.copy()
+    spoiled[years > 2014] += 5.0  # nonsense in the reserved window
+    fitted = baselines.calibrate_two_layer_ebm(
+        erf, years, spoiled, years, baseline=(1985, 2014), calibration_end=2014,
+    )
+    clean = baselines.calibrate_two_layer_ebm(
+        erf, years, truth, years, baseline=(1985, 2014), calibration_end=2014,
+    )
+    assert fitted.value == pytest.approx(clean.value, abs=1e-6)
+
+
+def test_calibrate_two_layer_ebm_can_scale_the_forcing_instead() -> None:
+    years, erf = baselines.load_erf_series()
+    truth = baselines.two_layer_ebm(erf * 1.4)
+    calibration = baselines.calibrate_two_layer_ebm(
+        erf,
+        years,
+        truth,
+        years,
+        baseline=(1985, 2014),
+        calibration_end=2014,
+        parameter="forcing_scale",
+        bracket=(0.5, 2.0),
+    )
+    assert calibration.value == pytest.approx(1.4, abs=0.02)
+    with pytest.raises(ValueError, match="unknown parameter"):
+        baselines.calibrate_two_layer_ebm(
+            erf, years, truth, years, baseline=(1985, 2014),
+            calibration_end=2014, parameter="c_deep",
+        )
+
+
+def test_calibrate_two_layer_ebm_needs_an_overlapping_baseline() -> None:
+    years, erf = baselines.load_erf_series()
+    with pytest.raises(ValueError, match="too few overlapping years"):
+        baselines.calibrate_two_layer_ebm(
+            erf, years, np.zeros(2), np.array([2100, 2101]),
+            baseline=(1985, 2014), calibration_end=2014,
+        )
+
+
+def test_ebm_pseudo_members_displace_the_trajectory() -> None:
+    trajectory = np.array([0.0, 0.5, 1.0])
+    members = baselines.ebm_pseudo_members(trajectory, np.array([-0.1, 0.0, 0.1]))
+    assert members.shape == (3, 3)
+    np.testing.assert_allclose(members[:, 1], [0.4, 0.5, 0.6])
+    # the ensemble mean is the trajectory when the residuals are centred
+    np.testing.assert_allclose(members.mean(axis=0), trajectory)
+    with pytest.raises(ValueError, match="at least 2 residuals"):
+        baselines.ebm_pseudo_members(trajectory, np.array([0.1]))

@@ -37,9 +37,21 @@ climatebench2 score model/Amon --name MyModel \
     --experiment histaer=/path/hist-aer
 # → MyModel_climatebench2/: one DuckDB results database per suite
 
+# A test the submission cannot meet by construction (e.g. an emulator with no
+# dynamics) is declared, not silently skipped — it is recorded as n/a:
+climatebench2 score emulator_output --name MyEmulator \
+    --not-applicable geostrophic_balance
+
 # Build the leaderboard (static HTML) from one or more models' results
 climatebench2 leaderboard MyModel_climatebench2/*.ddb -o leaderboard.html
 ```
+
+The Tier I scorecard is grouped by each gate's `requirement` tag
+(`climatebench2/thresholds.yml`): **Required** checks form the entry ticket — a model is
+scored only if every applicable one passes — while **Extended** checks are reported for
+additional credit and **extra** checks are non-protocol sanity checks. The entry ticket
+is ⚠ (incomplete) while a Required check has no result at all, so a missing experiment
+can never be mistaken for a pass.
 
 Per-model interactive reports remain available through ClimateEval:
 `climateeval report MyModel_climatebench2/*.ddb`.
@@ -70,9 +82,10 @@ The implementation was re-audited against the 2026-09 paper draft on
 2026-09-14: see the status tables and the prioritized gap list in
 [docs/metrics_reference.md](docs/metrics_reference.md). Headline open items
 are re-aligning the scoring engine to fair CRPS, multi-member ingestion, a
-post-2015 multi-member CMIP6 reference in ClimateEval, Required/Extended/N-A
-tagging of the Tier I gates, and wiring Tier III to the paleo pipeline's
-NetCDF outputs. ClimateEval is pinned at `b0e941c`, which provides the
+post-2015 multi-member CMIP6 reference in ClimateEval, and wiring Tier III to
+the paleo pipeline's NetCDF outputs. Required/Extended/extra tagging of the
+Tier I gates, declared N/A and the Required-only entry ticket landed on
+2026-09-14 (gap item 2). ClimateEval is pinned at `b0e941c`, which provides the
 land–ocean, Arctic and meridional-heat-transport diagnostics upstream; CB2's
 copies have been replaced by thin gate wrappers that add only the protocol's
 thresholds.

@@ -4,12 +4,26 @@ A *gate* turns a quantity computed by an existing ClimateEval diagnostic into
 a binary pass/fail against a bound from ``thresholds.yml``, emitted as extra
 rows in the diagnostic's ``metrics`` table with the columns::
 
-    data_id | data_type | var_id | value | bound_lower | bound_upper | passes
+    data_id | data_type | var_id | value | bound_lower | bound_upper |
+    passes | requirement | applicable
 
 ``passes`` is 1.0/0.0 (float, so the DuckDB schema stays numeric). Gates are
 applied to *every* data source the diagnostic processed (the benchmarked
 model, references, CMIP6 comparison models), so observations act as a sanity
 check on the thresholds themselves.
+
+``requirement`` carries the protocol standing of the check — ``required``
+(the entry ticket), ``extended`` (reported, additional credit, does not gate
+entry), ``extra`` (code-only sanity check) or ``diagnostic`` (a Tier II
+aggregated diagnostic emitted through the gate machinery) — read from the
+gate's ``thresholds.yml`` block by :func:`gate_requirement`, never hard-coded.
+
+``applicable`` is 1.0 for a check that was evaluated and 0.0 for one a
+submission *declared* not applicable (``score --not-applicable NAME``; paper
+§7.1 — e.g. I.3b geostrophic balance for a model with no dynamical
+representation). A declared-N/A check emits one row per check with
+``value``/``passes`` NaN, which is how the scorecard distinguishes "does not
+apply" from "was not run" (no row at all).
 """
 
 from __future__ import annotations
@@ -49,6 +63,38 @@ MONTHS_PER_YEAR = 12
 # ---------------------------------------------------------------------------
 
 
+#: Protocol standing of a gate (paper §7.1); see the module docstring.
+REQUIREMENT_TAGS = ("required", "extended", "extra", "diagnostic")
+
+#: Tag assumed for a check whose block predates the tags (backward compat).
+DEFAULT_REQUIREMENT = "required"
+
+
+def gate_requirement(threshold_block: str) -> str:
+    """Return the ``requirement`` tag of a ``thresholds.yml`` gate block.
+
+    ``threshold_block`` is the dotted path of the block holding the gate's
+    bounds, e.g. ``"tier1.ecs"``. The tag is protocol metadata, so it lives
+    in ``thresholds.yml`` next to the bounds and is never hard-coded in a
+    diagnostic.
+
+    Raises
+    ------
+    KeyError
+        If the block has no ``requirement`` key (a protocol bug).
+    ValueError
+        If the tag is not one of :data:`REQUIREMENT_TAGS`.
+    """
+    tag = get_threshold(f"{threshold_block}.requirement")
+    if tag not in REQUIREMENT_TAGS:
+        msg = (
+            f"Unknown requirement '{tag}' in thresholds.yml block "
+            f"'{threshold_block}' (expected one of {REQUIREMENT_TAGS})"
+        )
+        raise ValueError(msg)
+    return str(tag)
+
+
 @dataclass(frozen=True)
 class GateCheck:
     """One pass/fail check on a column of a diagnostic's raw output.
@@ -56,7 +102,9 @@ class GateCheck:
     ``statistic`` reduces the (time-ordered) series of ``column`` values for
     one data source to a scalar; ``None`` means the column already holds a
     scalar (one row per data source). Bounds are inclusive; ``None`` means
-    unbounded on that side.
+    unbounded on that side. ``requirement`` is the protocol standing of the
+    check (:data:`REQUIREMENT_TAGS`) and comes from
+    :func:`gate_requirement`.
     """
 
     check_id: str
@@ -64,6 +112,18 @@ class GateCheck:
     statistic: Callable[[pd.Series], float] | None = None
     lower: float | None = None
     upper: float | None = None
+    requirement: str = DEFAULT_REQUIREMENT
+
+
+def _gate_row(check: GateCheck, **fields: Any) -> dict[str, Any]:
+    """Common columns of a gate metrics row."""
+    return {
+        "var_id": check.check_id,
+        "bound_lower": np.nan if check.lower is None else check.lower,
+        "bound_upper": np.nan if check.upper is None else check.upper,
+        "requirement": check.requirement,
+        **fields,
+    }
 
 
 def gate_metrics(
@@ -96,14 +156,65 @@ def gate_metrics(
             rows.append(
                 {
                     **key_dict,
-                    "var_id": check.check_id,
-                    "value": value,
-                    "bound_lower": np.nan if check.lower is None else check.lower,
-                    "bound_upper": np.nan if check.upper is None else check.upper,
-                    "passes": float(passes),
+                    **_gate_row(
+                        check,
+                        value=value,
+                        passes=float(passes),
+                        applicable=1.0,
+                    ),
                 },
             )
     return pd.DataFrame(rows)
+
+
+def not_applicable_metrics(
+    checks: tuple[GateCheck, ...],
+    *,
+    data_id: str,
+    data_type: str = "to_benchmark",
+) -> pd.DataFrame:
+    """Gate rows for checks a submission declared not applicable.
+
+    One row per check with ``value``/``passes`` NaN and ``applicable = 0.0``
+    — neither a pass nor a fail (paper §7.1). Nothing is computed, so this
+    needs no data at all.
+    """
+    return pd.DataFrame(
+        [
+            {
+                "data_id": data_id,
+                "data_type": data_type,
+                **_gate_row(
+                    check,
+                    value=np.nan,
+                    passes=np.nan,
+                    applicable=0.0,
+                ),
+            }
+            for check in checks
+        ],
+    )
+
+
+def _with_gate_rows(
+    output: DiagnosticOutput,
+    gates_df: pd.DataFrame,
+    *,
+    raw_output: Any = None,
+) -> DiagnosticOutput:
+    """Merge gate rows into a diagnostic output's ``metrics`` table."""
+    if output.metrics is not None:
+        existing = output.metrics.to_pandas()
+        gates_df = pd.concat([existing, gates_df], ignore_index=True, sort=False)
+        # Keep `requirement` a string column: rows from non-gate metrics have
+        # no tag, and a NaN there would make ibis infer a numeric column.
+        gates_df["requirement"] = gates_df["requirement"].fillna("")
+    return DiagnosticOutput(
+        raw_output=output.raw_output if raw_output is None else raw_output,
+        metrics=ibis.memtable(gates_df),
+        variables=output.variables,
+        data_sources=output.data_sources,
+    )
 
 
 def apply_gate(
@@ -117,15 +228,24 @@ def apply_gate(
     gates_df = gate_metrics(raw_df, checks)
     if gates_df.empty:
         return output
-    if output.metrics is not None:
-        existing = output.metrics.to_pandas()
-        gates_df = pd.concat([existing, gates_df], ignore_index=True, sort=False)
-    return DiagnosticOutput(
-        raw_output=output.raw_output,
-        metrics=ibis.memtable(gates_df),
-        variables=output.variables,
-        data_sources=output.data_sources,
-    )
+    return _with_gate_rows(output, gates_df)
+
+
+def gate_requirements() -> dict[str, str]:
+    """Map every CB2 gate ``check_id`` to its requirement tag.
+
+    Collected from the ``_gate_checks`` of every diagnostic exported by
+    :mod:`climatebench2.diags`, so the leaderboard knows the *full* Required
+    set — including checks whose gate did not run and therefore wrote no row.
+    """
+    from climatebench2 import diags  # local: climatebench2.diags imports this module
+
+    requirements: dict[str, str] = {}
+    for name in diags.__all__:
+        for check in getattr(getattr(diags, name), "_gate_checks", ()):
+            if isinstance(check, GateCheck):
+                requirements[check.check_id] = check.requirement
+    return requirements
 
 
 class GateMixin:
@@ -150,8 +270,43 @@ class SupersetExperimentMixin:
     experiments were not supplied at all is skipped with a warning instead of
     aborting the suite.
 
+    ``not_applicable`` (diagnostic kwarg, from ``score --not-applicable
+    NAME``) lists gate diagnostics a submission declares inapplicable. A
+    diagnostic whose own name is listed computes nothing and emits one gate
+    row per check with ``applicable = 0.0`` and NaN ``value``/``passes`` —
+    *declared* N/A, which the scorecard must show as neither pass nor fail
+    (paper §7.1), and which is distinct from a gate that simply did not run
+    (no rows at all).
+
     Mix in *before* :class:`GateMixin` so the skip short-circuits gating too.
     """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        not_applicable: list[str] | tuple[str, ...] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize class instance, recording any declared N/A gates."""
+        self._not_applicable = tuple(not_applicable or ())
+        super().__init__(name, **kwargs)  # type: ignore[call-arg]
+
+    @property
+    def declared_not_applicable(self) -> bool:
+        """Whether this gate was declared not applicable by the submission."""
+        return getattr(self, "name", None) in getattr(self, "_not_applicable", ())
+
+    def _not_applicable_output(self, data_information: Any) -> DiagnosticOutput:
+        """Gate rows marking every check of this diagnostic as N/A."""
+        checks: tuple[GateCheck, ...] = getattr(self, "_gate_checks", ())
+        rows = not_applicable_metrics(checks, data_id=data_information.id)
+        return DiagnosticOutput(
+            raw_output=None,
+            metrics=None if rows.empty else ibis.memtable(rows),
+            variables=None,  # type: ignore[arg-type] - Suite skips None tables
+            data_sources=None,  # type: ignore[arg-type]
+        )
 
     def _check_required_dict_keys(self, dict_: dict[str, Any], dict_name: str) -> None:
         """Require a *subset* match so one suite dict feeds every gate."""
@@ -167,6 +322,12 @@ class SupersetExperimentMixin:
 
     def get_output(self, data: Any, data_information: Any) -> DiagnosticOutput:
         """Run the diagnostic; degrade to an empty output on missing keys."""
+        if self.declared_not_applicable:
+            logger.info(
+                f"Gate '{self.name}' declared not applicable for "  # type: ignore[attr-defined]
+                f"'{data_information.id}': emitting N/A rows without computing",
+            )
+            return self._not_applicable_output(data_information)
         try:
             self._check_required_dict_keys(data, "data")
         except ValueError as exc:
@@ -226,6 +387,7 @@ def band_power_ratio(
 def _enso_checks(column: str) -> tuple[GateCheck, ...]:
     amp_lo, amp_hi = get_threshold("tier1.enso.amplitude_range")
     ratio_min = get_threshold("tier1.enso.band_power_ratio_min")
+    requirement = gate_requirement("tier1.enso")
     return (
         GateCheck(
             check_id="enso_amplitude",
@@ -233,12 +395,14 @@ def _enso_checks(column: str) -> tuple[GateCheck, ...]:
             statistic=lambda s: float(s.std(ddof=1)),
             lower=amp_lo,
             upper=amp_hi,
+            requirement=requirement,
         ),
         GateCheck(
             check_id="enso_spectral_ratio",
             column=column,
             statistic=band_power_ratio,
             lower=ratio_min,
+            requirement=requirement,
         ),
     )
 

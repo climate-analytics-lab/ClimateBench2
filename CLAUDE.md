@@ -27,7 +27,8 @@ probabilistic score, baseline, tier structure, or the leaderboard belongs here.
 climatebench2/
 ├── diags/               # ClimateEval-compatible Diagnostic subclasses (the protocol)
 ├── suites/              # CB2 suite YAMLs; may reference climatebench2.diags.* AND climateeval.diags.*
-├── thresholds.yml       # EVERY pass/fail bound lives here — never hard-code one in a diagnostic
+├── thresholds.yml       # EVERY pass/fail bound + each gate's `requirement:` tag
+│                        #   (required/extended/extra/diagnostic) — never hard-code one
 ├── scoring.py           # pure CRPS-ESS / ensemble-consistency / EOF engine (numpy only)
 ├── physics.py           # pure Tier I physics functions (numpy only)
 ├── leaderboard/         # .ddb results → scores table (→ static HTML page, Phase 6)
@@ -64,6 +65,8 @@ pip install .                       # installs climateeval (pinned) + climateben
 # dev against a local checkout: pip install -e ../ClimateEval && pip install -e . --no-deps
 
 climatebench2 score /path/to/model/cmor/Amon --name MyModel   # → MyModel_climatebench2/*.ddb
+climatebench2 score MODEL --name MyEmulator --not-applicable geostrophic_balance
+#   declare a Tier I gate inapplicable: recorded as n/a, not a fail (paper §7.1)
 climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scores table
 climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report
 

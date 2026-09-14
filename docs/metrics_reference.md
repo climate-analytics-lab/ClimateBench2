@@ -27,7 +27,13 @@ thin `GateMixin` wrappers over the upstream classes, the CB2-side registry stopg
 the I.1 evaluation window, the I.3a monthly anomalies, the I.5a unsmoothed index, the
 I.5b integrated band power and the 1985–2014 Tier II baseline window — so the status
 entries for I.1, I.2b, I.3a, I.5a/b and the Pinatubo/Climatology rows below describe
-the corrected code. The legacy
+the corrected code. **Gap item 2** then gave the protocol its entry-ticket semantics:
+every gate block in `thresholds.yml` carries a `requirement:` tag
+(required / extended / extra / diagnostic), gate rows carry `requirement` and
+`applicable` columns, a submission can *declare* a test inapplicable
+(`score --not-applicable NAME`), the Pinatubo and hemispheric-asymmetry diagnostics
+moved out of the Tier I suite into `ClimateBench2_TierII_events`, and the leaderboard
+computes the entry ticket over the Required group alone. The legacy
 `benchmark_scrips/*.py` scripts that earlier revisions of this document audited were
 deleted in migration Phases 1–5; **every status entry below refers to
 `climatebench2/`**, and the only legacy survivors are `constants.py`, `utils.py` and
@@ -53,8 +59,14 @@ deleted in migration Phases 1–5; **every status entry below refers to
   required keys, so one dict feeds a whole suite.
 - Every bound is read from `climatebench2/thresholds.yml` through
   `climatebench2._thresholds.get_threshold("tier1.ecs.range")`; gate outcomes are
-  `metrics` rows `var_id | value | bound_lower | bound_upper | passes`
+  `metrics` rows
+  `var_id | value | bound_lower | bound_upper | passes | requirement | applicable`
   (`diags/pass_fail.py`), so the leaderboard reads one schema for every check.
+  `requirement` (`required` / `extended` / `extra` / `diagnostic`) is read from the
+  gate's own `thresholds.yml` block by `pass_fail.gate_requirement`, never hard-coded;
+  `applicable` is 0.0 with NaN `value`/`passes` for a check the submission declared
+  N/A (`climatebench2 score --not-applicable NAME`), which is distinct from a check
+  that did not run and wrote no row at all.
 - Status legend: ✅ implemented per the (2026-09) spec · 🟡 implemented but deviates
   from spec · ❌ missing · ⬆ generic physics now provided by ClimateEval `main`
   (CB2 should keep only the threshold wrapper).
@@ -73,34 +85,43 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 | I.2a | Water budget closure | \|⟨P⟩−⟨E⟩\| < 0.05 mm/day | Req. | ✅ | `ClosureGate`, `physics.water_budget_residual` |
 | I.2b | Atmospheric energy budget | \|⟨Q_rad⟩ − (⟨L·P⟩+⟨SHF⟩)\| < 2 W/m² | Req. | ✅ the paper's arrangement, `Q_rad = sfc_net_rad − TOA_net`; an Earth-like column (LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m²) now closes to ≈ 0 | `ClosureGate`, `physics.atmospheric_energy_residual` |
 | I.3a | Clear-sky LW feedback β = ∂rlutcs/∂Ts | global-mean gridpoint slope within ±25% of 2.2 W/m²/K, historical | Req. | ✅ gridpoint regression of **deseasonalised monthly anomalies** (`anomalies(period="month")`) of `rlutcs` on `ts`, ±25% of 2.2 | `ClearSkyFeedbackGate`, `physics.gridpoint_regression_slope` |
-| I.3b | Midlatitude geostrophic balance | spatial ρ(u, u_g) at 850 hPa daily, 30–60°, > 0.9. **Skipped (N/A) for models with no dynamical representation** | Req. (N/A allowed) | ✅ per spec (daily `ua`/`zg` at 850 hPa, optional `ps` orography mask, pooled 30–60° both hemispheres); N/A only implicit (gate skipped when no `day` data supplied); untested on real daily data | `diags.tier1_extended.GeostrophicBalanceGate` |
+| I.3b | Midlatitude geostrophic balance | spatial ρ(u, u_g) at 850 hPa daily, 30–60°, > 0.9. **Skipped (N/A) for models with no dynamical representation** | Req. (N/A allowed) | ✅ per spec (daily `ua`/`zg` at 850 hPa, optional `ps` orography mask, pooled 30–60° both hemispheres); N/A now **declarable** (`score --not-applicable geostrophic_balance` → `applicable = 0`); untested on real daily data | `diags.tier1_extended.GeostrophicBalanceGate` |
 | I.3c | Tropical precipitation–buoyancy | monthly P′ vs column-MSE′ slope, 20S–20N, ±30% of GPCP/ERA5 | Req. | ❌ missing — the legacy log(pr)-vs-prw proxy was retired with the scripts and nothing replaced it | — |
-| I.4a | GFMIP SST patch experiments | Δλ = ΔR_EP/ΔTs_EP − ΔR_WP/ΔTs_WP > 0.5 W/m²/K — **Extended** | Ext. | ✅ per spec; needs submission-provided `amip`/`patch_ep`/`patch_wp` | `GFMIPPatchGate` |
+| I.4a | GFMIP SST patch experiments | Δλ = ΔR_EP/ΔTs_EP − ΔR_WP/ΔTs_WP > 0.5 W/m²/K — **Extended** | Ext. | ✅ per spec; needs submission-provided `amip`/`patch_ep`/`patch_wp`; tagged `requirement: extended`, so it is reported for credit but outside the entry ticket | `GFMIPPatchGate` |
 | I.4b | amip-4xCO2 ERF | 6.5–9.0 W/m² | Req. | ✅ (TOA-net difference amip-4xCO2 − amip; no land-warming correction, none asked) | `Amip4xCO2ERFGate` |
 | I.5a | ENSO amplitude | σ(Niño-3.4) ∈ [0.5, 1.4] K | Req. | ✅ σ of the **unsmoothed** deseasonalised monthly index (`ENSOGate._rolling_window_length = 1`); 🟡 the variability suite is still fed the CLI's historical cubes (1979–2014 default), not ≥ 100 yr piControl — a later CLI work package | `diags.pass_fail.ENSOGate` |
 | I.5b | ENSO spectrum | power(2–7 yr)/power(1–2 yr) > 1.5 | Req. | ✅ Welch PSD **integrated** over each band (`np.trapezoid`), so 1.5 means what the paper says (white noise now scores ≈ 0.71, not ≈ 1.0) | `pass_fail.band_power_ratio` |
 | I.5c | ENSO teleconnections | gridpoint regression of `ts` and `pr` on standardized Niño-3.4, 30S–30N; centred spatial correlation of modelled vs observed regression patterns > 0.7 (R² > 0.5), vs HadISST/ERA5 and GPCP | Req. | 🟡 implements the **superseded** scalar criterion (tropical ta500 regression > 0, Maritime-Continent pr < 0, sign only, no observations) | `diags.tier1_extended.ENSOTeleconnectionsGate` |
-| I.5d | MJO Wheeler–Kiladis | east/west power ratio (k=1–3, 30–90 d) > 1.5 — **Extended** | Ext. | ✅ (2-D FFT east/west ratio, k = 1–3, 30–90 d, ±15°, daily `pr`) | `MJOGate`, `physics.mjo_east_west_ratio` |
+| I.5d | MJO Wheeler–Kiladis | east/west power ratio (k=1–3, 30–90 d) > 1.5 — **Extended** | Ext. | ✅ (2-D FFT east/west ratio, k = 1–3, 30–90 d, ±15°, daily `pr`); tagged `requirement: extended` — reported, outside the entry ticket | `MJOGate`, `physics.mjo_east_west_ratio` |
 | I.6a | Land–ocean warming ratio | ratio ∈ [1.2, 1.6] (**strict** — resolved 2026-09); a4x last 50 yr | Req. | ✅ one strict-range gate row `land_ocean_warming`; thin wrapper over `climateeval.diags.complex.LandOceanWarmingRatio` (⬆ done) | `LandOceanWarmingGate` |
 | I.6b | Arctic amplification | (ΔT>66.5N)/(ΔT global) ≥ 1.5; a4x last 50 yr | Req. | ✅ thin wrapper over `climateeval.diags.complex.ArcticAmplification` (⬆ done) | `ArcticAmplificationGate` |
 | I.6c | ECS (Gregory, 150 yr) | ∈ [1, 7] K | Req. | ✅ gate wrapper over ClimateEval's `ECS` (the template for the ⬆ rows) | `ECSGate` |
 | I.7 | Aerosol forcing (hist-aer) | 2015 aerosol ERF ∈ [−2.0, −0.5] W/m²; ΔT(2015) < 0 — **Required** (promoted from Extended) | Req. | 🟡 ERF = ΔN − λ_Gregory·ΔT ✓, range ✓, cooling ✓; but "2015" = mean of the **last 30 yr** of hist-aer (paper: decadal mean centred on 2015) and anomalies vs the piControl long-term mean — **no parallel-segment drift removal** (paper App. B.8) | `AerosolForcingGate`, `physics.aerosol_erf` |
 | I.8a | Meridional heat transport | OMET peak 1.5–2.0 PW near 15–20°; AMET peak 4–5 PW near ~45° | Req. | ✅ thresholds per paper (15–20°, 45 ± 5°); thin wrapper over `climateeval.diags.complex.MeridionalHeatTransport`, search bands from `thresholds.yml` (⬆ done) | `MeridionalHeatTransportGate` |
 | I.8b | ITCZ–EFE relationship | 12-month climatology; slope within ±50% of ~3°/PW; r > 0.9 | Req. | ✅ 12-month climatology, slope ±50% of 3°/PW, \|r\| > 0.9; the hard-coded-1980 bug is gone | `ITCZEFEGate`, `physics.itcz_efe_regression` |
-| (extra) | Bjerknes compensation 40–70N | not in paper's Tier I list as specced | — | ✅ vs its own spec — but **counted in the leaderboard's entry ticket** (see wiring note) | `BjerknesGate` |
-| (extra) | Clausius–Clapeyron scaling | not in paper's Tier I list as specced | — | ✅ vs its own spec — same entry-ticket problem | `CCScalingGate` |
+| (extra) | Bjerknes compensation 40–70N | not in paper's Tier I list as specced | extra | ✅ vs its own spec; tagged `requirement: extra` and **excluded from the entry ticket** (fixed 2026-09-14, gap item 2) | `BjerknesGate` |
+| (extra) | Clausius–Clapeyron scaling | not in paper's Tier I list as specced | extra | ✅ vs its own spec; tagged `requirement: extra`, excluded from the entry ticket | `CCScalingGate` |
 
-**Wiring.** The 16 experiment-based gates plus the two extras and the two Tier II event
-gates (`pinatubo`, `hemispheric_asymmetry`, §II.1) live in
-`climatebench2/suites/ClimateBench2_TierI.yml` (18 entries) and run from one experiment
-dict; ENSO amplitude/spectrum run on cubes in `ClimateBench2_TierI_variability.yml`.
-The leaderboard's `ALL` column (`leaderboard/_gate_matrix_html`) is the minimum over
-**every gate present** — including the two extras, the two Extended gates and the two
-Tier II event gates — and treats an absent gate as "not counted". Until gates carry a
-Required / Extended / extra tag and an explicit N/A state (paper §7.1; discrepancy 17
-below), the entry ticket the page shows is not the paper's. Neither daily-data gate
-(I.3b, I.5d) nor the fixed-SST gates (I.4a/b) has been exercised on real CMIP6 output
-yet; only the unit tests (synthetic cubes) cover them.
+**Wiring (updated 2026-09-14, gap item 2).** The 16 experiment-based gates plus the two
+extras live in `climatebench2/suites/ClimateBench2_TierI.yml` (16 entries) and run from
+one experiment dict; ENSO amplitude/spectrum run on cubes in
+`ClimateBench2_TierI_variability.yml`; the two Tier II event diagnostics
+(`pinatubo`, `hemispheric_asymmetry`, §II.1) moved to
+`ClimateBench2_TierII_events.yml` (`historical` key, in the CLI defaults) and are
+tagged `requirement: diagnostic`, so the leaderboard lists them under Tier II.
+
+Every gate block in `thresholds.yml` now carries a `requirement:` tag, which the gate
+classes read through the single helper `pass_fail.gate_requirement`, and every gate row
+carries it (plus `applicable`) into `metrics`. The leaderboard
+(`leaderboard/_gate_matrix_html`) renders three groups — **Required** (with the
+`Entry ticket` column), **Extended** (reported, additional credit) and **extra**
+(non-protocol) — with cells ✓ / ✗ / `n/a` (declared) / — (not run). The entry ticket is
+✓ only when every Required check either passed or was declared N/A, ⚠ when a Required
+check has no row at all (the full Required set comes from the gate classes'
+`_gate_checks` via `pass_fail.gate_requirements`, so a gate that never ran is visible as
+a hole rather than silently ignored), and ✗ as soon as an applicable Required check
+fails. Neither daily-data gate (I.3b, I.5d) nor the fixed-SST gates (I.4a/b) has been
+exercised on real CMIP6 output yet; only the unit tests (synthetic cubes) cover them.
 
 ---
 
@@ -263,12 +284,18 @@ sub-surface pressure-level values are extrapolated or missing. Mask grid points 
 u_g, and compute ∂Z/∂y only from unmasked neighbours. The paper deliberately leaves this
 at 850 hPa; handle the masking here in code rather than changing the spec.
 
-**Applicability (RESOLVED 2026-09).** This test is **skipped and recorded as N/A** for
-submissions with no dynamical representation of the atmosphere (e.g. emulators that map
-forcing directly to regional `tas`/`pr`). It is required for any model that produces
-winds and geopotential. The scorecard must report which Tier I tests were applicable to
-each submission rather than treating N/A as either a pass or a fail — otherwise the
-inclusivity the protocol claims in §7.1 is contradicted by a gate in Tier I.
+**Applicability (RESOLVED 2026-09; implemented 2026-09-14).** This test is **skipped and
+recorded as N/A** for submissions with no dynamical representation of the atmosphere
+(e.g. emulators that map forcing directly to regional `tas`/`pr`). It is required for
+any model that produces winds and geopotential. The scorecard reports which Tier I tests
+were applicable to each submission rather than treating N/A as either a pass or a fail —
+otherwise the inclusivity the protocol claims in §7.1 would be contradicted by a gate in
+Tier I. In code: `climatebench2 score MODEL --not-applicable geostrophic_balance`
+(repeatable) passes `not_applicable=[…]` into the diagnostics of the experiment-based
+suites; a gate whose own name is listed computes nothing, needs no data, and emits one
+row per check with `applicable = 0.0` and NaN `value`/`passes`
+(`SupersetExperimentMixin` / `pass_fail.not_applicable_metrics`). The leaderboard shows
+that as `n/a`, counts it as neither pass nor fail, and still lets the entry ticket be ✓.
 
 **Status: ✅ (structurally; untested on real data)** —
 `diags/tier1_extended.py::GeostrophicBalanceGate` (`day` key): `extract_levels` to
@@ -277,11 +304,11 @@ sphere, |lat| < 10° masked), optional orography mask where daily `ps < 870 hPa`
 `ps` is present in the `day` data, then `physics.midlatitude_pattern_correlation` —
 cos-weighted correlation pooled over all days and both 30–60° bands — gated at
 `tier1.geostrophic_balance.spatial_corr_min = 0.9` (row `geostrophic_balance`).
-Gaps: (i) N/A arises only implicitly — if no `day` experiment is supplied the CLI skips
-the gate and the leaderboard shows "—" and excludes it from `ALL`; a submission cannot
-*declare* "no dynamics", and one that has `ua`/`zg` but omits them silently skips a
-Required test. Needs an explicit applicability flag (model card → suite kwarg) and a
-three-valued pass/fail/N-A column. (ii) Loading a `day`-table DRS tree through
+Applicability: ✅ a submission *declares* "no dynamics" with
+`--not-applicable geostrophic_balance` (→ `applicable = 0`, rendered `n/a`); a gate
+whose `day` experiment was simply not supplied still writes no row and is rendered "—",
+which now makes the entry ticket **incomplete (⚠)** instead of silently dropping a
+Required test. Remaining gap: (ii) loading a `day`-table DRS tree through
 `load_cmor_dir` and the memory footprint of decades of daily 3-D `ua`/`zg` have not
 been exercised; the unit tests use synthetic cubes.
 
@@ -332,8 +359,8 @@ passes = abs(slope_mod/slope_obs - 1) <= 0.30
 `CCScalingGate` (`picontrol`): global-annual-mean fractional `prw` anomaly (%) regressed
 on Δtas (K) (`physics.cc_scaling_slope`); pass if slope ∈ `tier1.cc_scaling.slope_range`
 = [5, 9] %/K (Held & Soden 2006; ported from ICONEval `prw_anom_vs_tas_anom`).
-**Not in the paper's Tier I list** — keep as a supplementary sanity check tagged
-*extra*, and exclude it from the entry ticket.
+**Not in the paper's Tier I list** — kept as a supplementary sanity check tagged
+`tier1.cc_scaling.requirement: extra` (2026-09-14) and excluded from the entry ticket.
 
 ---
 
@@ -362,7 +389,8 @@ relative to `amip` (annual global means over the overlapping record), `delta_lam
 gated > `tier1.gfmip_patch.delta_lambda_min = 0.5`; `lambda_ep`/`lambda_wp` emitted.
 Data path: submission-provided CMOR directories via `--experiment patch_ep=DIR
 --experiment patch_wp=DIR --experiment amip=DIR` (nothing on ESGF). Being Extended, it
-must not count toward the entry ticket (wiring note above).
+does not count toward the entry ticket: `tier1.gfmip_patch.requirement: extended`
+(2026-09-14), so the leaderboard shows it in the Extended group.
 
 ```python
 def lam(exp):
@@ -499,8 +527,8 @@ convention (unit-tested with a synthetic eastward wave) — gated at
 `tier1.mjo.east_west_power_ratio_min = 1.5` (row `mjo_east_west`). No red-noise
 background removal or symmetric/antisymmetric split — the paper's R_MJO is defined on
 the raw spectrum, so none is required. The pure-Python double loop over (frequency,
-wavenumber) is O(N_t·N_lon); fine for decades of daily data. Being Extended, it must
-not count toward the entry ticket.
+wavenumber) is O(N_t·N_lon); fine for decades of daily data. Being Extended, it does
+not count toward the entry ticket (`tier1.mjo.requirement: extended`, 2026-09-14).
 
 ```python
 pr_eq = pr_daily.sel(lat=slice(-15, 15)).mean("lat")           # detrended, tapered
@@ -740,8 +768,9 @@ per-month AMET/OMET via `physics.meridional_transport`, 40–70N band mean
 (`_band_transport_series`), `physics.monthly_anomalies`, 121-month centred running
 means, Pearson r (`physics.bjerknes_correlation`). **Pass:** r <
 `tier1.bjerknes.corr_max = −0.3` (row `bjerknes_compensation`). The legacy DJF-only
-variant was not ported. piControl. Status: ✅ (vs its own spec); tag *extra* and
-exclude from the entry ticket.
+variant was not ported. piControl. Status: ✅ (vs its own spec); tagged
+`tier1.bjerknes.requirement: extra` (2026-09-14), so it is reported in the leaderboard's
+extra group and excluded from the entry ticket.
 
 ---
 
@@ -886,8 +915,8 @@ gone.
 | Cloud properties (LWP, fraction, CTT/CTP) | (a)/(b) | 🟡 `clt` vs ESACCI-Cloud scored; `clwvi`/`clivi` not in the suite (ESACCICloud carries them); CTT/CTP ❌ | suite |
 | prw | (a) | 🟡 vs `ERA5Monthly` (paper: RSS primary, ERA5 as reference) — acceptable pending an RSS DataSource | suite |
 | Realized warming level 2015+ vs 1985–2014 (primary); 1950–present trend; test-period trend (secondary); GSAT blending | (a)/(c) | ❌ — `TrendConsistency` tests the OLS trend of **whatever window is loaded** (CLI default 1979–2014 → no test window at all); no warming-level statistic, no 1950 start, no blending correction | `TrendConsistency` |
-| Pinatubo response | (b) | 🟡 `PinatuboResponseGate`: global-mean `rsds`/`tas` anomalies Jul 1991–Dec 1993 vs `tier2.climatology_baseline_period` (✅ now [1985, 2014]), **sign-only** gates; no BSRN/obs magnitude comparison, no co-variation test | `diags/tier2_diagnostics.py` |
-| Hemispheric asymmetry | (b) | 🟡 `HemisphericAsymmetryGate`: NH−SH `tas` trend over `tier2.hemispheric_asymmetry.era` (✅ [1950, 1985], no longer a hard-coded class constant) and zonal-mean-pr-maximum latitude trend, **sign-only** gates; no HadCRUT/Berkeley comparison | `tier2_diagnostics.py` |
+| Pinatubo response | (b) | 🟡 `PinatuboResponseGate`: global-mean `rsds`/`tas` anomalies Jul 1991–Dec 1993 vs `tier2.climatology_baseline_period` (✅ now [1985, 2014]), **sign-only** gates; no BSRN/obs magnitude comparison, no co-variation test. ✅ moved out of the Tier I suite into `ClimateBench2_TierII_events` and tagged `requirement: diagnostic` (2026-09-14), so it no longer touches the entry ticket | `diags/tier2_diagnostics.py`, `suites/ClimateBench2_TierII_events.yml` |
+| Hemispheric asymmetry | (b) | 🟡 `HemisphericAsymmetryGate`: NH−SH `tas` trend over `tier2.hemispheric_asymmetry.era` (✅ [1950, 1985], no longer a hard-coded class constant) and zonal-mean-pr-maximum latitude trend, **sign-only** gates; no HadCRUT/Berkeley comparison. ✅ in `ClimateBench2_TierII_events`, tagged `requirement: diagnostic` (2026-09-14) | `tier2_diagnostics.py`, `suites/ClimateBench2_TierII_events.yml` |
 | Seasonal cycle: land annual T range; SST–low-cloud covariance; seasonal CRE–SST feedback | (b) | ❌ (ClimateEval `AnnualCycle` runs deterministically for the core variables; none of the three protocol statistics is computed) | — |
 | Diurnal cycle (first-harmonic amplitude/phase of pr and CRE, local solar time) | (b) | 🟡 ClimateEval `DiurnalCycle` of hourly pr vs `ERA5Hourly`, deterministic; `physics.first_harmonic` exists, unwired; CRE diurnal ❌; IMERG / CERES-SYN DataSources ❌ | `ClimateBench2_TierII_daily.yml` |
 | Held-out vs in-sample labelling | — | ❌ leaderboard has no such column | `leaderboard/` |
@@ -944,14 +973,16 @@ ERF series, no observational calibration through 2014, no CMIP6-MMM pattern in t
 package.
 
 **Leaderboard (`leaderboard/__init__.py`).** `build_scores` classifies `metrics` rows
-into gates (`passes` without `p_value`), CRPS (`crps`), consistency (`p_value`),
-deterministic (`weighted_*`) and Tier III (`*_site_consistency` in `raw_output`);
-`render_html` writes a self-contained static page: Tier I gate matrix with an `ALL`
-column (minimum over every gate present), CRPS table with skill relative to the
-**Climatology** row only, consistency table, Tier III fractions. `build_scores_table`
-reuses ClimateEval's `build_leaderboard_data` for the deterministic CSV summary.
-Missing versus the paper's scorecard (§5.6): `S` against the CMIP6 median with
-leave-one-out, Required/Extended/N-A gate tagging, held-out/in-sample labels, bootstrap
+into gates (`passes` without `p_value`, plus declared-N/A rows with `applicable = 0`),
+CRPS (`crps`), consistency (`p_value`), deterministic (`weighted_*`) and Tier III
+(`*_site_consistency` in `raw_output`), filling `requirement`/`applicable` from the gate
+classes for databases written before those columns existed; `render_html` writes a
+self-contained static page: the Tier I scorecard in its three groups (Required with the
+`Entry ticket` column, Extended, extra), the Tier II CRPS table with skill relative to
+the **Climatology** row only, the Tier II event flags, the consistency table and the
+Tier III fractions. `build_scores_table` reuses ClimateEval's `build_leaderboard_data`
+for the deterministic CSV summary. Missing versus the paper's scorecard (§5.6): `S`
+against the CMIP6 median with leave-one-out, held-out/in-sample labels, bootstrap
 intervals, per-region resolution, the "non-conforming" category.
 
 **Mapping to the Tier II spec.** Present: ESS-corrected time-averaged CRPS, scalar
@@ -1034,8 +1065,10 @@ global-mean `rsds` and `tas` anomalies for Jul 1991–Dec 1993 relative to the
 `tier2.climatology_baseline_period` mean (✅ [1985, 2014] since 2026-09-14) — gated
 **sign-only** (`pinatubo_dimming`: Δrsds < 0;
 `pinatubo_cooling`: Δtas < 0). No observational magnitudes (BSRN / HadCRUT), no
-co-variation test, no ENSO removal; the gate sits in the Tier I suite and currently
-counts toward the entry ticket.
+co-variation test, no ENSO removal. ✅ Since 2026-09-14 (gap item 2) the diagnostic runs
+in `ClimateBench2_TierII_events.yml` (`historical` key, a CLI default suite) with
+`tier2.pinatubo.requirement: diagnostic`, so its flags are reported under Tier II and
+never gate entry.
 
 **Surface fluxes (NEW 2026-09).** Observation-based synthesis products (CERES SYN,
 OAFlux, HOAPS) do not close the global energy budget (residuals O(10) W/m²), and
@@ -1065,8 +1098,9 @@ HadCRUT/GPCP-era reconstructions.
 (`physics.ols_trend`; the era is a threshold now, not a class constant),
 `nh_minus_sh_trend` gated < 0;
 ITCZ = latitude of the annual zonal-mean `pr` maximum within ±30°, its trend
-(°/decade) gated < 0. Sign-only; no HadCRUT/Berkeley comparison; also counts toward the
-entry ticket today.
+(°/decade) gated < 0. Sign-only; no HadCRUT/Berkeley comparison. ✅ Runs in
+`ClimateBench2_TierII_events.yml` with `requirement: diagnostic` (2026-09-14), so it is
+reported under Tier II rather than counted in the entry ticket.
 
 **Seasonal-cycle metrics.** (i) climatological annual range of tas over land
 (max−min of 12-month climatology, land-masked, area-mean or EOF-projected map);
@@ -1280,7 +1314,7 @@ as on data.
 
 | Tier | Specced diagnostics | ✅ | 🟡 | ❌ |
 |---|---|---|---|---|
-| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras | 14 — I.1, I.2a, I.2b, I.3a, I.3b, I.4a, I.4b, I.5b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 3 — I.5a (statistic ✅, but run on historical cubes not ≥ 100 yr piControl), I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
+| I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras; all tagged Required / Extended / extra, entry ticket over the Required group only | 14 — I.1, I.2a, I.2b, I.3a, I.3b, I.4a, I.4b, I.5b, I.5d, I.6a, I.6b, I.6c, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 3 — I.5a (statistic ✅, but run on historical cubes not ≥ 100 yr piControl), I.5c (superseded criterion), I.7 (window, drift) | 1 — I.3c precip–buoyancy |
 | II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | ESS correction; deterministic metrics for tas/pr/TOA/prw/clt/tos/OHC/sea-ice via ClimateEval; climatology-baseline row on the correct 1985–2014 pre-test window; static leaderboard | empirical (not fair) CRPS; single-member scoring; Gaussian consistency test without σ_int; pooled MME; sign-only Pinatubo & hemispheric asymmetry; TXx reference still a monthly placeholder; sea-ice area not extent; single obs product per variable | reference-EOF fair-CRPS scoring; block bootstrap; obs-uncertainty draws; CMIP6-median skill score; realized warming level & blending; ETCCDI set & Perkins score; ts; surface fluxes; seasonal-cycle triplet; diurnal harmonic scoring; pattern-scaling wiring; held-out labels; **post-2015 multi-member CMIP6 reference (ClimateEval)** |
 | III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | monsoon gate | site-consistency fraction for the three periods — disconnected from the pipeline's NetCDFs, tas-only, DA products instead of raw proxies; LE-spread functions | fair CRPS with block pseudo-members; raw SST proxy compilations; perfect-model suite and data |
 
@@ -1331,10 +1365,18 @@ as on data.
 16. TXx now uses daily `tasmax` (registry variable, suite id `tasmax_txx`; **done**
     2026-09-14 with gap item 0) but still against an `ERA5Monthly` placeholder
     reference; a daily obs product is still missing.
-17. **Entry ticket** — the leaderboard `ALL` column spans every gate present, including
-    the Bjerknes and C–C extras, the Extended GFMIP/MJO gates and the Tier II Pinatubo /
-    hemispheric-asymmetry gates; there is no Required/Extended/extra tag and no
-    three-valued pass/fail/N-A state.
+17. ~~**Entry ticket** — the leaderboard `ALL` column spans every gate present,
+    including the Bjerknes and C–C extras, the Extended GFMIP/MJO gates and the Tier II
+    Pinatubo / hemispheric-asymmetry gates; there is no Required/Extended/extra tag and
+    no three-valued pass/fail/N-A state.~~ **DONE (2026-09-14, gap item 2):** every gate
+    block in `thresholds.yml` carries `requirement:` (required / extended / extra /
+    diagnostic), read by one helper (`pass_fail.gate_requirement`); gate rows carry
+    `requirement` + `applicable`; `score --not-applicable NAME` declares a test N/A
+    (`applicable = 0`, NaN pass/fail); `pinatubo`/`hemispheric_asymmetry` moved to
+    `ClimateBench2_TierII_events.yml`; the leaderboard renders Required / Extended /
+    extra separately and computes the entry ticket (✓ / ✗ / ⚠ incomplete) over the
+    Required group alone, with the full Required set taken from the gate classes so an
+    unrun gate reads as a hole, not a pass.
 18. Tier III proxy gates read `{period}_proxies.csv` files the pipeline does not write;
     the pipeline's LGM targets are DA products the paper now excludes; tas-only.
 19. `paleo_benchmark.py`'s Gaussian CRPS treats the proxy as the forecast distribution —
@@ -1379,9 +1421,17 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    and the new `tier2.hemispheric_asymmetry.era` (#11). *Still open here:* the four
    stale ENSO-teleconnection keys, which go with the I.5c rewrite (#6, item 5), and the
    aerosol-forcing window (#8, item 5).
-2. **Entry-ticket semantics** (a day): tag every gate Required / Extended / extra
-   (suite kwarg or `thresholds.yml`), add pass/fail/N-A, compute `ALL` over Required
-   only, and move `pinatubo`/`hemispheric_asymmetry` out of the Tier I suite (#17).
+2. ~~**Entry-ticket semantics**~~ — **DONE 2026-09-14.** `requirement:` tags in
+   `thresholds.yml` for every gate block (required / extended / extra / diagnostic) read
+   through `pass_fail.gate_requirement`; `requirement` + `applicable` columns on every
+   gate row; declared N/A via `climatebench2 score --not-applicable NAME`
+   (`SupersetExperimentMixin`, no data needed, NaN value/passes) as distinct from a gate
+   that did not run; `pinatubo`/`hemispheric_asymmetry` moved into the new
+   `ClimateBench2_TierII_events.yml` (a CLI default suite) as
+   `requirement: diagnostic`; the leaderboard renders the three Tier I groups with an
+   `Entry ticket` column computed over the Required group only — ✓ (all applicable
+   Required passed, N/A allowed), ✗ (an applicable Required failed), ⚠ (a Required check
+   has no row), — for cells that were never run (#17).
 3. **Scoring engine to the 2026-09 spec** (blocking for any Tier II number): fair CRPS
    with the M = 1 rule (#9); multi-member ingestion — `--member` / DRS variant discovery
    in `_cli.py` feeding a member dimension into the scored diagnostics (#14); `E_ref` =

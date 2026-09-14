@@ -31,7 +31,7 @@ from climateeval._config import setup_esmvaltool_config_and_logging
 
 from climatebench2 import physics
 from climatebench2._thresholds import get_threshold
-from climatebench2.diags.pass_fail import GateCheck
+from climatebench2.diags.pass_fail import GateCheck, gate_requirement
 from climatebench2.diags.tier1_physics import CB2ComplexDiagnostic, _mon
 
 if TYPE_CHECKING:
@@ -69,6 +69,7 @@ class GeostrophicBalanceGate(CB2ComplexDiagnostic):
             check_id="geostrophic_balance",
             column="geostrophic_corr",
             lower=get_threshold("tier1.geostrophic_balance.spatial_corr_min"),
+            requirement=gate_requirement("tier1.geostrophic_balance"),
         ),
     )
 
@@ -124,6 +125,7 @@ class GFMIPPatchGate(CB2ComplexDiagnostic):
             check_id="gfmip_patch",
             column="delta_lambda",
             lower=get_threshold("tier1.gfmip_patch.delta_lambda_min"),
+            requirement=gate_requirement("tier1.gfmip_patch"),
         ),
     )
 
@@ -173,6 +175,7 @@ class Amip4xCO2ERFGate(CB2ComplexDiagnostic):
             column="erf_wm2",
             lower=get_threshold("tier1.amip_4xco2_erf.range")[0],
             upper=get_threshold("tier1.amip_4xco2_erf.range")[1],
+            requirement=gate_requirement("tier1.amip_4xco2_erf"),
         ),
     )
 
@@ -212,11 +215,13 @@ class ENSOTeleconnectionsGate(CB2ComplexDiagnostic):
             check_id="enso_teleconnection_t",
             column="ta500_regression",
             lower=get_threshold("tier1.enso.teleconnection_t_min"),
+            requirement=gate_requirement("tier1.enso"),
         ),
         GateCheck(
             check_id="enso_teleconnection_pr",
             column="mc_pr_regression",
             upper=get_threshold("tier1.enso.teleconnection_pr_max"),
+            requirement=gate_requirement("tier1.enso"),
         ),
     )
 
@@ -306,6 +311,7 @@ class MJOGate(CB2ComplexDiagnostic):
             check_id="mjo_east_west",
             column="mjo_east_west_ratio",
             lower=get_threshold("tier1.mjo.east_west_power_ratio_min"),
+            requirement=gate_requirement("tier1.mjo"),
         ),
     )
 

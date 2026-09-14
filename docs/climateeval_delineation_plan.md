@@ -113,7 +113,11 @@ the same environment. The wiring, all confirmed against ClimateEval `main`:
    one schema regardless of which diagnostic produced a score.
 4. **Run path.** CB2 exposes `climatebench2 score <model_dir>` (thin CLI) →
    `Suite("ClimateBench2_TierI", …).get_database(...)` for each tier → one `.ddb` →
-   CB2 leaderboard renderer. No ClimateEval source is modified.
+   CB2 leaderboard renderer. No ClimateEval source is modified. Protocol standing is
+   carried in the data, not the code path: each gate's `requirement` tag
+   (`thresholds.yml`) and its `applicable` flag (`score --not-applicable NAME`) travel
+   as `metrics` columns, so the leaderboard can compute the entry ticket over the
+   Required group alone.
 
 ---
 
@@ -129,8 +133,8 @@ climatebench2/                 # NEW: the installable package (was loose scripts
 │   ├── baselines.py           #   climatology / EBM-pattern-scaling / MME
 │   └── tier3_paleo.py         #   proxy-aware scoring + mid-Holocene monsoon
 ├── suites/                    # CB2-owned suite YAMLs (reference climatebench2.diags.* + climateeval.diags.*)
-│   ├── ClimateBench2_TierI.yml
-│   ├── ClimateBench2_TierII.yml
+│   ├── ClimateBench2_TierI.yml            # + _TierI_variability.yml (cube-based)
+│   ├── ClimateBench2_TierII.yml           # + _TierII_daily.yml, _TierII_events.yml
 │   └── ClimateBench2_TierIII.yml
 ├── thresholds.yml             # single source of truth for every pass/fail bound (from metrics_reference.md)
 ├── leaderboard/               # thin renderer: .ddb -> scores table -> static HTML page

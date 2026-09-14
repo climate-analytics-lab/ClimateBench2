@@ -8,9 +8,12 @@ import pytest
 
 from climatebench2._thresholds import get_threshold, load_thresholds
 from climatebench2.diags.pass_fail import (
+    REQUIREMENT_TAGS,
     GateCheck,
     band_power_ratio,
     gate_metrics,
+    gate_requirement,
+    not_applicable_metrics,
 )
 
 
@@ -39,6 +42,83 @@ def test_gate_metrics_scalar_check() -> None:
     assert result["ModelC"] == 0.0  # above
     assert (metrics["var_id"] == "ecs_gate").all()
     assert metrics.set_index("data_id").loc["ModelA", "value"] == pytest.approx(3.2)
+
+
+def test_gate_metrics_emits_requirement_and_applicable_columns() -> None:
+    """Every gate row carries its protocol standing and applicability."""
+    raw = pd.DataFrame(
+        {
+            "data_id": ["ModelA"],
+            "data_type": ["to_benchmark"],
+            "ecs": [3.2],
+        },
+    )
+    checks = (
+        GateCheck(
+            check_id="ecs_gate",
+            column="ecs",
+            lower=1.0,
+            upper=7.0,
+            requirement="required",
+        ),
+    )
+    metrics = gate_metrics(raw, checks)
+    assert metrics.loc[0, "requirement"] == "required"
+    assert metrics.loc[0, "applicable"] == 1.0
+    assert metrics.loc[0, "passes"] == 1.0
+    expected = {
+        "data_id",
+        "data_type",
+        "var_id",
+        "value",
+        "bound_lower",
+        "bound_upper",
+        "passes",
+        "requirement",
+        "applicable",
+    }
+    assert set(metrics.columns) == expected
+
+
+def test_gate_requirement_reads_thresholds_and_validates() -> None:
+    """The tag is protocol metadata in thresholds.yml, never hard-coded."""
+    assert gate_requirement("tier1.ecs") == "required"
+    assert gate_requirement("tier1.gfmip_patch") == "extended"  # not CMIP6 data
+    assert gate_requirement("tier1.mjo") == "extended"
+    assert gate_requirement("tier1.bjerknes") == "extra"
+    assert gate_requirement("tier1.cc_scaling") == "extra"
+    assert gate_requirement("tier2.pinatubo") == "diagnostic"
+    assert gate_requirement("tier2.hemispheric_asymmetry") == "diagnostic"
+    with pytest.raises(KeyError, match="not found"):
+        gate_requirement("tier1.no_such_block")
+
+
+def test_every_tier1_threshold_block_is_tagged() -> None:
+    """A new Tier I gate cannot silently escape the entry-ticket grouping."""
+    for block, settings in load_thresholds()["tier1"].items():
+        assert "requirement" in settings, f"tier1.{block} has no requirement tag"
+        assert settings["requirement"] in REQUIREMENT_TAGS
+
+
+def test_not_applicable_metrics_rows() -> None:
+    """Declared N/A: neither pass nor fail, and no value computed."""
+    checks = (
+        GateCheck(
+            check_id="geostrophic_balance",
+            column="geostrophic_corr",
+            lower=0.9,
+            requirement="required",
+        ),
+    )
+    rows = not_applicable_metrics(checks, data_id="model_Emulator")
+    assert len(rows) == 1
+    row = rows.iloc[0]
+    assert row["var_id"] == "geostrophic_balance"
+    assert row["applicable"] == 0.0
+    assert np.isnan(row["passes"])
+    assert np.isnan(row["value"])
+    assert row["requirement"] == "required"
+    assert row["bound_lower"] == 0.9
 
 
 def test_gate_metrics_series_statistic_orders_by_time() -> None:
@@ -178,3 +258,37 @@ def test_enso_gate_index_is_unsmoothed_monthly_anomalies() -> None:
     assert unsmoothed.shape[0] == n_time
     assert smoothed.shape[0] == n_time - 2
     assert np.std(unsmoothed.data, ddof=1) > np.std(smoothed.data, ddof=1)
+
+
+def test_declared_not_applicable_gate_emits_na_rows_without_data() -> None:
+    """`score --not-applicable NAME`: N/A rows, no computation, no data."""
+    pytest.importorskip("climateeval")
+
+    from climateeval.data import DataSourceInformation
+
+    from climatebench2.diags import GeostrophicBalanceGate
+
+    info = DataSourceInformation(name="Emulator", category="model")
+    gate = GeostrophicBalanceGate(
+        "geostrophic_balance",
+        not_applicable=["geostrophic_balance"],
+    )
+    assert gate.declared_not_applicable
+
+    # No `day` experiment supplied, and none needed: nothing is computed.
+    output = gate.get_output({}, info)
+    assert output.raw_output is None
+    metrics = output.metrics.to_pandas()
+    assert list(metrics["var_id"]) == ["geostrophic_balance"]
+    assert metrics.loc[0, "applicable"] == 0.0
+    assert np.isnan(metrics.loc[0, "passes"])
+    assert metrics.loc[0, "requirement"] == "required"
+
+    # A gate that was *not* declared N/A but has no data writes nothing at
+    # all — "not run" must stay distinguishable from "does not apply".
+    other = GeostrophicBalanceGate(
+        "geostrophic_balance",
+        not_applicable=["mjo"],
+    )
+    assert not other.declared_not_applicable
+    assert other.get_output({}, info).metrics is None

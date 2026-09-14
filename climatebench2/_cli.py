@@ -32,6 +32,7 @@ from typing import Any
 DEFAULT_SUITES = [
     "ClimateBench2_TierI",
     "ClimateBench2_TierI_variability",
+    "ClimateBench2_TierII_events",
     "ClimateBench2_TierII",
 ]
 DEFAULT_TIMERANGE = "19790101/20141231"
@@ -111,8 +112,11 @@ def _cmd_score(args: argparse.Namespace) -> None:
     out_dir = args.out or Path(f"{args.name}_climatebench2")
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    not_applicable = [name.strip() for name in (args.not_applicable or [])]
+
     suite_names = args.suite or DEFAULT_SUITES
     db_paths: list[Path] = []
+    declared_seen: set[str] = set()
     for suite_name in suite_names:
         resolved = _resolve_suite(suite_name)
         suite = Suite(
@@ -123,10 +127,23 @@ def _cmd_score(args: argparse.Namespace) -> None:
         # Complex (experiment-based) suites take the experiment dict; simple
         # suites take the model cubes. Suite.get_database passes one data
         # object to every diagnostic, so suites are homogeneous by design.
+        diagnostics = suite._get_diagnostics()
         needs_experiments = any(
-            isinstance(diag, ComplexDiagnostic)
-            for diag in suite._get_diagnostics().values()
+            isinstance(diag, ComplexDiagnostic) for diag in diagnostics.values()
         )
+        # `not_applicable` is a complex-diagnostic kwarg (declared N/A gates);
+        # ClimateEval's simple diagnostics take no **kwargs, so it is only
+        # handed to the experiment-based suites.
+        if needs_experiments and not_applicable:
+            declared_seen |= set(diagnostics) & set(not_applicable)
+            suite = Suite(
+                resolved,
+                diagnostic_kwargs={
+                    **diagnostic_kwargs,
+                    "not_applicable": not_applicable,
+                },
+                variable_kwargs={"timerange": args.timerange},
+            )
         if needs_experiments and not experiment_paths:
             print(
                 f"Skipping suite '{Path(resolved).stem}': needs --experiment "
@@ -146,6 +163,14 @@ def _cmd_score(args: argparse.Namespace) -> None:
         suite.get_database(data, info, database_resource=f"duckdb://{db_path}")
         print(f"Wrote database {db_path}", file=sys.stderr)
         db_paths.append(db_path)
+
+    for name in sorted(set(not_applicable) - declared_seen):
+        print(
+            f"Warning: --not-applicable '{name}' matched no gate diagnostic in "
+            f"the suites that ran; the scorecard will show it as 'not run', "
+            f"not 'n/a'",
+            file=sys.stderr,
+        )
 
     print(
         f"\nDone. Score with:  climatebench2 leaderboard "
@@ -201,6 +226,9 @@ def main(argv: list[str] | None = None) -> None:
             "examples:\n"
             "  climatebench2 score /path/to/model/cmor/Amon --name MyModel\n"
             "      run the ClimateBench2 suites and write result databases\n"
+            "  climatebench2 score MODEL --name Emulator "
+            "--not-applicable geostrophic_balance\n"
+            "      declare a Tier I gate inapplicable (recorded as n/a, not a fail)\n"
             "  climatebench2 leaderboard MyModel_climatebench2/*.ddb\n"
             "      build the scores table from the results\n"
             "\n"
@@ -234,6 +262,19 @@ def main(argv: list[str] | None = None) -> None:
             "amip4xco2, patch_ep, patch_wp (historical defaults to the MODEL "
             "data). Gates whose keys are absent are skipped; suites needing "
             "experiments are skipped if none are given."
+        ),
+    )
+    score.add_argument(
+        "--not-applicable",
+        action="append",
+        metavar="NAME",
+        help=(
+            "Declare a Tier I gate inapplicable to this submission "
+            "(repeatable; NAME is the gate's suite entry name, e.g. "
+            "geostrophic_balance for a model with no dynamical "
+            "representation). The gate computes nothing and is recorded as "
+            "n/a — neither a pass nor a fail — on the scorecard, which is "
+            "different from a gate that simply did not run."
         ),
     )
     score.add_argument(

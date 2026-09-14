@@ -4,8 +4,13 @@ Turns ClimateEval result databases (``.ddb``, one per suite — accumulate
 several models with ``Suite.get_database(..., append=True)``) into the
 protocol's presentation:
 
-- **Tier I gate matrix** — every pass/fail check per model; the entry
-  ticket is passing them all.
+- **Tier I gate matrix** — every pass/fail check per model, grouped by the
+  ``requirement`` tag the gate carries (paper §7.1): *Required* (the entry
+  ticket), *Extended* (reported alongside, additional credit, does not gate
+  entry) and *extra* (code-only sanity checks). The **Entry ticket** column
+  is ✓ only when every Required check either passed or was declared N/A by
+  the submission, ⚠ when a Required check produced no row at all, ✗ when an
+  applicable Required check failed.
 - **Tier II scores** — CRPS (with ESS-corrected uncertainty) per variable,
   reported as skill relative to the protocol baselines (climatology
   persistence and the CMIP6 multi-model ensemble), plus the regime-(b)
@@ -66,6 +71,34 @@ def _empty() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _normalise_gates(gates: pd.DataFrame) -> pd.DataFrame:
+    """Fill the requirement/applicable columns (databases predating them).
+
+    Older result databases carry only ``passes``; their rows are all
+    applicable, and their requirement tag is recovered from the gate classes
+    (``climatebench2.diags``), defaulting to ``required``.
+    """
+    if gates.empty:
+        return gates
+    if "applicable" not in gates.columns:
+        gates["applicable"] = 1.0
+    gates["applicable"] = gates["applicable"].astype(float).fillna(1.0)
+    registry: dict[str, str] = {}
+    try:
+        from climatebench2.diags.pass_fail import gate_requirements
+
+        registry = gate_requirements()
+    except Exception:  # noqa: BLE001 - climateeval may be unavailable
+        registry = {}
+    if "requirement" not in gates.columns:
+        gates["requirement"] = ""
+    gates["requirement"] = [
+        tag if isinstance(tag, str) and tag else registry.get(var_id, "required")
+        for tag, var_id in zip(gates["requirement"], gates["var_id"], strict=True)
+    ]
+    return gates
+
+
 def build_scores(db_paths: list[Path]) -> Scores:
     """Collect gate/CRPS/consistency/deterministic/Tier-III frames."""
     import pandas as pd
@@ -77,7 +110,12 @@ def build_scores(db_paths: list[Path]) -> Scores:
         tagged = df.assign(suite=suite, diagnostic=diag)
         if table == "metrics":
             if "passes" in df.columns and "p_value" not in df.columns:
-                gates.append(tagged[tagged["passes"].notna()])
+                # Declared-N/A rows carry no `passes` but must be kept: they
+                # are how a submission says a Required test does not apply.
+                is_gate = tagged["passes"].notna()
+                if "applicable" in tagged.columns:
+                    is_gate = is_gate | (tagged["applicable"] == 0.0)
+                gates.append(tagged[is_gate])
             if "crps" in df.columns:
                 crps.append(tagged[tagged["crps"].notna()])
             if "p_value" in df.columns:
@@ -104,7 +142,7 @@ def build_scores(db_paths: list[Path]) -> Scores:
         )
 
     return Scores(
-        gates=cat(gates),
+        gates=_normalise_gates(cat(gates)),
         crps=cat(crps),
         consistency=cat(consistency),
         deterministic=cat(deterministic),
@@ -138,6 +176,7 @@ body{font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;margin:2rem
      max-width:1100px;padding:0 1rem;color:#1a1a1a;background:#fafafa}
 h1{border-bottom:3px solid #205493;padding-bottom:.3rem}
 h2{margin-top:2.2rem;color:#205493}
+h3{margin-top:1.6rem;color:#205493;font-size:1.02rem}
 table{border-collapse:collapse;width:100%;margin:.8rem 0;background:#fff;
       box-shadow:0 1px 3px rgba(0,0,0,.08);font-size:.9rem}
 th,td{border:1px solid #e2e2e2;padding:.4rem .6rem;text-align:left}
@@ -159,36 +198,186 @@ def _esc(value: object) -> str:
     return html_module.escape(str(value))
 
 
-def _gate_matrix_html(gates: pd.DataFrame) -> str:
-    import pandas as pd
+# -- Tier I gate matrix -----------------------------------------------------
+#
+# Gate rows carry a `requirement` tag (required / extended / extra /
+# diagnostic — thresholds.yml) and an `applicable` flag. The scorecard shows
+# the three Tier I groups separately, because only the Required group is the
+# paper's entry ticket, and it must distinguish "does not apply to this
+# submission" (declared N/A) from "was not run".
 
+#: Per-cell markup: state -> (css class, glyph).
+_STATE_CELLS = {
+    "pass": ("pass", "✓"),
+    "fail": ("fail", "✗"),
+    "na": ("na", "n/a"),
+    "missing": ("na", "—"),
+}
+
+#: Entry-ticket verdicts.
+_TICKET_CELLS = {
+    "pass": ("pass", "✓"),
+    "fail": ("fail", "✗"),
+    "incomplete": ("na", "⚠"),
+}
+
+
+def _gate_states(gates: pd.DataFrame) -> dict[str, dict[str, str]]:
+    """``data_id -> check_id -> "pass" | "fail" | "na"``.
+
+    A check with rows from several diagnostics/suites must pass everywhere;
+    a check whose rows are all declared N/A (``applicable = 0``) is ``na``.
+    """
+    states: dict[str, dict[str, str]] = {}
+    for keys, group in gates.groupby(["data_id", "var_id"], sort=False):
+        data_id, var_id = keys
+        applicable = float(group["applicable"].max())
+        passes = group["passes"].dropna()
+        if applicable < 1.0 or passes.empty:
+            state = "na"
+        else:
+            state = "pass" if float(passes.min()) >= 1.0 else "fail"
+        states.setdefault(str(data_id), {})[str(var_id)] = state
+    return states
+
+
+def _check_requirements(gates: pd.DataFrame) -> dict[str, str]:
+    """``check_id -> requirement`` for every known gate, run or not.
+
+    The gate classes are the authority on the *full* Required set (a gate
+    that never ran writes no row, and its absence is what makes an entry
+    ticket incomplete); tags found in the databases win where they differ.
+    """
+    requirements: dict[str, str] = {}
+    try:
+        from climatebench2.diags.pass_fail import gate_requirements
+
+        requirements.update(gate_requirements())
+    except Exception:  # noqa: BLE001 - climateeval may be unavailable
+        pass
+    if not gates.empty:
+        for var_id, tag in zip(gates["var_id"], gates["requirement"], strict=True):
+            if isinstance(tag, str) and tag:
+                requirements[str(var_id)] = tag
+    return requirements
+
+
+def entry_ticket(
+    states: dict[str, str],
+    required_checks: list[str],
+) -> str:
+    """Entry-ticket verdict for one model (paper §7.1).
+
+    ``pass`` when every Required check either passed or was declared N/A;
+    ``fail`` when any applicable Required check failed (a definitive
+    outcome, so it outranks missing results); ``incomplete`` when a Required
+    check produced no row at all.
+    """
+    outcomes = [states.get(check, "missing") for check in required_checks]
+    if "fail" in outcomes:
+        return "fail"
+    if "missing" in outcomes or not outcomes:
+        return "incomplete"
+    return "pass"
+
+
+def _gate_group_table(
+    states: dict[str, dict[str, str]],
+    checks: list[str],
+    models: list[str],
+    *,
+    tickets: dict[str, str] | None = None,
+) -> str:
+    """One gate table; with ``tickets`` an Entry-ticket column is prepended."""
+    header = "".join(f"<th>{_esc(c)}</th>" for c in checks)
+    ticket_header = "<th>Entry ticket</th>" if tickets is not None else ""
+    rows = []
+    for model in models:
+        cells = []
+        if tickets is not None:
+            cls, glyph = _TICKET_CELLS[tickets[model]]
+            cells.append(f"<td class='gate-all {cls}'>{glyph}</td>")
+        for check in checks:
+            cls, glyph = _STATE_CELLS[states.get(model, {}).get(check, "missing")]
+            cells.append(f"<td class='{cls}'>{glyph}</td>")
+        rows.append(
+            f"<tr><td><strong>{_esc(model)}</strong></td>{''.join(cells)}</tr>",
+        )
+    return (
+        f"<table><thead><tr><th>Model</th>{ticket_header}{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _gate_matrix_html(gates: pd.DataFrame) -> str:
+    """The Tier I scorecard: Required (+ entry ticket), Extended, extra."""
     if gates.empty:
         return "<p class='na'>No Tier I gate results in the given databases.</p>"
-    pivot = gates.pivot_table(
-        index="data_id",
-        columns="var_id",
-        values="passes",
-        aggfunc="min",  # a check run twice must pass everywhere
-    )
-    pivot["ALL"] = (pivot.min(axis=1) >= 1.0).astype(float)
-    pivot = pivot.sort_values("ALL", ascending=False)
 
-    header = "".join(f"<th>{_esc(c)}</th>" for c in pivot.columns)
-    rows = []
-    for data_id, row in pivot.iterrows():
-        cells = []
-        for col, val in row.items():
-            cls = "gate-all " if col == "ALL" else ""
-            if pd.isna(val):
-                cells.append(f"<td class='{cls}na'>—</td>")
-            elif val >= 1.0:
-                cells.append(f"<td class='{cls}pass'>✓</td>")
-            else:
-                cells.append(f"<td class='{cls}fail'>✗</td>")
-        rows.append(f"<tr><td><strong>{_esc(data_id)}</strong></td>{''.join(cells)}</tr>")
+    requirements = _check_requirements(gates)
+    states = _gate_states(gates)
+    seen = set(gates["var_id"].astype(str))
+
+    def group(tag: str, *, include_unrun: bool) -> list[str]:
+        ids = {c for c, t in requirements.items() if t == tag}
+        return sorted(ids if include_unrun else ids & seen)
+
+    required = group("required", include_unrun=True)
+    extended = group("extended", include_unrun=False)
+    extra = group("extra", include_unrun=False)
+
+    tickets = {m: entry_ticket(s, required) for m, s in states.items()}
+    order = {"pass": 0, "incomplete": 1, "fail": 2}
+    models = sorted(states, key=lambda m: (order[tickets[m]], m))
+
+    html = [
+        "<p>Required checks are the paper's entry ticket: a model is scored "
+        "only if every applicable Required check passes. "
+        "<strong>✓</strong> passed · <strong>✗</strong> failed · "
+        "<strong>n/a</strong> declared not applicable by the submission "
+        "(<code>score --not-applicable NAME</code>) · <strong>—</strong> not "
+        "run. The entry ticket is <strong>⚠</strong> while a Required check "
+        "has no result at all.</p>",
+        _gate_group_table(states, required, models, tickets=tickets),
+    ]
+    if extended:
+        html += [
+            "<h3>Extended checks</h3>",
+            "<p>Reported alongside the entry ticket and contributing "
+            "additional credit; these do <em>not</em> gate entry (their "
+            "inputs are outside the CMIP6 protocol or need daily fields).</p>",
+            _gate_group_table(states, extended, models),
+        ]
+    if extra:
+        html += [
+            "<h3>Extra checks (not part of the protocol)</h3>",
+            "<p>Code-only sanity checks kept from the legacy pipeline; "
+            "excluded from the entry ticket pending paper reconciliation.</p>",
+            _gate_group_table(states, extra, models),
+        ]
+    return "".join(html)
+
+
+def _event_flags_html(gates: pd.DataFrame) -> str:
+    """Tier II aggregated event diagnostics (Pinatubo, hemispheric asymmetry)."""
+    if gates.empty:
+        return ""
+    requirements = _check_requirements(gates)
+    states = _gate_states(gates)
+    seen = set(gates["var_id"].astype(str))
+    checks = sorted(
+        {c for c, t in requirements.items() if t == "diagnostic"} & seen,
+    )
+    if not checks:
+        return ""
+    models = sorted(m for m, s in states.items() if s.keys() & set(checks))
     return (
-        f"<table><thead><tr><th>Model</th>{header}</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        "<h2>Tier II — aggregated event diagnostics</h2>"
+        "<p>Sign flags of the Pinatubo response and the aerosol-era "
+        "hemispheric asymmetry (<code>ClimateBench2_TierII_events</code>). "
+        "These are Tier II diagnostics, not Tier I gates: they are reported, "
+        "never part of the entry ticket.</p>"
+        + _gate_group_table(states, checks, models)
     )
 
 
@@ -314,6 +503,7 @@ Spec: <code>docs/metrics_reference.md</code>.</p>
 {_gate_matrix_html(scores.gates)}
 <h2>Tier II — probabilistic scores vs baselines</h2>
 {_crps_table_html(scores.crps)}
+{_event_flags_html(scores.gates)}
 {_consistency_table_html(scores.consistency)}
 {_tier3_html(scores.tier3)}
 <footer>Generated by <code>climatebench2 leaderboard</code> from: {sources}

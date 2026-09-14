@@ -26,6 +26,8 @@ from climatebench2.diags.pass_fail import (
     GateCheck,
     GateMixin,
     SupersetExperimentMixin,
+    gate_requirement,
+    gate_requirements,
 )
 from climatebench2.diags.tier1_physics import (
     AerosolForcingGate,
@@ -93,4 +95,6 @@ __all__ = [
     "ScoredMonthlyMeanTimeSeries",
     "SupersetExperimentMixin",
     "TrendConsistency",
+    "gate_requirement",
+    "gate_requirements",
 ]

@@ -27,7 +27,7 @@ from climateeval._config import setup_esmvaltool_config_and_logging
 
 from climatebench2 import physics
 from climatebench2._thresholds import get_threshold
-from climatebench2.diags.pass_fail import GateCheck
+from climatebench2.diags.pass_fail import GateCheck, gate_requirement
 from climatebench2.diags.tier1_physics import CB2ComplexDiagnostic, _mon
 
 if TYPE_CHECKING:
@@ -54,11 +54,13 @@ class PinatuboResponseGate(CB2ComplexDiagnostic):
             check_id="pinatubo_dimming",
             column="pinatubo_rsds_anom",
             upper=get_threshold("tier2.pinatubo.rsds_anomaly_max"),
+            requirement=gate_requirement("tier2.pinatubo"),
         ),
         GateCheck(
             check_id="pinatubo_cooling",
             column="pinatubo_tas_anom",
             upper=get_threshold("tier2.pinatubo.tas_anomaly_max"),
+            requirement=gate_requirement("tier2.pinatubo"),
         ),
     )
 
@@ -110,11 +112,13 @@ class HemisphericAsymmetryGate(CB2ComplexDiagnostic):
             check_id="hemispheric_trend_asymmetry",
             column="nh_minus_sh_trend",
             upper=get_threshold("tier2.hemispheric_asymmetry.nh_minus_sh_trend_max"),
+            requirement=gate_requirement("tier2.hemispheric_asymmetry"),
         ),
         GateCheck(
             check_id="itcz_southward_shift",
             column="itcz_shift_deg_per_decade",
             upper=get_threshold("tier2.hemispheric_asymmetry.itcz_shift_max"),
+            requirement=gate_requirement("tier2.hemispheric_asymmetry"),
         ),
     )
 

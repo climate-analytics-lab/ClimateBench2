@@ -19,11 +19,19 @@ protocol constants from `thresholds.yml`, so their suite entries keep
 
 | Suite | Data shape | Contents |
 |---|---|---|
-| `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | 17 physical-consistency gates: ECS, energy balance, closures, clear-sky β, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, Bjerknes, C–C, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ, + Pinatubo & hemispheric asymmetry |
+| `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | 16 physical-consistency gates: ECS, energy balance, closures, clear-sky β, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ + the Bjerknes and C–C extras |
 | `ClimateBench2_TierI_variability` | cubes (monthly `tos`) | ENSO amplitude + spectral-shape gates |
 | `ClimateBench2_TierII` | cubes (monthly) | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4 with CRPS-ESS scoring, trend consistency, and the Climatology + CMIP6-MME baseline rows |
 | `ClimateBench2_TierII_daily` | cubes (daily/hourly) | TXx block maxima (daily `tasmax`), pr intensity PDF, diurnal cycle |
+| `ClimateBench2_TierII_events` | experiment dict (`historical`) | Pinatubo response and aerosol-era hemispheric asymmetry — Tier II aggregated diagnostics, reported but never part of the Tier I entry ticket |
 | `ClimateBench2_TierIII` | experiment dict (`picontrol` + `midholocene`/`lgm`/`lig127k`) | Mid-Holocene monsoon gate + proxy-site consistency per period |
 
 Every threshold referenced by a diagnostic comes from
-[`../thresholds.yml`](../thresholds.yml) — never hard-coded.
+[`../thresholds.yml`](../thresholds.yml) — never hard-coded, and that includes each
+gate's `requirement:` tag (`required` / `extended` / `extra` / `diagnostic`), which
+decides whether the check is part of the leaderboard's entry ticket, is reported for
+additional credit, or is a non-protocol sanity check. A submission may declare an
+individual gate inapplicable with `climatebench2 score --not-applicable NAME` (NAME is
+the suite entry name, e.g. `geostrophic_balance`); the gate then computes nothing and
+its rows are marked `applicable = 0` — neither a pass nor a fail — which the scorecard
+distinguishes from a gate that never ran.

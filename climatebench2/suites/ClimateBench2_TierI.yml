@@ -10,8 +10,15 @@
 # the CLI when the key was never provided).
 #
 # Cube-based Tier I checks (ENSO amplitude/spectrum) live in
-# ClimateBench2_TierI_variability. Still missing from the protocol:
+# ClimateBench2_TierI_variability; the Tier II aggregated event diagnostics
+# (Pinatubo, hemispheric asymmetry) moved to ClimateBench2_TierII_events —
+# they are not entry-ticket gates. Still missing from the protocol:
 # precip-buoyancy (I.3c, needs 3-D ta/hus/zg monthly anomaly machinery).
+#
+# Every gate here carries a Required / Extended / extra tag from
+# thresholds.yml (`requirement:`); only the Required ones gate entry, and a
+# submission may declare one inapplicable with
+# `climatebench2 score --not-applicable NAME` (paper §7.1).
 
 - name: ecs_gate                      # I.6c — piControl + abrupt-4xCO2
   diagnostic: climatebench2.diags.ECSGate
@@ -75,12 +82,4 @@
 
 - name: gfmip_patch                   # I.4a — amip + patch_ep + patch_wp
   diagnostic: climatebench2.diags.GFMIPPatchGate
-  additional_diagnostic_kwargs: {}
-
-- name: pinatubo                      # II.1 — historical
-  diagnostic: climatebench2.diags.PinatuboResponseGate
-  additional_diagnostic_kwargs: {}
-
-- name: hemispheric_asymmetry         # II.1 — historical
-  diagnostic: climatebench2.diags.HemisphericAsymmetryGate
   additional_diagnostic_kwargs: {}

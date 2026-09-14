@@ -1,0 +1,22 @@
+# ClimateBench v2 — Tier II: aggregated event diagnostics (historical).
+# Spec: docs/metrics_reference.md §II.1 ("Pinatubo response", "Hemispheric
+# asymmetry"); bounds: climatebench2/thresholds.yml.
+#
+# These are Tier II *aggregated diagnostics* whose current implementation is a
+# pair of sign flags emitted through the Tier I gate machinery — they are NOT
+# part of the Tier I entry ticket, which is why they live here rather than in
+# ClimateBench2_TierI (their thresholds.yml blocks carry
+# `requirement: diagnostic`, and the leaderboard lists them under Tier II).
+#
+# Data shape: an experiment dict with the `historical` key — the CLI supplies
+# the model's own output in FULL (no --timerange cut), because the events sit
+# in 1950–1993, outside the Tier II test window. Override with
+# `climatebench2 score MODEL --experiment historical=DIR`.
+
+- name: pinatubo                      # II.1 — historical (1991-07..1993-12)
+  diagnostic: climatebench2.diags.PinatuboResponseGate
+  additional_diagnostic_kwargs: {}
+
+- name: hemispheric_asymmetry         # II.1 — historical (aerosol era)
+  diagnostic: climatebench2.diags.HemisphericAsymmetryGate
+  additional_diagnostic_kwargs: {}

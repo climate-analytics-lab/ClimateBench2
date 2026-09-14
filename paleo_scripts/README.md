@@ -11,6 +11,8 @@ cd paleo_scripts
 
 # Step 1 — Download proxy/reanalysis observations
 python download_paleo_observations.py
+# `all` includes two large files: osman2021_proxies (262 MB) and sisal_v3 (112 MB).
+# hoffman2017 and scussolini2019 need a browser (science.org blocks scripts).
 
 # Step 2 — Download CMIP6 model data (ESGF-generated wget scripts)
 # Note: best to download and process model data one period/var at a time as the raw data is large.
@@ -45,9 +47,38 @@ python download_paleo_observations.py --dry-run
 python download_paleo_observations.py --list                 # show all dataset keys
 ```
 
-Downloads are skipped if the file already exists and its size is non-zero. 0-byte failed downloads are re-fetched.
+Downloads are skipped if the file already exists and its size is non-zero. 0-byte failed downloads are re-fetched. `wget` is used when present, `curl` otherwise.
 
-**Dataset keys:** `ipcc_ar6`, `lgmda`, `bartlein2011`, `temp12k`, `osman2021`, `sisal_v3`, `lig127k`, `scussolini2019`, `tierney_hansen`
+**Dataset keys** (`--list` prints this table with the DOIs):
+
+| Key | Kind | DOI | Dataset |
+|---|---|---|---|
+| `ipcc_ar6` | recon | 10.1017/9781009157896.009 | IPCC AR6 Fig 7.19 global mean anomalies |
+| `lgmda` | **DA** | 10.1038/s41586-020-2617-x | lgmDA v2.1 LGM assimilation *fields* (Tierney et al. 2020) |
+| `tierney2020_proxies` | proxy | 10.1038/s41586-020-2617-x | Tierney et al. 2020 site-level LGM/late-Holocene SST compilation (the raw data behind lgmDA) |
+| `bartlein2011` | proxy | 10.1007/s00382-010-0904-1 | Pollen-based temp/precip, LGM + mid-Holocene |
+| `cleator2020` | **DA** | 10.17864/1947.244 | Cleator et al. 2020 LGM 3D-VAR multi-variable benchmark |
+| `temp12k` | recon | 10.1038/s41597-020-0530-7 | Temp12k Holocene reconstruction (Kaufman et al. 2020) |
+| `osman2021` | **DA** | 10.1038/s41586-021-03984-4 | LGMR reanalysis *fields* (SAT/SST/GMST/d18Op) |
+| `osman2021_proxies` | proxy | 10.25921/njxd-hg08 | `proxyDatabase.nc` — the site-level marine geochemistry assimilated into LGMR (262 MB) |
+| `harrison2015` | proxy | 10.17864/1947.176 | Harrison & Prentice mid-Holocene North-Africa moisture benchmark |
+| `sisal_v3` | proxy | 10.5194/essd-16-1933-2024 | SISALv3 speleothem δ18O database (Kaushal et al. 2024; 112 MB) |
+| `lig127k` | proxy | 10.5194/cp-17-63-2021 | Otto-Bliesner et al. 2021 LIG proxy anomaly tables |
+| `hoffman2017` | proxy | 10.1126/science.aai8464 | Hoffman et al. 2017 LIG SST compilation — **manual download** |
+| `osman2026` | proxy | — | Osman et al. 2026 updated LIG SST compilation — **not publicly archived** (2026-09) |
+| `scussolini2019` | proxy | 10.1126/sciadv.aax7047 | Scussolini et al. 2019 LIG precipitation proxy — **manual download** |
+| `tierney_hansen` | recon | 10.1038/s41586-020-2617-x | Hansen-method deep-time reconstruction |
+
+`kind` becomes the `dataset_type` global attribute of the processed NetCDFs:
+
+- **proxy** → `proxy_compilation` — raw site-level proxy data. Paper Appendix D (2026-09) scores Tier III against these.
+- **DA** → `data_assimilation` — assimilated field whose spatial covariances come from the assimilating model. **Excluded from Tier III scoring**; kept for reference and for the AR6-style figures.
+- **recon** → `reconstruction` — statistical reconstruction or assessed product.
+
+Two datasets need a browser (science.org serves their supplements behind a Cloudflare
+challenge): `hoffman2017` and `scussolini2019`. Each prints the URL and the destination
+path; drop the file there and re-run. `osman2026` has no public archive as of 2026-09 —
+`hoffman2017` is the LIG SST target until it appears.
 
 Raw files: `paleo_data_cache/raw/observations/`
 
@@ -80,31 +111,67 @@ python process_paleo_observations.py --source lgmda bartlein2011
 python process_paleo_observations.py --source all --log-level DEBUG
 ```
 
-**Source keys:** `ipcc_ar6`, `tierney2020`, `lgmda`, `lgmr_sat`, `lgmr_sst`, `bartlein2011`, `temp12k`, `ottobliesner2021`, `scussolini2019`
+**Source keys:** `ipcc_ar6`, `tierney2020`, `lgmda`, `lgmr_sat`, `lgmr_sst`, `tierney2020_proxies`, `osman2021_proxies`, `bartlein2011`, `cleator2020`, `temp12k`, `harrison2015`, `ottobliesner2021`, `hoffman2017`, `scussolini2019`, `sisal_v3`
 
-**Output layout:**
-```
-paleo_data_cache/processed/observations/
-  lgm/
-    lgmDA_v2.1_tas.nc          vars: pi_tas, tas (anomaly), tas_std
-    LGMR_SAT_tas.nc            vars: tas, tas_std
-    LGMR_SST_tos.nc            vars: tos, tos_std
-    Bartlein2011_tas.nc        vars: tas, tas_std, tas_sig_val
-    Bartlein2011_pr.nc         vars: pr, pr_std, pr_sig_val
-  midHolocene/
-    Bartlein2011_tas.nc
-    Bartlein2011_pr.nc
-    Temp12k_tas.nc             vars: tas_anom, latband_weights
-  lig127k/
-    OttoBliesner2021_tas.nc    vars: tas, tas_std  (site dimension)
-    Scussolini2019_pr.nc       vars: pr, pr_reliability  (site dimension)
-  multi_period/
-    ipcc_ar6_fig7_19.csv
-    tierney2020_global_tas.csv
-    lgmDA_v2.1_holocene_tas.nc vars: pi_tas, pi_tas_std  (PI reference)
-```
+**Output layout** (`dataset_type` in the last column; `proxy` = scoreable raw compilation, `DA` = excluded from scoring, `recon` = statistical reconstruction):
 
-Every NetCDF carries global attributes: `source`, `doi`, `source_url`, `variable`, `units`, `period`, `anomaly_ref`, `processing_date`.
+| File | Dim | Variables | Type |
+|---|---|---|---|
+| `lgm/Tierney2020_tos.nc` | site (512) | `tos`, `tos_std`, `proxy_type` | proxy |
+| `lgm/Tierney2020_absolute_tos.nc` | site (954) | `tos`, `tos_std`, `tos_ref`, `tos_ref_std`, `proxy_type`, `core_name` | proxy |
+| `lgm/Tierney2020_5x5_tos.nc` | lat×lon (36×72) | `tos`, `tos_std` | proxy |
+| `lgm/Osman2021Proxies_proxy.nc` | site (424) | `proxy`, `proxy_std`, `proxy_abs`, `proxy_ref`, `n_samples`, `proxy_type`, `proxy_family`, `units_per_site`, `site_name` | proxy |
+| `lgm/Bartlein2011_tas.nc` | lat×lon (90×180) | `tas`, `tas_std`, `tas_sig_val` | proxy |
+| `lgm/Bartlein2011_pr.nc` | lat×lon | `pr`, `pr_std`, `pr_sig_val` | proxy |
+| `lgm/Cleator2020_tas.nc` | lat×lon (66×180) | `tas`, `tas_std`, `mtco`, `mtwa`, `gdd5` (+`_std`) | **DA** |
+| `lgm/Cleator2020_pr.nc` | lat×lon | `pr`, `pr_std`, `mi`, `mi_std` | **DA** |
+| `lgm/lgmDA_v2.1_tas.nc` | month×lat×lon | `pi_tas`, `tas` (anomaly), `tas_std` | **DA** |
+| `lgm/LGMR_SAT_tas.nc` | lat×lon | `tas`, `tas_std` | **DA** |
+| `lgm/LGMR_SST_tos.nc` | y×x (curvilinear) | `tos`, `tos_std` | **DA** |
+| `midHolocene/Osman2021Proxies_proxy.nc` | site (515) | as the LGM file, 5–7 ka slice | proxy |
+| `midHolocene/Bartlein2011_tas.nc` | lat×lon | `tas`, `tas_std`, `tas_sig_val` | proxy |
+| `midHolocene/Bartlein2011_pr.nc` | lat×lon | `pr`, `pr_std`, `pr_sig_val` (water balance) | proxy |
+| `midHolocene/Harrison2015_pr.nc` | lat (29) | `pr`, `pr_std`, `pr_min`, `pr_max` | proxy |
+| `midHolocene/SISALv3_d18O.nc` | site (245) | `d18O`, `d18O_std`, `d18O_abs`, `d18O_ref`, `n_samples`, `mean_age`, `entity_id`, `site_name` | proxy |
+| `midHolocene/Temp12k_tas.nc` | method×latband×age×ens | `tas_anom`, `latband_weights` | recon |
+| `lig127k/OttoBliesner2021_tas.nc` | site (92) | `tas`, `tas_std` | proxy |
+| `lig127k/Scussolini2019_pr.nc` | site | `pr`, `pr_reliability` | proxy |
+| `lig127k/Hoffman2017_tos.nc` | site | `tos`, `tos_std` | proxy |
+| `lig127k/SISALv3_d18O.nc` | site (79) | as the mid-Holocene file, 125–129 ka slice | proxy |
+| `multi_period/ipcc_ar6_fig7_19.csv` | — | global mean anomalies | recon |
+| `multi_period/tierney2020_global_tas.csv` | — | deep-time global mean | recon |
+| `multi_period/lgmDA_v2.1_holocene_tas.nc` | month×lat×lon | `pi_tas`, `pi_tas_std` (PI reference) | **DA** |
+
+Every NetCDF carries global attributes: `source`, `doi`, `source_url`, `variable`, `units`, `period`, `anomaly_ref`, `dataset_type`, `processing_date`.
+
+**Anomaly references.** Compilations that publish absolute values also get their
+baseline written out, so the choice is auditable and reversible:
+
+| Dataset | `anomaly_ref` |
+|---|---|
+| Tierney 2020 (site, 5×5) | late Holocene (4–0 ka) SST of the same core — the paper's own pairing |
+| Tierney 2020 (absolute) | none; `tos_ref` holds the same core's late-Holocene SST |
+| Osman 2021 proxies | late Holocene (0–2 ka) mean **of the same record**; NaN where a record has no such samples |
+| SISALv3 | late Holocene (0–2 ka) mean **of the same entity**; NaN where absent |
+| Bartlein 2011, Cleator 2020 | modern (present-day climatology) |
+| Otto-Bliesner 2021 | pre-industrial / modern, as reported per site |
+| Scussolini 2019, Harrison 2015 | present |
+| Hoffman 2017 | 1870–1889, as published |
+| lgmDA | Holocene (lgmDA v2.0) |
+| LGMR | modern (reanalysis-internal) |
+
+**Time-slice windows** (calendar years BP): LGM 19 000–23 000, mid-Holocene 5000–7000
+(paper App. D "5–7 ka"), LIG 125 000–129 000, late-Holocene baseline 0–2000.
+
+**Two caveats worth knowing before scoring:**
+
+- `Osman2021Proxies_proxy.nc` holds **uncalibrated** geochemistry (UK′37, TEX86, Mg/Ca,
+  planktic δ18O) in native proxy units — the compilation ships measurements, not SSTs.
+  Converting to `tos` needs the Bayesian forward models (BAYSPLINE / BAYMAG / BAYFOX /
+  BAYSPAR), which this pipeline deliberately does not choose. Use
+  `lgm/Tierney2020_tos.nc` for calibrated LGM SSTs.
+- `SISALv3_d18O.nc` can only be scored against **isotope-enabled** model output (δ18O of
+  precipitation or drip water); no calcite–precipitation fractionation is applied here.
 
 ---
 
@@ -171,6 +238,11 @@ python paleo_benchmark.py --model all --period all --save-to-cloud
 | midHolocene | `Temp12k` | tas | Kaufman et al. 2020 (stub — not yet implemented) |
 | lig127k | `OttoBliesner2021` | tas | Otto-Bliesner et al. 2021 proxy anomalies |
 | lig127k | `Scussolini2019` | pr | Scussolini et al. 2019 semi-quantitative precip |
+
+Note: this legacy benchmark still reads only the sources in the table above — the raw
+compilations added for paper Appendix D (`Tierney2020_*`, `Osman2021Proxies_*`,
+`Cleator2020_*`, `Harrison2015_pr`, `SISALv3_d18O`, `Hoffman2017_tos`) are written for
+the Tier III protocol diagnostics and are not wired into `paleo_benchmark.py`.
 
 **Results:** `../results/paleo/{period}_paleo_benchmark_results.csv`  
 Columns: `model`, `period`, `dataset`, `variable`, `n_sites`, `rmse`, `mae`, `mean_crps`, `crps_skill`

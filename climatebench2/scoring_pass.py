@@ -44,6 +44,16 @@ column and a ``reference`` data source, and every variable in it:
    name equals the scored model's (leave-one-out, paper §5.6), and write the
    skill ``S = 1 - E_model / E_ref`` — bounded above, unbounded below.
 
+**Aggregated scalars.** For a ``raw_output`` with **no time axis** — one
+number per data source and ``var_id``, the shape a CB2 complex diagnostic
+writes (``_scalar_outputs``) — plus ``reference`` rows carrying the observed
+value of the same scalar, the same machinery runs with a single-point scoring
+axis: fair CRPS of the members' values against the observation, ``E_ref`` and
+the skill as elsewhere, and the regime-(c) consistency test with σ_int looked
+up per scalar from ``tier2.scalar_consistency``. This is how the realized
+warming level, the two GMST trends, the Pinatubo tas anomaly and the
+hemispheric-asymmetry trend of §II.1 are scored.
+
 **Regime (b) — spatial fields.** For a ``raw_output`` of EOF coefficients
 (:class:`climatebench2.diags.ReferenceEOFProjection`: one row per source,
 variable and mode on the reference's fixed pre-2015 basis, each coefficient
@@ -56,6 +66,11 @@ the observed OLS trend against the distribution of its members' trends, with
 σ_total² = var(members) + σ_int² + σ_obs² — σ_int from the piControl chunks
 of :class:`climatebench2.diags.InternalVariability` (Tier I database, passed
 alongside), σ_obs from the same observational-uncertainty terms as (a).
+
+Every row also carries a ``window`` label — ``held-out`` or ``in-sample`` —
+resolved from ``tier2.window_labels`` by (diagnostic, ``var_id``), which is
+the paper's §5.6 scorecard rule: the leaderboard states, per entry, whether
+the observations it was scored against predate the reserved test period.
 
 Rows are appended to the diagnostic's own ``metrics`` table (never a new
 schema): missing columns are added with ``ALTER TABLE ADD COLUMN``, and every
@@ -117,6 +132,23 @@ _META_COLUMNS = {"data_id", "data_type", "time"}
 #: Columns that identify an EOF-coefficient raw_output table (regime b).
 _EOF_COLUMNS = {"mode", "coefficient", "var_id"}
 
+#: Suffix of the companion column an aggregated-scalar diagnostic may emit
+#: next to a scalar to declare that scalar's own observational sigma (e.g.
+#: ``gmst_warming_level_sigma_obs``, the GSAT blending term). It is combined
+#: in quadrature with the ``tier2.obs_sigma`` floor and is never itself
+#: scored.
+SCALAR_SIGMA_OBS_SUFFIX = "_sigma_obs"
+
+#: Suffix marking a regime-(c) row of an aggregated scalar (the time-series
+#: trends use :data:`TREND_CONSISTENCY_SUFFIX`).
+SCALAR_CONSISTENCY_SUFFIX = "_consistency"
+
+#: The two labels of the paper's scorecard rule (§5.6): whether the
+#: observations a row is scored against were available before the reserved
+#: test period (``in-sample``) or not (``held-out``).
+WINDOW_HELD_OUT = "held-out"
+WINDOW_IN_SAMPLE = "in-sample"
+
 #: Minimum overlapping time steps for a score to be meaningful.
 _MIN_OVERLAP = 3
 
@@ -142,6 +174,8 @@ _SCORE_COLUMNS: dict[str, str] = {
     "var_id": "VARCHAR",
     "scorer": "VARCHAR",
     "reason": "VARCHAR",
+    # Held-out / in-sample (paper §5.6), from `tier2.window_labels`.
+    "window": "VARCHAR",
     "crps": "DOUBLE",
     "crps_se": "DOUBLE",
     "crps_ci_lo": "DOUBLE",
@@ -315,6 +349,46 @@ def is_monthly(times: pd.Series) -> bool:
     if stamps.size < 2:  # noqa: PLR2004 - a single step tells us nothing
         return False
     return bool(stamps.diff().dropna().dt.days.median() < _MONTHLY_MAX_DAYS)
+
+
+# ---------------------------------------------------------------------------
+# Held-out vs in-sample labelling (paper §5.6)
+# ---------------------------------------------------------------------------
+
+
+def window_label(diagnostic: str, var_id: str) -> str:
+    """``held-out`` / ``in-sample`` for one scored row.
+
+    The protocol's scorecard states, per entry, whether the observations it
+    is scored against were available before the reserved post-2015 test
+    period. The mapping is protocol metadata, so it lives in
+    ``thresholds.yml`` (``tier2.window_labels``) rather than in a diagnostic:
+    a ``var_ids`` entry wins over a ``diagnostics`` entry (keyed by the suite
+    entry name, which is the DuckDB schema the rows land in), and anything
+    unlisted takes ``default``.
+
+    A consistency row (``<var>_trend_consistency`` / ``<var>_consistency``)
+    inherits the label of the variable it tests.
+    """
+    table = get_threshold("tier2.window_labels")
+    by_var = table.get("var_ids") or {}
+    candidates = [str(var_id)]
+    for suffix in (TREND_CONSISTENCY_SUFFIX, SCALAR_CONSISTENCY_SUFFIX):
+        if str(var_id).endswith(suffix):
+            candidates.append(str(var_id)[: -len(suffix)])
+    for candidate in candidates:
+        if candidate in by_var:
+            return str(by_var[candidate])
+    by_diagnostic = table.get("diagnostics") or {}
+    if diagnostic in by_diagnostic:
+        return str(by_diagnostic[diagnostic])
+    return str(table["default"])
+
+
+def _apply_window_labels(rows: list[dict[str, Any]], diagnostic: str) -> None:
+    """Stamp the held-out / in-sample label on every row, in place."""
+    for row in rows:
+        row["window"] = window_label(diagnostic, str(row.get("var_id", "")))
 
 
 # ---------------------------------------------------------------------------
@@ -721,6 +795,27 @@ def _trend_consistency_row(
     return row
 
 
+def reference_for_variable(
+    references: pd.DataFrame,
+    column: str,
+) -> pd.DataFrame | None:
+    """The reference source that actually carries ``column``.
+
+    One diagnostic's ``raw_output`` holds **several** references: the Tier II
+    ``annual_mean_timeseries`` entry scores ``tas`` against HadCRUT5, ``pr``
+    against GPCP and the TOA fluxes against CERES-EBAF, and ``sea_ice_minimum``
+    scores the NH series against OSI-450-NH and the SH one against OSI-450-SH.
+    Each reference's rows carry only its own variable (the others are NULL
+    after the union), so the reference must be chosen **per variable** —
+    taking the first reference source in the table, as earlier revisions did,
+    silently dropped every variable but one.
+    """
+    for _data_id, frame in references.groupby("data_id", sort=True):
+        if frame[["time", column]].dropna().shape[0] >= _MIN_OVERLAP:
+            return frame
+    return None
+
+
 def score_raw_output(  # noqa: C901, PLR0912, PLR0915
     raw_df: pd.DataFrame,
     data_sources: pd.DataFrame | None,
@@ -728,6 +823,7 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
     settings: dict[str, Any] | None = None,
     baseline: dict[tuple[str, str], pd.DataFrame] | None = None,
     sigma_internal: SigmaInternal | None = None,
+    diagnostic: str = "",
 ) -> list[dict[str, Any]]:
     """Score one diagnostic's ``raw_output`` table; returns metrics rows.
 
@@ -742,7 +838,6 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
     references = raw_df[raw_df["data_type"] == "reference"]
     if references.empty or not var_columns:
         return []
-    reference = references[references["data_id"] == references["data_id"].iloc[0]]
     groups = group_members(raw_df, names)
     ids = group_ids(raw_df, names)
     observational = {
@@ -751,8 +846,8 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
 
     rows: list[dict[str, Any]] = []
     for column in var_columns:
-        ref_series = reference[["time", column]].dropna()
-        if ref_series.shape[0] < _MIN_OVERLAP:
+        reference = reference_for_variable(references, column)
+        if reference is None:
             continue
         floor = obs_sigma_floor(column)
         sigma = observational_sigma(
@@ -823,6 +918,244 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
         _apply_reference_skill(scored)
         rows.extend(scored.values())
         rows.extend(consistency)
+    _apply_window_labels(rows, diagnostic)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Aggregated scalars: one number per data source (no time axis)
+# ---------------------------------------------------------------------------
+
+
+def is_scalar_output(raw_df: pd.DataFrame) -> bool:
+    """Whether a ``raw_output`` holds aggregated scalars with a reference.
+
+    A CB2 complex diagnostic writes one row per (data source, scalar) with
+    every other scalar column NULL and **no** ``time`` column
+    (``CB2ComplexDiagnostic._scalar_outputs``). Such a table is scorable as
+    soon as it also carries ``reference`` rows — the observed value of the
+    same scalar, emitted by the diagnostic through a ClimateEval DataSource.
+    """
+    if not {"data_id", "data_type"} <= set(raw_df.columns):
+        return False
+    if "time" in raw_df.columns or is_eof_output(raw_df):
+        return False
+    return bool((raw_df["data_type"] == "reference").any())
+
+
+def _first_finite_value(frame: pd.DataFrame, column: str) -> float:
+    """First finite value of ``column``, or NaN.
+
+    The scalar layout is one row per (source, scalar) with NULLs elsewhere,
+    and a per-member run of a complex suite re-emits the *same* reference
+    rows into the same database, so duplicates are expected and collapse
+    here rather than being scored twice.
+    """
+    if column not in frame.columns:
+        return float("nan")
+    return _first_finite(frame[column])
+
+
+def group_scalar_members(
+    raw_df: pd.DataFrame,
+    names: dict[str, str],
+    column: str,
+) -> tuple[dict[tuple[str, str], list[float]], dict[tuple[str, str], list[str]]]:
+    """``(data_type, model name) -> [one value per member]`` plus its ids."""
+    values: dict[tuple[str, str], list[float]] = {}
+    ids: dict[tuple[str, str], list[str]] = {}
+    for (data_id, data_type), frame in raw_df.groupby(
+        ["data_id", "data_type"],
+        sort=True,
+    ):
+        if str(data_type) == "reference":
+            continue
+        value = _first_finite_value(frame, column)
+        if not np.isfinite(value):
+            continue
+        key = (str(data_type), names.get(str(data_id), str(data_id)))
+        values.setdefault(key, []).append(float(value))
+        ids.setdefault(key, []).append(str(data_id))
+    return values, ids
+
+
+def scalar_sigma_obs(references: pd.DataFrame, column: str) -> float:
+    """σ_obs of one scalar: the protocol floor plus the emitted companion.
+
+    ``tier2.obs_sigma`` is a per-time-step floor for the *series* variables
+    and says nothing about an aggregated statistic, so a diagnostic that
+    knows its own observational error emits it as a
+    ``<scalar>_sigma_obs`` column on the reference row (for the GMST
+    scalars, the GSAT blending term of
+    ``tier2.gsat_blending_relative_uncertainty``). The two are combined in
+    quadrature; either may be absent, in which case σ_obs is just the other.
+    """
+    floor = obs_sigma_floor(column)
+    emitted = _first_finite_value(references, f"{column}{SCALAR_SIGMA_OBS_SUFFIX}")
+    if not np.isfinite(emitted):
+        emitted = 0.0
+    return float(np.sqrt(floor**2 + emitted**2))
+
+
+def _scalar_sigma_internal(
+    table: SigmaInternal | None,
+    var_id: str,
+) -> float:
+    """σ_int for an aggregated scalar from ``tier2.scalar_consistency``.
+
+    The registry names, per scalar, the ``(variable, statistic, window)``
+    triple whose piControl-chunk σ the consistency test should use; the
+    window is resolved to a length in years by
+    :func:`climatebench2.windows.window_lengths`, and the nearest reported
+    length wins (:func:`sigma_internal_for`). An unregistered scalar gets
+    0.0 — the test then rests on the ensemble spread and σ_obs alone.
+    """
+    from climatebench2 import windows
+
+    registry = get_threshold("tier2.scalar_consistency")
+    entry = registry.get(var_id)
+    if entry is None:
+        return 0.0
+    lengths = windows.window_lengths()
+    n_years = int(lengths.get(str(entry["window"]), 0))
+    return sigma_internal_for(
+        table,
+        str(entry["variable"]),
+        str(entry["statistic"]),
+        n_years,
+    )
+
+
+def _scalar_consistency_row(
+    *,
+    data_id: str,
+    data_type: str,
+    var_id: str,
+    values: np.ndarray,
+    obs: float,
+    sigma_obs: float,
+    sigma_internal: SigmaInternal | None,
+) -> dict[str, Any] | None:
+    """Regime (c) for an aggregated scalar (metrics_reference.md §II.1)."""
+    sigma_int = _scalar_sigma_internal(sigma_internal, var_id)
+    if values.size < _MIN_MEMBERS and sigma_int <= 0.0 and sigma_obs <= 0.0:
+        return None  # no spread at all: the test would divide by zero
+    result = scoring.ensemble_consistency(
+        values,
+        obs,
+        sigma_internal=sigma_int,
+        sigma_obs=sigma_obs,
+        p_threshold=float(get_threshold("tier2.consistency_p_value")),
+    )
+    row = _empty_row(data_id, data_type, f"{var_id}{SCALAR_CONSISTENCY_SUFFIX}", "")
+    row.update(
+        value=float(obs),
+        z=result.z,
+        p_value=result.p_value,
+        passes=float(result.passes),
+        ensemble_mean=result.ensemble_mean,
+        total_sigma=result.total_sigma,
+        sigma_internal=sigma_int,
+        sigma_obs=sigma_obs,
+        n_members=float(values.size),
+        n_time=1.0,
+    )
+    return row
+
+
+def score_scalar_output(  # noqa: C901
+    raw_df: pd.DataFrame,
+    data_sources: pd.DataFrame | None,
+    *,
+    sigma_internal: SigmaInternal | None = None,
+    diagnostic: str = "",
+) -> list[dict[str, Any]]:
+    """Score an aggregated-scalar ``raw_output`` (metrics_reference.md §II.1).
+
+    One scalar per data source and ``var_id``, so the scoring axis has a
+    single point: the fair CRPS is the score of that one number (with the
+    same observational draws as every other regime), its bootstrap interval
+    is undefined (``moving_block_bootstrap_ci`` returns NaN below two points)
+    and ``T_eff = 1``. ``E_ref`` and the skill are formed exactly as in
+    regimes (a)/(b), and each scalar additionally gets the regime-(c)
+    consistency row the protocol asks for — which for the realized warming
+    level is the primary statement (§II.1). There is no bootstrap block
+    length to choose, so this regime takes no ``tier2.bootstrap`` settings.
+    """
+    names = source_names(data_sources)
+    categories = source_categories(data_sources)
+    references = raw_df[raw_df["data_type"] == "reference"]
+    var_columns = [
+        c
+        for c in raw_df.columns
+        if c not in _META_COLUMNS and not c.endswith(SCALAR_SIGMA_OBS_SUFFIX)
+    ]
+    n_draws = int(get_threshold("tier2.obs_uncertainty.n_draws"))
+    seed = int(get_threshold("tier2.obs_uncertainty.seed"))
+
+    rows: list[dict[str, Any]] = []
+    for column in var_columns:
+        obs = _first_finite_value(references, column)
+        if not np.isfinite(obs):
+            continue  # a model-only scalar (no observational product)
+        sigma_obs = scalar_sigma_obs(references, column)
+        groups, ids = group_scalar_members(raw_df, names, column)
+
+        scored: dict[tuple[str, str], dict[str, Any]] = {}
+        consistency: list[dict[str, Any]] = []
+        for key, member_values in groups.items():
+            data_type, name = key
+            if is_observational(data_type, ids[key], categories):
+                scored[key] = _empty_row(
+                    name,
+                    data_type,
+                    column,
+                    "observational product (a term in sigma_obs, not scored)",
+                )
+                continue
+            values = np.asarray(member_values, dtype=float)
+            if values.size < _MIN_MEMBERS:
+                scored[key] = _empty_row(name, data_type, column, "single member")
+                scored[key]["n_members"] = float(values.size)
+                scored[key]["n_time"] = 1.0
+            else:
+                crps_k = scoring.crps_fair_with_obs_draws(
+                    values[:, None],
+                    np.array([obs], dtype=float),
+                    obs_sigma=sigma_obs,
+                    n_draws=n_draws,
+                    seed=seed,
+                )
+                summary = scoring.crps_independent_summary(crps_k, values.size)
+                row = _empty_row(name, data_type, column, "")
+                row.update(
+                    crps=summary.score,
+                    crps_se=summary.standard_error,
+                    t_eff=summary.t_eff,
+                    r1=summary.r1,
+                    n_members=float(summary.n_members),
+                    n_time=float(summary.n_time),
+                    sigma_obs=sigma_obs,
+                )
+                scored[key] = row
+            row = _scalar_consistency_row(
+                data_id=name,
+                data_type=data_type,
+                var_id=column,
+                values=values,
+                obs=float(obs),
+                sigma_obs=sigma_obs,
+                sigma_internal=sigma_internal,
+            )
+            if row is not None:
+                consistency.append(row)
+
+        if not scored:
+            continue
+        _apply_reference_skill(scored)
+        rows.extend(scored.values())
+        rows.extend(consistency)
+    _apply_window_labels(rows, diagnostic)
     return rows
 
 
@@ -847,6 +1180,7 @@ def score_eof_output(
     data_sources: pd.DataFrame | None,
     *,
     settings: dict[str, Any] | None = None,
+    diagnostic: str = "",
 ) -> list[dict[str, Any]]:
     """Score a regime-(b) coefficient table (metrics_reference.md Tier II (b)).
 
@@ -924,6 +1258,7 @@ def score_eof_output(
             continue
         _apply_reference_skill(scored)
         rows.extend(scored.values())
+    _apply_window_labels(rows, diagnostic)
     return rows
 
 
@@ -1103,7 +1438,19 @@ def score_database(
                 else None
             )
             if is_eof_output(raw_df):
-                rows = score_eof_output(raw_df, sources, settings=settings)
+                rows = score_eof_output(
+                    raw_df,
+                    sources,
+                    settings=settings,
+                    diagnostic=schema,
+                )
+            elif is_scalar_output(raw_df):
+                rows = score_scalar_output(
+                    raw_df,
+                    sources,
+                    sigma_internal=sigma_internal,
+                    diagnostic=schema,
+                )
             else:
                 rows = score_raw_output(
                     raw_df,
@@ -1111,6 +1458,7 @@ def score_database(
                     settings=settings,
                     baseline=baseline,
                     sigma_internal=sigma_internal,
+                    diagnostic=schema,
                 )
             if not rows:
                 continue

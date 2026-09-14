@@ -412,6 +412,92 @@ def test_score_database_ignores_non_timeseries_diagnostics(tmp_path) -> None:  #
     assert "no scorable" in report.summary()
 
 
+def test_each_variable_takes_its_own_reference() -> None:
+    """One diagnostic holds several references (HadCRUT5, GPCP, CERES...).
+
+    Their rows carry only their own variable, so picking "the first reference
+    data_id" scored one variable and silently dropped the rest.
+    """
+    rng = np.random.default_rng(40)
+    raw, sources = _tables(rng)
+    times = _times(list(TEST_YEARS))
+    # A second variable with a DIFFERENT reference product, as `pr` vs `tas`
+    # sit in the Tier II annual-mean entry.
+    extra = [
+        pd.DataFrame(
+            {
+                "data_id": "observation_GPCP",
+                "data_type": "reference",
+                "time": times,
+                "pr": np.full(len(times), 2.5),
+            },
+        ),
+    ]
+    for variant in ("r1i1p1f1", "r2i1p1f1", "r3i1p1f1"):
+        extra.append(
+            pd.DataFrame(
+                {
+                    "data_id": _source_id("model", "MyModel", "historical", variant),
+                    "data_type": "to_benchmark",
+                    "time": times,
+                    "pr": 2.5 + rng.normal(0.0, 0.1, len(times)),
+                },
+            ),
+        )
+    sources = pd.concat(
+        [
+            sources,
+            pd.DataFrame(
+                [{"id": "observation_GPCP", "name": "GPCP", "category": "observation"}],
+            ),
+        ],
+        ignore_index=True,
+    )
+    rows = pd.DataFrame(
+        score_raw_output(
+            pd.concat([raw, *extra], ignore_index=True),
+            sources,
+            settings=FAST,
+        ),
+    )
+    assert {"tas", "pr"} <= set(rows["var_id"])
+    pr_rows = rows[(rows["var_id"] == "pr") & (rows["data_id"] == "MyModel")]
+    assert np.isfinite(pr_rows["crps"]).any()
+
+
+def test_every_scored_row_carries_a_window_label() -> None:
+    raw, sources = _tables(np.random.default_rng(41))
+    rows = pd.DataFrame(
+        score_raw_output(
+            raw,
+            sources,
+            settings=FAST,
+            diagnostic="annual_mean_timeseries",
+        ),
+    )
+    assert set(rows["window"]) == {scoring_pass.WINDOW_HELD_OUT}
+
+    # An in-sample diagnostic (a historical-period climatology)
+    rows = pd.DataFrame(
+        score_raw_output(raw, sources, settings=FAST, diagnostic="annual_cycle"),
+    )
+    assert set(rows["window"]) == {scoring_pass.WINDOW_IN_SAMPLE}
+
+
+def test_window_label_resolution_order() -> None:
+    label = scoring_pass.window_label
+    # A var_id entry wins over the diagnostic's own label ...
+    assert label("realized_warming_level", "gmst_trend_1950") == "in-sample"
+    assert label("realized_warming_level", "gmst_warming_level") == "held-out"
+    # ... a consistency row inherits the label of the variable it tests ...
+    assert label("realized_warming_level", "gmst_trend_1950_consistency") == "in-sample"
+    assert label("annual_mean_timeseries", "tas_trend_consistency") == "held-out"
+    # ... an unlisted variable falls back to the diagnostic ...
+    assert label("pinatubo", "anything") == "in-sample"
+    # ... and an unlisted diagnostic to the default.
+    assert label("some_new_diagnostic", "anything") == "held-out"
+
+
 def test_pattern_scaling_hook_is_declared_but_unwired() -> None:
     """The third baseline is a later work package; only its id exists."""
     raw, sources = _tables(np.random.default_rng(12))
@@ -679,6 +765,209 @@ def test_no_trend_consistency_for_a_monthly_series() -> None:
     )
     rows = pd.DataFrame(score_raw_output(pd.concat(frames), sources, settings=FAST))
     assert not any(str(v).endswith("_trend_consistency") for v in rows["var_id"])
+
+
+# ---------------------------------------------------------------------------
+# Aggregated scalars (metrics_reference.md §II.1)
+# ---------------------------------------------------------------------------
+
+SCALAR = "gmst_warming_level"
+OBSERVED_LEVEL = 0.62
+
+
+def _scalar_tables(
+    rng: np.random.Generator,
+    *,
+    sigma_obs: float | None = 0.06,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """A scalar table shaped like ``CB2ComplexDiagnostic._scalar_outputs``.
+
+    One row per (data source, scalar) with every other scalar column NULL,
+    no ``time`` axis, and ``reference`` rows carrying the observed value.
+    """
+    rows: list[pd.DataFrame] = []
+    sources: list[dict] = []
+    reference = {
+        "data_id": ["observation_HadCRUT5"],
+        "data_type": ["reference"],
+        SCALAR: [OBSERVED_LEVEL],
+    }
+    rows.append(pd.DataFrame(reference))
+    if sigma_obs is not None:
+        rows.append(
+            pd.DataFrame(
+                {
+                    "data_id": ["observation_HadCRUT5"],
+                    "data_type": ["reference"],
+                    f"{SCALAR}{scoring_pass.SCALAR_SIGMA_OBS_SUFFIX}": [sigma_obs],
+                },
+            ),
+        )
+    sources.append(
+        {"id": "observation_HadCRUT5", "name": "HadCRUT5", "category": "observation"},
+    )
+    for name, category, variants, data_type, spread in SOURCES:
+        if data_type == "reference":
+            continue
+        exp = "historical"
+        for variant in variants:
+            data_id = _source_id(category, name, exp, variant)
+            rows.append(
+                pd.DataFrame(
+                    {
+                        "data_id": [data_id],
+                        "data_type": [data_type],
+                        SCALAR: [OBSERVED_LEVEL + rng.normal(0.0, spread)],
+                        # a model-only provenance scalar: never scored
+                        "warming_level_first_year": [2015.0],
+                    },
+                ),
+            )
+            sources.append(
+                {"id": data_id, "name": name, "category": category, "variant": variant},
+            )
+    return (
+        pd.concat(rows, ignore_index=True),
+        pd.DataFrame(sources),
+    )
+
+
+def test_is_scalar_output_recognises_the_layout() -> None:
+    scalars, _ = _scalar_tables(np.random.default_rng(50))
+    assert scoring_pass.is_scalar_output(scalars)
+    series, _ = _tables(np.random.default_rng(50))
+    assert not scoring_pass.is_scalar_output(series)  # has a time axis
+    eof, _ = _eof_tables(np.random.default_rng(50))
+    assert not scoring_pass.is_scalar_output(eof)
+    # A Tier I gate table has no reference rows and is left alone
+    assert not scoring_pass.is_scalar_output(
+        scalars[scalars["data_type"] != "reference"],
+    )
+
+
+def test_scalar_pass_scores_members_against_the_observed_value() -> None:
+    raw, sources = _scalar_tables(np.random.default_rng(51))
+    rows = pd.DataFrame(
+        scoring_pass.score_scalar_output(
+            raw,
+            sources,
+            diagnostic="realized_warming_level",
+        ),
+    )
+    submission = rows[
+        (rows["data_id"] == "MyModel")
+        & (rows["data_type"] == "to_benchmark")
+        & (rows["var_id"] == SCALAR)
+    ].iloc[0]
+
+    assert submission["n_members"] == 3
+    assert submission["n_time"] == 1  # one number, one scoring point
+    assert submission["t_eff"] == 1
+    assert submission["crps"] > 0
+    assert np.isnan(submission["crps_ci_lo"])  # no interval from a single point
+    assert submission["window"] == "held-out"
+    # sigma_obs = the emitted blending term (the tier2.obs_sigma floor is null
+    # for this scalar), so the draws bite
+    assert submission["sigma_obs"] == pytest.approx(0.06)
+
+    # A model-only provenance column is never scored
+    assert "warming_level_first_year" not in set(rows["var_id"])
+    # The single-member comparison model is n/a here too
+    single = rows[(rows["data_id"] == "CMIP6_C") & (rows["var_id"] == SCALAR)].iloc[0]
+    assert np.isnan(single["crps"])
+    assert single["reason"] == "single member"
+    # ... and E_ref is the leave-one-out median over the M >= 2 comparisons
+    assert submission["n_ref_models"] == 2
+    assert np.isfinite(submission["skill"])
+
+
+def test_scalar_pass_writes_a_consistency_row_with_sigma_int() -> None:
+    raw, sources = _scalar_tables(np.random.default_rng(52))
+    table = scoring_pass.internal_variability_from_raw(
+        pd.DataFrame(
+            {
+                "data_id": ["model_MyModel_historical_r1i1p1f1"],
+                "data_type": ["to_benchmark"],
+                "window_years_test": [11.0],
+                "window_years_long": [76.0],
+                "tas_sigma_int_mean_test": [0.09],
+                "tas_sigma_int_mean_long": [0.03],
+            },
+        ),
+    )
+    rows = pd.DataFrame(
+        scoring_pass.score_scalar_output(
+            raw,
+            sources,
+            sigma_internal=table,
+            diagnostic="realized_warming_level",
+        ),
+    )
+    consistency = rows[
+        (rows["var_id"] == f"{SCALAR}{scoring_pass.SCALAR_CONSISTENCY_SUFFIX}")
+        & (rows["data_type"] == "to_benchmark")
+    ].iloc[0]
+    # `gmst_warming_level` is registered against (tas, mean, test window)
+    assert consistency["sigma_internal"] == pytest.approx(0.09)
+    assert consistency["sigma_obs"] == pytest.approx(0.06)
+    assert consistency["total_sigma"] > 0.09
+    assert consistency["value"] == pytest.approx(OBSERVED_LEVEL)
+    assert consistency["passes"] in (0.0, 1.0)
+    assert np.isnan(consistency["crps"])  # a consistency row is not a score
+    assert consistency["window"] == "held-out"
+
+
+def test_scalar_pass_ignores_a_scalar_with_no_observed_value() -> None:
+    """`rsds` has no BSRN DataSource: model-only, so nothing to score."""
+    raw, sources = _scalar_tables(np.random.default_rng(53))
+    raw = raw.copy()
+    raw["pinatubo_rsds_anom"] = np.where(
+        raw["data_type"] == "to_benchmark",
+        -1.5,
+        np.nan,
+    )
+    rows = pd.DataFrame(scoring_pass.score_scalar_output(raw, sources))
+    assert "pinatubo_rsds_anom" not in set(rows["var_id"])
+
+
+def test_scalar_pass_deduplicates_repeated_reference_rows() -> None:
+    """A per-member run of a complex suite re-emits the same reference."""
+    raw, sources = _scalar_tables(np.random.default_rng(54))
+    doubled = pd.concat([raw, raw[raw["data_type"] == "reference"]], ignore_index=True)
+    rows = pd.DataFrame(scoring_pass.score_scalar_output(doubled, sources))
+    once = pd.DataFrame(scoring_pass.score_scalar_output(raw, sources))
+    assert len(rows) == len(once)
+    assert rows.sort_values("data_id")["crps"].to_numpy() == pytest.approx(
+        once.sort_values("data_id")["crps"].to_numpy(),
+        nan_ok=True,
+    )
+
+
+def test_score_database_scores_a_scalar_schema(tmp_path) -> None:  # noqa: ANN001
+    raw, sources = _scalar_tables(np.random.default_rng(55))
+    db_path = tmp_path / "ClimateBench2_TierII_events.ddb"
+    con = duckdb.connect(str(db_path))
+    con.execute('CREATE SCHEMA "realized_warming_level"')
+    for table, frame in (("raw_output", raw), ("data_sources", sources)):
+        con.register("frame", frame)
+        con.execute(
+            f'CREATE TABLE "realized_warming_level"."{table}" AS SELECT * FROM frame',
+        )
+        con.unregister("frame")
+    con.close()
+
+    report = score_database(db_path, settings=FAST)
+    assert report.diagnostics == ["realized_warming_level"]
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        metrics = con.execute(
+            'SELECT * FROM "realized_warming_level"."metrics"',
+        ).df()
+    finally:
+        con.close()
+    assert set(metrics["scorer"]) == {SCORER}
+    assert SCALAR in set(metrics["var_id"])
+    assert set(metrics["window"]) == {"held-out"}
 
 
 # ---------------------------------------------------------------------------

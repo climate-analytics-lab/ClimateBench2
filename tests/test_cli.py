@@ -58,6 +58,13 @@ def test_registry_shapes_match_the_protocol() -> None:
         assert spec.per_member  # cube suites run once per ensemble member
 
 
+def test_only_the_tier2_suites_run_per_member() -> None:
+    """Tier II scalars are scored across the ensemble; Tier I/III are not."""
+    assert SUITE_REGISTRY["ClimateBench2_TierII_events"].per_member
+    assert not SUITE_REGISTRY["ClimateBench2_TierI"].per_member
+    assert not SUITE_REGISTRY["ClimateBench2_TierIII"].per_member
+
+
 def test_default_tier2_window_is_derived_from_thresholds() -> None:
     """<test_window_start>0101 / <last complete year>1231."""
     start = int(get_threshold("tier2.test_window_start"))
@@ -371,6 +378,67 @@ def test_explicit_members_win_over_discovery(
     )
     assert [run["variant"] for run in runs] == ["r9i1p1f1"]
     assert runs[0]["data"] == [f"cubes:{other}:{default_tier2_timerange()}"]
+
+
+def test_tier2_events_runs_once_per_member_with_its_own_historical(
+    tmp_path,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+) -> None:
+    """Aggregated Tier II scalars need every member, not just the first."""
+    model = tmp_path / "MyModel"
+    _drs_tree(model, "historical", ["r1i1p1f1", "r2i1p1f1"])
+
+    _loads, runs = recorded_score(
+        [
+            str(model),
+            "--name",
+            "MyModel",
+            "--suite",
+            "ClimateBench2_TierII_events",
+            "--suite",
+            "ClimateBench2_TierIII",
+            "--suite",
+            "ClimateBench2_TierI",
+        ],
+    )
+    events = [r for r in runs if r["suite"] == "ClimateBench2_TierII_events"]
+    assert [r["variant"] for r in events] == ["r1i1p1f1", "r2i1p1f1"]
+    assert [r["append"] for r in events] == [False, True]
+    # Each run sees THAT member's own record under the `historical` key
+    for run, variant in zip(events, ("r1i1p1f1", "r2i1p1f1"), strict=True):
+        assert run["data"]["historical"] == [
+            f"cubes:{model / 'historical' / variant}:None",
+        ]
+
+    # Tier I stays a once-per-model suite (a gate is a model property)
+    tier1 = [r for r in runs if r["suite"] == "ClimateBench2_TierI"]
+    assert len(tier1) == 1
+    assert tier1[0]["variant"] == "r1i1p1f1"
+
+
+def test_explicit_historical_experiment_collapses_the_per_member_runs(
+    tmp_path,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+    capsys,  # noqa: ANN001
+) -> None:
+    """One pinned record for every member would only duplicate rows."""
+    model = tmp_path / "MyModel"
+    _drs_tree(model, "historical", ["r1i1p1f1", "r2i1p1f1"])
+    pinned = tmp_path / "pinned"
+    pinned.mkdir()
+
+    _loads, runs = recorded_score(
+        [
+            str(model),
+            "--experiment",
+            f"historical={pinned}",
+            "--suite",
+            "ClimateBench2_TierII_events",
+        ],
+    )
+    assert len(runs) == 1
+    assert runs[0]["data"]["historical"] == [f"cubes:{pinned}:None"]
+    assert "runs per member" in capsys.readouterr().err
 
 
 def test_missing_member_path_is_an_error() -> None:

@@ -30,7 +30,12 @@ Each suite is fed the data *shape* and time window the protocol asks for
 - the Tier I / Tier II-events / Tier III suites take an **experiment dict**,
   whose ``historical`` entry is the model's own output loaded in **full** —
   the aerosol-era and Pinatubo diagnostics live in 1950–1993 and the
-  clear-sky, ITCZ–EFE and hemispheric checks want the whole record;
+  clear-sky, ITCZ–EFE and hemispheric checks want the whole record. Tier I
+  and Tier III run **once per model**; ``ClimateBench2_TierII_events`` runs
+  **once per ensemble member** (``SuiteSpec.per_member``), each member
+  supplying its own ``historical`` record, because its Tier II scalars —
+  realized warming level, Pinatubo anomaly, hemispheric asymmetry — are
+  scored across the ensemble by the fair-CRPS pass;
 - ``ClimateBench2_TierI_variability`` (ENSO amplitude/spectrum) takes the
   **piControl** experiment in full — the paper asks for ≥ 100 yr of control;
 - the Tier II suites take the model's cubes cut to the **post-2015 test
@@ -81,17 +86,23 @@ class SuiteSpec:
         ``"historical"`` (:data:`DEFAULT_TIMERANGE`) or ``"full"`` (no cut —
         a control run has its own calendar). ``--timerange`` overrides the
         first two.
+    ``per_member``
+        Whether the suite runs **once per submitted ensemble member**. True
+        for the cube suites (each member's series is its own data source, and
+        the scoring pass stacks them into one fair-CRPS ensemble) and for
+        ``ClimateBench2_TierII_events``, whose aggregated scalars — the
+        realized warming level, the Pinatubo anomaly, the hemispheric
+        asymmetry — are scored across the members exactly the same way. An
+        experiment-based suite that runs per member gets **that member's own
+        record** as its ``historical`` key. False for Tier I and Tier III: a
+        gate is a property of the model, not of one member.
     """
 
     shape: str
     source: str = "model"
     window: str = "historical"
+    per_member: bool = False
     note: str = ""
-
-    @property
-    def per_member(self) -> bool:
-        """Whether the suite runs once per submitted ensemble member."""
-        return self.shape == "cubes" and self.source == "model"
 
 
 #: Data shape and default window of every CB2 suite. Suites not listed (a
@@ -111,16 +122,22 @@ SUITE_REGISTRY: dict[str, SuiteSpec] = {
     "ClimateBench2_TierII": SuiteSpec(
         shape="cubes",
         window="tier2",
+        per_member=True,
         note="Tier II scoring over the reserved post-2015 test window",
     ),
     "ClimateBench2_TierII_daily": SuiteSpec(
         shape="cubes",
         window="tier2",
+        per_member=True,
         note="Tier II daily/hourly scoring over the test window",
     ),
     "ClimateBench2_TierII_events": SuiteSpec(
         shape="experiments",
-        note="Pinatubo / hemispheric asymmetry: historical in full",
+        per_member=True,
+        note=(
+            "Warming level / Pinatubo / hemispheric asymmetry: each member's "
+            "own historical record, in full"
+        ),
     ),
     "ClimateBench2_TierIII": SuiteSpec(
         shape="experiments",
@@ -260,7 +277,13 @@ def _suite_spec(
         if any(isinstance(diag, complex_type) for diag in diagnostics.values())
         else "cubes"
     )
-    return SuiteSpec(shape=shape, note="not in the CB2 suite registry")
+    # An unregistered cube suite keeps the old behaviour (one run per member);
+    # an unregistered experiment suite is assumed to be a gate suite.
+    return SuiteSpec(
+        shape=shape,
+        per_member=shape == "cubes",
+        note="not in the CB2 suite registry",
+    )
 
 
 def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
@@ -302,6 +325,7 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
     # overrides it — Tier I is evaluated once per model, not per member.
     first_label, first_path = next(iter(members.items()))
     experiments: dict[str, Any] = {"historical": load(first_path, None)}
+    explicit_historical = "historical" in experiment_paths
     for key, path in experiment_paths.items():
         experiments[key] = load(path, None)
         print(f"Loaded experiment '{key}' from {path} (full record)", file=sys.stderr)
@@ -377,7 +401,24 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
                     file=sys.stderr,
                 )
                 continue
-            runs = [(experiments, info_for(first_label))]
+            if spec.per_member and not explicit_historical:
+                # Tier II aggregated scalars (§II.1) are scored across the
+                # submission's ensemble, so each member contributes its OWN
+                # historical record under the `historical` key, with its own
+                # variant in the data id; every other experiment is shared.
+                runs = [
+                    ({**experiments, "historical": load(path, None)}, info_for(label))
+                    for label, path in members.items()
+                ]
+            else:
+                if spec.per_member and len(members) > 1:
+                    print(
+                        f"Note: suite '{stem}' runs per member, but "
+                        f"--experiment historical=DIR pins one record for "
+                        f"every member; running it once instead",
+                        file=sys.stderr,
+                    )
+                runs = [(experiments, info_for(first_label))]
         elif spec.source == "picontrol":
             if "picontrol" in experiments:
                 runs = [(experiments["picontrol"], info_for(first_label))]
@@ -437,7 +478,8 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
     if len(members) > 1:
         print(
             f"\nIngested {len(members)} members ({', '.join(members)}) into the "
-            f"cube-based suites, each with its own data id; Tier I ran once on "
+            f"per-member suites (the cube suites and the Tier II events), each "
+            f"with its own data id; Tier I and Tier III ran once on "
             f"'{first_label or args.variant or args.name}'. The scoring pass "
             f"below stacks them into one fair-CRPS ensemble per model.",
             file=sys.stderr,
@@ -602,9 +644,12 @@ def build_parser() -> argparse.ArgumentParser:
             "An ensemble member of the submission (repeatable); LABEL becomes "
             "the variant of its data id, e.g. r1i1p1f1=/path/r1i1p1f1. If not "
             "given and MODEL is a DRS tree with several r*i*p*f* directories, "
-            "they are discovered automatically. Cube-based suites run once per "
-            "member into one database per suite; the Tier I / event / paleo "
-            "suites run once per model, on the first member."
+            "they are discovered automatically. The per-member suites — the "
+            "cube suites and ClimateBench2_TierII_events, whose Tier II "
+            "aggregated scalars are scored across the ensemble — run once per "
+            "member into one database per suite (an event run takes that "
+            "member's own record as its `historical` experiment); the Tier I "
+            "and paleo suites run once per model, on the first member."
         ),
     )
     score.add_argument(

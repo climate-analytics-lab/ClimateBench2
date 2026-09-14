@@ -214,6 +214,92 @@ tier2:
     rsut: 0.20                         # W m-2; CERES-EBAF stability, TODO(Duncan)
     rlut: 0.20                         # W m-2; as rsut
     rtnt: 0.20                         # W m-2; as rsut
+    rsutcs: 0.20                       # W m-2; as rsut
+    rlutcs: 0.20                       # W m-2; as rsut
+    # Aggregated scalars (gmst_*, pinatubo_*, nh_minus_sh_*) carry their own
+    # sigma_obs as a `<scalar>_sigma_obs` companion column emitted by the
+    # diagnostic (the blending term below), so they stay `null` here — an
+    # unknown floor, added in quadrature to the emitted term.
+
+  # Realized warming level, the two GMST trends, the Pinatubo response and the
+  # hemispheric asymmetry are AGGREGATED SCALARS: one number per ensemble
+  # member, scored by the pass with fair CRPS against the observed value and
+  # with the regime-(c) consistency test (metrics_reference.md §II.1).
+  warming_level:
+    requirement: diagnostic            # reported numbers, never a gate row
+
+  # GSAT BLENDING CORRECTION (paper §II.1, new 2026-09). HadCRUT5/GISTEMP/
+  # Berkeley blend land 2 m air temperature with sea surface temperature,
+  # whereas a model's `tas` is surface air temperature throughout. The
+  # protocol corrects the OBSERVATIONS to a SAT basis rather than building
+  # blended, coverage-masked model fields (which would need `tos`/`siconc`
+  # that not every architecture produces). CB2 applies the factor to the
+  # observed ANOMALIES (relative to climatology_baseline_period), so it
+  # scales warming levels and trends alike and leaves absolute levels alone.
+  # ⚠ PROVISIONAL — TODO(Duncan): 1.09 is the ~9% more warming SAT shows than
+  # a blended product (Cowtan et al. 2015; Richardson et al. 2016). Pin the
+  # protocol's own number.
+  gsat_blending_factor: 1.09
+  # The paper assesses the correction uncertainty at "at most 10% of the
+  # long-term change, with low confidence in its sign", carried in the
+  # observational variance term. CB2 reads "the long-term change" as the
+  # magnitude of the corrected statistic itself and adds
+  # `rel * |value|` in quadrature to the row's sigma_obs (⚠ CB2 reading).
+  gsat_blending_relative_uncertainty: 0.10
+
+  # Which sigma_int an aggregated scalar's regime-(c) consistency test uses:
+  # the InternalVariability rows are keyed by (variable, statistic) and
+  # reported at two window lengths (`test` = the reserved post-2015 window,
+  # `long` = tier2.long_trend_start-present), so each scalar names the triple
+  # that matches the record it is computed over.
+  scalar_consistency:
+    gmst_warming_level: {variable: tas, statistic: mean, window: test}
+    gmst_trend_test_window: {variable: tas, statistic: trend, window: test}
+    gmst_trend_1950: {variable: tas, statistic: trend, window: long}
+    # Jul 1991 - Dec 1993 is ~2.5 yr, far shorter than either reported
+    # window; the `test` mean sigma_int is the nearer of the two and is
+    # therefore an UNDER-estimate of the interannual spread of a 2.5-yr mean
+    # (a conservative, i.e. stricter, consistency test).
+    pinatubo_tas_anom: {variable: tas, statistic: mean, window: test}
+    # The aerosol era (1950-1985, 36 yr) is closest to the `long` window.
+    nh_minus_sh_trend: {variable: tas, statistic: trend, window: long}
+
+  # HELD-OUT vs IN-SAMPLE labelling (paper §5.6: the scorecard states, per
+  # entry, whether the observations were available before the reserved test
+  # period). The scoring pass writes a `window` column on EVERY row it
+  # writes; a `var_ids` entry wins over a `diagnostics` entry (the suite entry
+  # name, i.e. the DuckDB schema), and anything unlisted takes `default`.
+  # A `<var>_trend_consistency` / `<var>_consistency` row inherits the label
+  # of the variable it tests.
+  window_labels:
+    default: held-out
+    diagnostics:
+      # Scored over the reserved post-2015 test window
+      annual_mean_timeseries: held-out
+      sst: held-out
+      ohc: held-out
+      sea_ice_minimum: held-out
+      eof_projection: held-out
+      sst_eof_projection: held-out
+      realized_warming_level: held-out
+      # Climatologies and event diagnostics over the historical record
+      annual_cycle: in-sample
+      map: in-sample
+      zonal_line: in-sample
+      sea_ice_annual_cycle: in-sample
+      tas_annual_max: in-sample
+      pr_intensity_pdf: in-sample
+      pr_diurnal_cycle: in-sample
+      pinatubo: in-sample
+      hemispheric_asymmetry: in-sample
+    var_ids:
+      gmst_warming_level: held-out
+      gmst_trend_test_window: held-out
+      gmst_trend_1950: in-sample     # 1950-present spans the historical record
+      pinatubo_tas_anom: in-sample
+      pinatubo_rsds_anom: in-sample
+      nh_minus_sh_trend: in-sample
+      itcz_shift_deg_per_decade: in-sample
   # Regime (c): ensemble-consistency test
   consistency_p_value: 0.05            # two-sided
   eof_modes: 5                         # spatial fields: leading EOFs tested

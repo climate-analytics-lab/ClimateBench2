@@ -144,10 +144,17 @@ tier2:
   # derives its default Tier II timerange from this (`20150101/<last complete
   # year>1231`); the scoring layer uses it as the first scored year.
   test_window_start: 2015
+  # First year of the long ("1950-present") trend window of §II.1, used for the
+  # second internal-variability window length of the consistency test.
+  long_trend_start: 1950
   # Pre-test baseline: 1985–2014 (NOT 1990–2020, which overlapped the reserved
-  # post-2015 test window). Used by the Climatology baseline row and as the
-  # Pinatubo reference climatology.
+  # post-2015 test window). Used by the Climatology baseline row, as the
+  # Pinatubo reference climatology, and as the reference's PRE-2015 record for
+  # the regime-(b) EOF basis and its standardisation.
   climatology_baseline_period: [1985, 2014]
+  # A reference whose record covers fewer than this many years of the baseline
+  # window is skipped (with a logged reason) rather than half-sampled.
+  climatology_baseline_min_years: 10
   # Regime (a): fair (Ferro) CRPS with effective-sample-size correction on the
   # reported uncertainty. Fair CRPS is undefined for a deterministic forecast,
   # so a single-member model is reported as "n/a (single member)", never as
@@ -163,15 +170,49 @@ tier2:
     seed: 20260914                     # fixed: every model gets the same resamples
   # Observational-uncertainty draws: fair CRPS averaged over K pseudo-
   # observations y_k ~ N(obs, sigma_obs), the SAME draws for a submission and
-  # its baselines. n_draws applies only where a sigma_obs field is available;
-  # none is plumbed through yet (HadCRUT5's error field is the first candidate),
-  # so today every score runs at sigma_obs = 0 and the draws are a no-op.
+  # its baselines.
   obs_uncertainty:
     n_draws: 100
     seed: 20260914
+  # sigma_obs of the SCORED series (the area-mean value at one time step), in
+  # the variable's own units. ClimateEval exposes no observational error field
+  # for any of its DataSources (HadCRUT5 CMORizes `tas`/`tasa` only, with no
+  # ensemble or uncertainty variable), so these are fixed protocol constants
+  # rather than a plumbed-through field. Keys are matched against the suite
+  # variable id first, then the token before its first underscore, then
+  # `default`; `null` means "unknown" and scores at sigma_obs = 0.
+  #
+  # ⚠ PROVISIONAL — every non-null value below needs Duncan's ruling.
+  # Where a variable has several observational products in the suite
+  # (reference + `other_data` with an observation/reanalysis category), the
+  # per-time-step spread ACROSS products is added in quadrature to the value
+  # here; that inter-product term is measured, this one is the floor.
+  obs_sigma:
+    default: null
+    tas: 0.05                          # K; HadCRUT5 annual global-mean 1-sigma
+    ts: 0.05                           # K; as tas
+    tos: 0.05                          # K; SST products, TODO(Duncan)
+    pr: null                           # TODO(Duncan): GPCP global-mean 1-sigma
+    rsut: 0.20                         # W m-2; CERES-EBAF stability, TODO(Duncan)
+    rlut: 0.20                         # W m-2; as rsut
+    rtnt: 0.20                         # W m-2; as rsut
   # Regime (c): ensemble-consistency test
   consistency_p_value: 0.05            # two-sided
   eof_modes: 5                         # spatial fields: leading EOFs tested
+  # Regime (b): fair CRPS on the reference's FIXED pre-2015 EOF basis. The
+  # basis is truncated by a pre-registered variance-explained criterion (the
+  # protocol fixes it once, in advance, so it cannot be tuned per submission).
+  eof:
+    variance_explained: 0.9            # keep the leading modes reaching 90%
+    max_modes: 20                      # hard cap on the retained modes
+    min_modes: 1
+  # Internal variability sigma_int for the consistency test: the piControl
+  # global-mean annual series chunked into observation-length segments
+  # (scoring.chunked_statistic_std) for the window MEAN and the OLS TREND.
+  internal_variability:
+    requirement: diagnostic            # a reported input, never a gate
+    variables: [tas, pr, rsut, rlut, tos, prw, clt]
+    min_chunks: 2                      # fewer -> no sigma_int for that window
   # Pinatubo response (1991-07 .. 1993-12 vs the climatology_baseline_period
   # climatology above, i.e. 1985–2014)
   pinatubo:

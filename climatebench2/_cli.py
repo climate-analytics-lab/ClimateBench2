@@ -49,7 +49,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from climatebench2._thresholds import get_threshold
+from climatebench2 import windows
 
 # Heavy climateeval subsystems (ESMValCore/iris/dask, ~5 s to import) are
 # imported lazily inside the command functions, mirroring climateeval's CLI.
@@ -134,11 +134,11 @@ def default_tier2_timerange(today: dt.date | None = None) -> str:
 
     The protocol scores whole years from the start of the reserved test
     window to the last year that has finished, so the window grows by one
-    year every January without a code change.
+    year every January without a code change. Resolved by
+    :mod:`climatebench2.windows`, which the reference-window diagnostics and
+    the scoring pass share, so no two of them can disagree about the window.
     """
-    start = int(get_threshold("tier2.test_window_start"))
-    end = max((today or dt.date.today()).year - 1, start)
-    return f"{start}0101/{end}1231"
+    return windows.test_window_timerange(today)
 
 
 def suite_timerange(spec: SuiteSpec, explicit: str | None = None) -> str | None:

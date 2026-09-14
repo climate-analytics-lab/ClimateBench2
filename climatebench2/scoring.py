@@ -9,9 +9,12 @@ Implements the Tier II scoring machinery of the protocol
     and a moving-block bootstrap confidence interval.
 
 (b) **Aggregated diagnostics and spatial fields** — fair CRPS in a projected
-    basis (EOFs of the reference, fixed pre-2015) — the reference-EOF basis
-    is a later work package; the primitives here are ``eof_basis`` /
-    ``project_onto_eofs``.
+    basis: the EOFs of the *reference*, fixed over its pre-2015 record and
+    truncated by a pre-registered variance-explained criterion
+    (``eof_basis``), each coefficient standardised by its pre-2015 σ
+    (``EOFBasis.pc_std``) and scored with the same fair CRPS
+    (``crps_independent_summary`` for the equal-weight mean over
+    coefficients).
 
 (c) **Ensemble-consistency test** (complementary diagnostic) — is the
     observed value consistent with the model-ensemble distribution, whose
@@ -208,6 +211,32 @@ def crps_ess_score(members: np.ndarray, obs: np.ndarray) -> CRPSScore:
     return crps_ess_from_series(crps_fair(members, obs), members.shape[0])
 
 
+def crps_independent_summary(crps_k: np.ndarray, n_members: int) -> CRPSScore:
+    """Summary of a CRPS sample whose entries are already independent.
+
+    Regime (b): the score axis is the set of **orthogonal** EOF coefficients,
+    not time, so there is no serial correlation to discount — the effective
+    sample size *is* the number of retained modes and the standard error is
+    the plain ``std / sqrt(K)``. (Using :func:`crps_ess_from_series` here
+    would compute a lag-1 autocorrelation along an axis — mode index — that
+    has no ordering.) ``r1`` is reported as NaN to say so.
+    """
+    valid = np.asarray(crps_k, dtype=float)
+    valid = valid[np.isfinite(valid)]
+    if valid.size == 0:
+        msg = "CRPS sample has no finite values"
+        raise ValueError(msg)
+    se = float(valid.std(ddof=1) / np.sqrt(valid.size)) if valid.size > 1 else np.nan
+    return CRPSScore(
+        score=float(valid.mean()),
+        standard_error=se,
+        t_eff=float(valid.size),
+        r1=float("nan"),
+        n_members=int(n_members),
+        n_time=int(valid.size),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Regime (a): moving-block bootstrap confidence interval
 # ---------------------------------------------------------------------------
@@ -322,6 +351,38 @@ def chunked_statistic_std(
     return float(np.std(values, ddof=1))
 
 
+def ols_trend(y: np.ndarray) -> float:
+    """OLS slope of a series against its own index (units per step).
+
+    The protocol's warming-rate statistic for an annual series: slope per
+    year. NaNs are dropped; fewer than three finite points give NaN.
+    """
+    values = np.asarray(y, dtype=float)
+    index = np.arange(values.size, dtype=float)
+    mask = np.isfinite(values)
+    if mask.sum() < 3:  # noqa: PLR2004 - a trend needs at least three points
+        return float("nan")
+    return float(stats.linregress(index[mask], values[mask]).slope)
+
+
+def ols_trend_sigma(sigma_step: float, n_time: int) -> float:
+    """σ of an OLS slope given independent per-step errors of σ_step.
+
+    ``Var(slope) = σ² / Σ(t − t̄)²`` and, for the evenly spaced index
+    ``0…T−1``, ``Σ(t − t̄)² = T(T²−1)/12`` — hence
+    ``σ_slope = σ_step · sqrt(12 / (T(T²−1)))``.
+
+    This is how CB2 turns a **per-time-step** observational uncertainty into
+    the σ_obs of a **trend** for the regime-(c) consistency test; the
+    protocol states the quadrature sum but not this conversion, so it is a
+    documented CB2 interpretation (metrics_reference.md §II.0).
+    """
+    n = int(n_time)
+    if n < 3 or sigma_step <= 0.0:  # noqa: PLR2004
+        return 0.0
+    return float(sigma_step * np.sqrt(12.0 / (n * (n**2 - 1))))
+
+
 @dataclass(frozen=True)
 class ConsistencyResult:
     """Result of the regime-(b) ensemble-consistency test."""
@@ -378,25 +439,48 @@ def ensemble_consistency(
 
 @dataclass(frozen=True)
 class EOFBasis:
-    """Leading EOFs of a variability sample."""
+    """Leading EOFs of a variability sample.
+
+    ``explained_variance`` is the absolute variance of each retained mode;
+    ``explained_variance_ratio`` its share of the *total* variance of the
+    sample (all modes, retained or not), which is what the protocol's
+    truncation criterion is expressed in. ``pc_std`` is the standard
+    deviation of the sample's own principal-component series — for a basis
+    built on the reference's pre-2015 record this is the protocol's
+    "pre-2015 observational standard deviation", the divisor that
+    standardises every coefficient before it is scored.
+    """
 
     eofs: np.ndarray  # (n_modes, n_space)
     explained_variance: np.ndarray  # (n_modes,)
     mean: np.ndarray  # (n_space,)
     weights: np.ndarray  # (n_space,)
+    explained_variance_ratio: np.ndarray = None  # type: ignore[assignment]
+    pc_std: np.ndarray = None  # type: ignore[assignment]
 
 
 def eof_basis(
     variability_fields: np.ndarray,
-    n_modes: int,
+    n_modes: int | None = None,
     *,
     weights: np.ndarray | None = None,
+    variance_explained: float | None = None,
+    max_modes: int | None = None,
+    min_modes: int = 1,
 ) -> EOFBasis:
     """Leading EOFs (area-weighted SVD) of a sample of fields.
 
-    ``variability_fields``: shape ``(n_samples, n_space)`` — e.g. piControl
-    chunks or CMIP6-member anomalies, flattened over space with any masked
-    points removed beforehand.
+    ``variability_fields``: shape ``(n_samples, n_space)`` — e.g. the
+    reference's pre-2015 monthly anomaly fields (regime b), piControl chunks
+    or CMIP6-member anomalies, flattened over space with any masked points
+    removed beforehand.
+
+    Truncation is either explicit (``n_modes``) or by the protocol's
+    **pre-registered variance-explained criterion** (``variance_explained``,
+    ``tier2.eof.variance_explained``): the fewest leading modes whose
+    cumulative share of the total variance reaches that fraction, capped at
+    ``max_modes`` (``tier2.eof.max_modes``) and floored at ``min_modes``.
+    Giving neither keeps every mode.
     """
     fields = np.asarray(variability_fields, dtype=float)
     if fields.ndim != 2:  # noqa: PLR2004
@@ -407,14 +491,65 @@ def eof_basis(
     mean = fields.mean(axis=0)
     anom = (fields - mean) * sqrt_w[None, :]
     _u, s, vt = np.linalg.svd(anom, full_matrices=False)
-    n_modes = min(n_modes, s.size)
     var = s**2 / max(fields.shape[0] - 1, 1)
+    total = float(var.sum())
+    ratio = var / total if total > 0 else np.zeros_like(var)
+
+    if n_modes is None:
+        if variance_explained is None:
+            n_modes = s.size
+        else:
+            cumulative = np.cumsum(ratio)
+            reached = np.searchsorted(cumulative, float(variance_explained)) + 1
+            n_modes = int(reached)
+    n_modes = min(int(n_modes), s.size)
+    if max_modes is not None:
+        n_modes = min(n_modes, int(max_modes))
+    n_modes = max(n_modes, min(int(min_modes), s.size))
+
+    eofs = vt[:n_modes]  # weighted-space orthonormal
+    pcs = anom @ eofs.T  # the sample's own principal components
+    pc_std = (
+        pcs.std(axis=0, ddof=1) if fields.shape[0] > 1 else np.ones(n_modes)
+    )
     return EOFBasis(
-        eofs=vt[:n_modes],  # weighted-space orthonormal
+        eofs=eofs,
         explained_variance=var[:n_modes],
         mean=mean,
         weights=sqrt_w,
+        explained_variance_ratio=ratio[:n_modes],
+        pc_std=pc_std,
     )
+
+
+def standardised_coefficients(
+    basis: EOFBasis,
+    field: np.ndarray,
+) -> np.ndarray:
+    """Project a field onto ``basis`` and divide by the pre-2015 PC σ.
+
+    The protocol's regime-(b) coefficient vector: each retained coefficient
+    is expressed in units of the reference's own pre-2015 variability, so
+    the equal-weight mean over modes is a mean of commensurate numbers. A
+    mode with zero σ (a degenerate basis) is left unscaled rather than
+    divided by zero.
+    """
+    pcs = project_onto_eofs(basis, field)
+    sigma = np.asarray(basis.pc_std, dtype=float)
+    safe = np.where(np.isfinite(sigma) & (sigma > 0.0), sigma, 1.0)
+    return pcs / safe
+
+
+def cos_latitude_weights(latitudes: np.ndarray, n_longitudes: int) -> np.ndarray:
+    """Area weights of a regular lat/lon grid, flattened as ``(lat, lon)``.
+
+    ``cos(lat)`` repeated over longitude — the standard area weighting of the
+    regular 2° grid every CB2 field is regridded to
+    (``climateeval.diags._utils.DEFAULT_GRID``), matching
+    ``physics.area_weighted_mean``.
+    """
+    lats = np.asarray(latitudes, dtype=float)
+    return np.repeat(np.cos(np.deg2rad(lats)), int(n_longitudes))
 
 
 def project_onto_eofs(basis: EOFBasis, field: np.ndarray) -> np.ndarray:

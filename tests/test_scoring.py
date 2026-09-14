@@ -420,3 +420,121 @@ def test_field_consistency_pass_and_fail() -> None:
 def test_eof_basis_validates_ndim() -> None:
     with pytest.raises(ValueError, match="2-D"):
         scoring.eof_basis(np.zeros(10), 2)
+
+
+# ---------------------------------------------------------------------------
+# Regime (b): variance-explained truncation, standardisation, projection
+# ---------------------------------------------------------------------------
+
+
+def test_eof_basis_truncates_by_variance_explained() -> None:
+    """The protocol pre-registers a variance fraction, not a mode count."""
+    rng = np.random.default_rng(11)
+    fields = _synthetic_fields(rng, 400)  # two modes, amplitudes 3 and 1
+    # 80% is reached by the leading mode alone (9 / 10 of the variance)
+    lead = scoring.eof_basis(fields, variance_explained=0.8)
+    assert lead.eofs.shape[0] == 1
+    assert lead.explained_variance_ratio[0] > 0.8
+
+    # 99% needs both
+    both = scoring.eof_basis(fields, variance_explained=0.99)
+    assert both.eofs.shape[0] == 2
+    assert float(both.explained_variance_ratio.sum()) > 0.99
+
+    # ... and the cap always wins
+    capped = scoring.eof_basis(fields, variance_explained=0.99, max_modes=1)
+    assert capped.eofs.shape[0] == 1
+
+
+def test_eof_basis_records_the_sample_pc_sigma() -> None:
+    """``pc_std`` is the protocol's pre-2015 observational sigma."""
+    rng = np.random.default_rng(12)
+    fields = _synthetic_fields(rng, 500)
+    basis = scoring.eof_basis(fields, n_modes=2)
+    np.testing.assert_allclose(
+        basis.pc_std**2,
+        basis.explained_variance,
+        rtol=1e-8,
+    )
+    # The sample's amplitudes are 3 and 1; the absolute PC scale depends on
+    # the (weighted, unit-norm) basis, but their ratio does not.
+    assert basis.pc_std[0] / basis.pc_std[1] == pytest.approx(3.0, rel=0.15)
+
+
+def test_standardised_coefficients_are_in_units_of_pre2015_sigma() -> None:
+    """A field equal to one sigma of a mode gives that mode a coefficient 1."""
+    rng = np.random.default_rng(13)
+    fields = _synthetic_fields(rng, 500)
+    basis = scoring.eof_basis(fields, n_modes=2)
+
+    # Reconstruct one sigma of the leading mode in field space. The basis is
+    # orthonormal in *weighted* space, so undo the weighting.
+    one_sigma = basis.mean + basis.pc_std[0] * basis.eofs[0] / basis.weights
+    coefficients = scoring.standardised_coefficients(basis, one_sigma)
+    assert coefficients[0] == pytest.approx(1.0, rel=1e-6)
+    assert abs(coefficients[1]) < 1e-6
+
+    # The whole sample standardises to unit variance per mode
+    sample = scoring.standardised_coefficients(basis, fields)
+    np.testing.assert_allclose(sample.std(axis=0, ddof=1), np.ones(2), rtol=1e-8)
+
+
+def test_standardised_coefficients_survive_a_degenerate_mode() -> None:
+    """A zero-sigma mode is left unscaled rather than dividing by zero."""
+    fields = np.tile(np.linspace(0.0, 1.0, 8), (4, 1))  # rank 0 after centring
+    basis = scoring.eof_basis(fields, n_modes=1)
+    coefficients = scoring.standardised_coefficients(basis, fields[0])
+    assert np.isfinite(coefficients).all()
+
+
+def test_cos_latitude_weights_match_the_area_weighting() -> None:
+    lats = np.array([-60.0, 0.0, 60.0])
+    weights = scoring.cos_latitude_weights(lats, 4)
+    assert weights.shape == (12,)
+    np.testing.assert_allclose(weights[:4], 0.5, atol=1e-12)
+    np.testing.assert_allclose(weights[4:8], 1.0, atol=1e-12)
+
+
+def test_crps_independent_summary_uses_the_sample_size_as_t_eff() -> None:
+    """Modes are orthogonal: no serial correlation to discount."""
+    values = np.array([0.1, 0.3, 0.2, 0.4, 0.15])
+    summary = scoring.crps_independent_summary(values, n_members=4)
+    assert summary.score == pytest.approx(values.mean())
+    assert summary.t_eff == 5.0
+    assert summary.n_time == 5
+    assert summary.n_members == 4
+    assert summary.standard_error == pytest.approx(
+        values.std(ddof=1) / np.sqrt(5),
+    )
+    assert np.isnan(summary.r1)
+    with pytest.raises(ValueError, match="no finite values"):
+        scoring.crps_independent_summary(np.array([np.nan]), 2)
+
+
+# ---------------------------------------------------------------------------
+# Trend statistics for the regime-(c) consistency test
+# ---------------------------------------------------------------------------
+
+
+def test_ols_trend_recovers_a_known_slope() -> None:
+    y = 2.0 + 0.03 * np.arange(40, dtype=float)
+    assert scoring.ols_trend(y) == pytest.approx(0.03)
+    y[5] = np.nan
+    assert scoring.ols_trend(y) == pytest.approx(0.03)
+    assert np.isnan(scoring.ols_trend(np.array([1.0, 2.0])))
+
+
+def test_ols_trend_sigma_matches_a_monte_carlo() -> None:
+    """sigma_step -> sigma of the OLS slope, for independent errors."""
+    rng = np.random.default_rng(21)
+    n, sigma_step = 30, 0.05
+    slopes = [
+        scoring.ols_trend(rng.normal(0.0, sigma_step, n)) for _ in range(4000)
+    ]
+    assert scoring.ols_trend_sigma(sigma_step, n) == pytest.approx(
+        float(np.std(slopes, ddof=1)),
+        rel=0.05,
+    )
+    # Degenerate inputs are 0, never NaN or a division by zero
+    assert scoring.ols_trend_sigma(0.0, 30) == 0.0
+    assert scoring.ols_trend_sigma(0.05, 2) == 0.0

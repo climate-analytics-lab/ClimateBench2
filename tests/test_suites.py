@@ -12,11 +12,22 @@ climateeval = pytest.importorskip("climateeval")
 
 from climateeval.suites import Suite  # noqa: E402
 
-from climatebench2._cli import DEFAULT_SUITES, _resolve_suite  # noqa: E402
+from climatebench2._cli import (  # noqa: E402
+    DEFAULT_SUITES,
+    SUITE_REGISTRY,
+    _resolve_suite,
+)
 
 
-@pytest.mark.parametrize("suite_name", DEFAULT_SUITES)
+@pytest.mark.parametrize("suite_name", sorted(SUITE_REGISTRY))
 def test_cb2_suites_build_all_diagnostics(suite_name: str) -> None:
+    """Every suite CB2 ships — not only the CLI defaults — must be installable.
+
+    Parametrised over the whole registry so the two non-default suites
+    (``ClimateBench2_TierII_daily``, ``ClimateBench2_TierIII``) are covered
+    too: they are packaged the same way and a missing ``suites/*.yml`` entry
+    in ``pyproject.toml``'s package data would only ever show up here.
+    """
     resolved = _resolve_suite(suite_name)
     assert resolved != suite_name, f"CB2 suite YAML not packaged for {suite_name}"
     suite = Suite(resolved)
@@ -27,6 +38,28 @@ def test_cb2_suites_build_all_diagnostics(suite_name: str) -> None:
         from climateeval.diags._base import Diagnostic
 
         assert isinstance(diag, Diagnostic)
+
+
+def test_every_default_suite_is_in_the_registry() -> None:
+    """The CLI's defaults are a subset of the suites whose data shape is known."""
+    assert set(DEFAULT_SUITES) <= set(SUITE_REGISTRY)
+    # ... and the two that are not defaults are the ones that need extra data
+    assert set(SUITE_REGISTRY) - set(DEFAULT_SUITES) == {
+        "ClimateBench2_TierII_daily",  # needs day/ and sub-daily output
+        "ClimateBench2_TierIII",  # needs the paleo experiments + proxy NetCDFs
+    }
+
+
+def test_packaged_protocol_data_is_importable() -> None:
+    """`pyproject.toml`'s package data must cover everything read at run time."""
+    from importlib.resources import files
+
+    root = files("climatebench2")
+    assert (root / "thresholds.yml").is_file()
+    suites = {p.name for p in (root / "suites").iterdir() if p.name.endswith(".yml")}
+    assert suites == {f"{name}.yml" for name in SUITE_REGISTRY}
+    # data/*.csv — the packaged ERF table behind the pattern-scaling baseline
+    assert (root / "data" / "erf_ar6_ssp245.csv").is_file()
 
 
 def test_tier1_gates_have_thresholds_wired() -> None:

@@ -15,7 +15,6 @@ from climatebench2 import baselines, physics
 def test_geostrophic_wind_recovers_balanced_flow() -> None:
     """A zg field built from a known u_g must be recovered exactly."""
     lats = np.linspace(-80, 80, 81)
-    lons = np.linspace(0, 355, 72)
     phi = np.deg2rad(lats)
     # Choose Z(φ) with dZ/dφ = -cos φ · sin φ · A  → u_g = (g A / (2Ω a)) · cos φ
     amp = 500.0

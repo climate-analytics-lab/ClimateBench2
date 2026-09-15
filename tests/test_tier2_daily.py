@@ -23,7 +23,6 @@ from climateeval import Variable  # noqa: E402
 from climateeval.data import DataSourceInformation  # noqa: E402
 from climateeval.diags.simple._utils import SimpleDiagnosticInputData  # noqa: E402
 
-from climatebench2 import physics  # noqa: E402
 from climatebench2._thresholds import get_threshold  # noqa: E402
 from climatebench2.diags import tier2_daily  # noqa: E402
 from climatebench2.diags.tier2_daily import (  # noqa: E402

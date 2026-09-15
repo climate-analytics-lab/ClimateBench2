@@ -70,7 +70,7 @@ def climatology_pseudo_members(
     target_months: np.ndarray | None = None,
     n_time: int | None = None,
 ) -> np.ndarray:
-    """Baseline (i): the climatology as an ensemble of pseudo-members.
+    """Baseline (ii): the climatology as an ensemble of pseudo-members.
 
     Instead of a single deterministic climatological mean (undefined under
     fair CRPS), the forecast for a target step is the **set of
@@ -138,7 +138,7 @@ def two_layer_ebm(
     efficacy: float = 1.3,
     dt_years: float = 1.0,
 ) -> np.ndarray:
-    """Baseline (ii) core: two-layer EBM (Held et al. 2010; Geoffroy 2013).
+    """Baseline (iii) core: two-layer EBM (Held et al. 2010; Geoffroy 2013).
 
     C  dT/dt  = F + λT − εγ(T − T_d)
     C_d dT_d/dt = γ(T − T_d)
@@ -304,7 +304,7 @@ def ebm_pseudo_members(
     trajectory: np.ndarray,
     residuals: np.ndarray,
 ) -> np.ndarray:
-    """Baseline (ii) as an ensemble: the trajectory displaced by each residual.
+    """Baseline (iii) as an ensemble: the trajectory displaced by each residual.
 
     ⚠ **CB2 interpretation** (see the module docstring). Fair CRPS is
     undefined for the deterministic emulator, so each pseudo-member is the
@@ -330,7 +330,7 @@ def pattern_scaling_forecast(
     warming_pattern: np.ndarray,
     climatology: np.ndarray,
 ) -> np.ndarray:
-    """Baseline (ii): ΔT_global(t) × normalized pattern + climatology.
+    """Baseline (iii): ΔT_global(t) × normalized pattern + climatology.
 
     ``gmst_anomaly``: (n_time,); ``warming_pattern``: (n_space,) — the CMIP6
     MMM warming pattern normalized to unit global mean; ``climatology``:

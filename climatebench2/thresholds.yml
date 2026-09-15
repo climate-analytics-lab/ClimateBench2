@@ -172,7 +172,9 @@ tier1:
     slope_rel_tolerance: 0.50          # ±50%
     corr_min: 0.9
 
-  # (extra, code-only — pending paper reconciliation, metrics_reference.md #13)
+  # (extra, code-only — not in the paper's Tier I list as specced, so both are
+  # tagged `extra` and excluded from the entry ticket. See the two "(extra,
+  # code-only)" sections of metrics_reference.md and delineation-plan §8.5.)
   bjerknes:
     tier: I
     requirement: extra

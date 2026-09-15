@@ -28,8 +28,11 @@ dependencies = [
 climatebench2 = "climatebench2._cli:main"
 
 [tool.setuptools.packages.find]
-# Only the package — not the legacy top-level modules (constants.py, utils.py)
-# or script directories, which are being retired per the delineation plan.
+# Only the package. `paleo_scripts/` (the Tier III data-preparation pipeline),
+# `analysis/` (standalone studies behind the paper figures) and `tests/` are
+# deliberately not installable. The legacy top-level modules this filter was
+# originally written against (constants.py, utils.py, benchmark_scrips/) were
+# deleted in work package 7.
 include = ["climatebench2*"]
 
 [tool.setuptools.package-data]

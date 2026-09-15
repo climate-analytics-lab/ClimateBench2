@@ -421,7 +421,7 @@ def ols_trend_sigma(sigma_step: float, n_time: int) -> float:
 
 @dataclass(frozen=True)
 class ConsistencyResult:
-    """Result of the regime-(b) ensemble-consistency test."""
+    """Result of the regime-(c) ensemble-consistency test."""
 
     z: float
     p_value: float
@@ -605,7 +605,14 @@ def field_consistency(
     sigma_obs_field: np.ndarray | None = None,
     p_threshold: float = 0.05,
 ) -> tuple[bool, list[ConsistencyResult]]:
-    """Regime-(b) test for a spatial field via EOF projection.
+    """Superseded regime-(b) test for a spatial field via EOF projection.
+
+    **Not the protocol's regime (b) any more** and not wired into any suite:
+    since 2026-09 regime (b) is the fair CRPS of standardised coefficients on
+    the *reference's* fixed pre-2015 EOF basis (`eof_basis` +
+    `standardised_coefficients`, scored by `scoring_pass.score_eof_output`).
+    This model-variability z-test is kept only as the consistency-style
+    complement, in the shape of regime (c).
 
     EOFs come from ``variability_fields`` (e.g. piControl chunks); the
     inter-sample PC spread is the internal-variability term. Ensemble fields
@@ -657,7 +664,10 @@ def proxy_site_consistency(
     ensemble_values: np.ndarray | None = None,
     p_threshold: float = 0.05,
 ) -> tuple[float, np.ndarray]:
-    """Regime-(b) consistency at proxy sites (metrics_reference.md III.1).
+    """Regime-(c)-style consistency at proxy sites (metrics_reference.md III.1).
+
+    The *complementary* Tier III diagnostic: the protocol's primary paleo
+    statistic is `proxy_crps`, the fair CRPS of the block pseudo-ensemble.
 
     Per site: z = (proxy − model) / sqrt(var_ens + σ_proxy²); the score is
     the fraction of sites with two-sided p ≥ ``p_threshold`` (proxy error

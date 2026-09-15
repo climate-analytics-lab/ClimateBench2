@@ -36,6 +36,42 @@ Raw files land in `paleo_data_cache/raw/`, processed outputs in `paleo_data_cach
 
 ---
 
+## How the protocol uses this pipeline
+
+`paleo_scripts/` is **data preparation, not protocol**. Tier III of ClimateBench v2 —
+`climatebench2/diags/tier3_paleo.py::PaleoProxyScore`, wired up in
+`climatebench2/suites/ClimateBench2_TierIII.yml` — reads the processed NetCDFs of step 3
+directly:
+
+```bash
+climatebench2 score /path/to/model/Amon --name MyModel \
+    --experiment picontrol=DIR --experiment lgm=DIR \
+    --suite ClimateBench2_TierIII \
+    --paleo-data-root paleo_scripts/paleo_data_cache/processed/observations
+```
+
+One suite stanza per **(period, dataset, variable)**; each reads
+`<paleo_data_root>/<period>/<dataset>.nc`, samples the model's block pseudo-ensemble at
+the dataset's sites (or, for a gridded compilation, at its cell centres) and scores it
+with fair CRPS, with `<var>_std` as the observational uncertainty. Three parts of the
+file contract matter to it, so **do not change them without updating
+`tier3_paleo.py`**:
+
+- the variable name (`tas` / `tos` / `pr` / …) and its `<var>_std` companion — with no
+  `_std` there is no observational variance term and the stanza is not scored;
+- `lat` / `lon`, on the same dimensions as the values (site, gridded or curvilinear);
+- the `units` and `dataset_type` global attributes. `units` drives the conversion from
+  the model's CMIP6 units (an unrecognised spelling is refused, not guessed:
+  precipitation in mm/yr differs from kg m⁻² s⁻¹ by 3 × 10⁷). `dataset_type` decides
+  whether the result counts: only `proxy_compilation` is scored
+  (`tier3.scored_dataset_types`), while `data_assimilation` products are computed and
+  reported but excluded from the protocol score, per paper Appendix D.
+
+`Harrison2015_pr.nc` is not a scored stanza: it supplies the observed North-Africa
+magnitude reported beside the mid-Holocene monsoon gate.
+
+---
+
 ## Script Reference
 
 ### `download_paleo_observations.py` — Download proxy and reanalysis datasets
@@ -211,7 +247,8 @@ Compares PMIP4/CMIP6 model climatologies against paleoclimate proxy and data ass
 ```bash
 python paleo_benchmark.py --model all --period all
 python paleo_benchmark.py --model AWI-ESM-1-1-LR --period lgm
-python paleo_benchmark.py --model MIROC-ES2L --period lgm --use-picontrol
+python paleo_benchmark.py --model MIROC-ES2L --period lgm \
+    --picontrol-dir /data/MIROC-ES2L/piControl
 python paleo_benchmark.py --model all --period lgm --obs-source lgmDA
 python paleo_benchmark.py --model all --period lgm --obs-source Bartlein2011 --variable tas
 python paleo_benchmark.py --model all --period all --save-to-cloud
@@ -223,7 +260,8 @@ python paleo_benchmark.py --model all --period all --save-to-cloud
 | `--period` | `all` | `lgm`, `midHolocene`, `lig127k`, or `all` |
 | `--obs-source` | all | Filter to specific observation dataset(s) |
 | `--variable` | `all` | `tas`, `pr`, or `all` |
-| `--use-picontrol` | False | Use model's own piControl (via DataFinder) as PI reference instead of lgmDA Holocene |
+| `--picontrol-dir` | None | Directory of piControl NetCDF files (flat, or a CMOR/DRS tree) to use as the PI reference instead of the lgmDA Holocene field. Read with plain xarray, so the script stays self-contained. Replaced the retired `benchmark_utils.DataFinder` (local → Pangeo GCS → ESGF) |
+| `--use-picontrol` | False | Deprecated: now requires `--picontrol-dir`, and exits with an error without it rather than silently changing meaning |
 | `--save-to-cloud` | False | Save results to GCS `climatebench` bucket |
 | `--overwrite` | False | Overwrite existing results CSV |
 
@@ -244,6 +282,12 @@ compilations added for paper Appendix D (`Tierney2020_*`, `Osman2021Proxies_*`,
 `Cleator2020_*`, `Harrison2015_pr`, `SISALv3_d18O`, `Hoffman2017_tos`) are written for
 the Tier III protocol diagnostics and are not wired into `paleo_benchmark.py`.
 
+Its CRPS is also **not** the protocol's: it treats the proxy (μ, σ) as the forecast
+distribution and the model value as the observation — the inverse of Tier III's fair
+CRPS of a model pseudo-ensemble against the proxy value. Keep it for the AR6-style
+figures; for the protocol score use `climatebench2 score --suite ClimateBench2_TierIII`
+(see below).
+
 **Results:** `../results/paleo/{period}_paleo_benchmark_results.csv`  
 Columns: `model`, `period`, `dataset`, `variable`, `n_sites`, `rmse`, `mae`, `mean_crps`, `crps_skill`
 
@@ -261,6 +305,8 @@ paleo_scripts/
 ├── process_paleo_observations.py    # Step 3: process raw observations
 ├── process_paleo_models.py          # Step 4: compute model climatologies
 ├── paleo_benchmark.py               # Step 5: run spatial benchmarks
+├── paleo_utils.py                   # standardize_dims / save_results_csv
+│                                    #   (from the retired root utils.py)
 ├── README.md
 └── paleo_data_cache/
     ├── raw/

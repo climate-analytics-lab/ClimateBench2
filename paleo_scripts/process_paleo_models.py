@@ -19,14 +19,12 @@ Usage:
 
 import argparse
 import logging
-import sys
 from datetime import date
 from pathlib import Path
 
 import xarray as xr
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import standardize_dims
+from paleo_utils import standardize_dims
 
 PALEO_DIR = Path(__file__).parent
 RAW_MODELS = PALEO_DIR / "paleo_data_cache" / "raw" / "models"

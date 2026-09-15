@@ -15,8 +15,14 @@
 > ingestion, a post-2015 multi-member CMIP6 reference generator in ClimateEval,
 > entry-ticket tagging, the Tier III data contract) — is in
 > [`metrics_reference.md`](metrics_reference.md), §"Prioritized gap list".
-> The `constants.py`/`utils.py`/`benchmark_utils.py` island is still kept for
-> `paleo_scripts --use-picontrol`.
+> **The `constants.py`/`utils.py`/`benchmark_scrips/` island is gone** (work
+> package 7, 2026-09-14): `paleo_scripts/paleo_benchmark.py` takes a local
+> `--picontrol-dir DIR` instead of `benchmark_utils.DataFinder`, the three
+> helpers it still needed moved to `paleo_scripts/paleo_utils.py`, and
+> `constants.py`, `utils.py`, `benchmark_scrips/` and `env.yml` were deleted —
+> the last bullet of §9 below. Tier III is wired to the paleo pipeline's own
+> NetCDFs and scores the paper's fair CRPS; the perfect-model half of Tier III
+> exists as a code path (`score --truth DIR`) with no data staged.
 
 **Purpose.** Turn ClimateBench2 (CB2) into a *thin protocol layer* that runs on top of
 [ClimateEval](https://github.com/climate-federation/ClimateEval), so CB2 owns only the
@@ -244,6 +250,11 @@ asymmetry, seasonal-cycle triplet, and the three baselines. Requires daily-data 
 the perfect-model + large-ensemble-spread suite. *Deletes: `paleo_scrips/` bespoke loaders
 once ClimateEval CMORizer DataSources cover the paleo experiments; retire
 `app_data_prep/` + `esmvaltool/recipe_pr_rmse.yml` + `_to_delete_git_litter/`.*
+*Done 2026-09-14 (work package 7)* except the data: the proxy scoring reads the
+pipeline's NetCDFs, the perfect-model path swaps the Tier II reference for a held-out
+ESM run, and the legacy island is deleted — but no PMIP4-proxy DataSource exists
+upstream (PR #45 is the model half) and no CESM2/MPI-ESM/GISS-E2/CESM-LE output is
+staged.
 
 **Phase 6 — Leaderboard + docs.** `leaderboard/` renderer (`.ddb` → tiered scores table →
 static HTML: Tier I gate pass/fail, Tier II/III scores vs the three baselines). Rewrite
@@ -297,7 +308,18 @@ Decouple this track from the migration: CB2 works whether or not any PR merges.
   page.
 - No data-loading, regridding, or generic-diagnostic code remains in CB2 — only
   `diags/` (thresholds + scoring), `suites/`, `thresholds.yml`, `leaderboard/`, docs.
-- `benchmark_scrips/`, `download_scripts/`, `constants.py`, `utils.py`, `esmvaltool/`,
-  `_to_delete_git_litter/` are gone.
+- ✅ `benchmark_scrips/`, `download_scripts/`, `constants.py`, `utils.py`,
+  `esmvaltool/`, `_to_delete_git_litter/` are gone — the last four with **work
+  package 7** (2026-09-14), together with `env.yml`, the legacy conda
+  environment that existed only for them. What remains outside `climatebench2/`
+  is the **paleo pipeline** (`paleo_scripts/`), which is data preparation, not
+  protocol: it downloads and processes the proxy compilations that
+  `climatebench2/diags/tier3_paleo.py` then scores against. Its three
+  general-purpose helpers live in `paleo_scripts/paleo_utils.py` and depend on
+  nothing outside xarray/pandas.
 - Every Tier I/II/III row in `metrics_reference.md` is either a CB2 diagnostic or an
   explicitly-tracked gap — nothing silently dropped.
+- ⚠ **Not yet true:** `climatebench2 score` runs all three tiers, but Tier III's
+  perfect-model half (§III.2) has never had data to run on, and the Tier II skill
+  numbers stay empty until a post-2015 multi-member CMIP6 reference exists upstream
+  (PR #44). Both are tracked in the gap list rather than hidden.

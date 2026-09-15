@@ -14,7 +14,7 @@ Tier III Table 3). Where the paper and this document disagree, **the paper is th
 truth**; open a PR against this file rather than diverging in code.
 
 **Implementation synchronisation.** Status entries were re-audited on **2026-09-14**
-against the `climatebench2/` package at commit `74a4841` (migration Phase 6 of
+against the `climatebench2/` package at commit `8cfa36f` (migration Phase 6 of
 `docs/climateeval_delineation_plan.md`) and against **ClimateEval `main` @ `b0e941c`**
 (2026-09), which now contains the merged CB2 upstream PR #35 (`LandOceanWarmingRatio`,
 `ArcticAmplification`, `MeridionalHeatTransport` complex diagnostics; the
@@ -78,6 +78,17 @@ harmonic in local solar time with the phase scored as (cos, sin), and the
 packaged annual ERF table, one parameter calibrated on the observations through
 2014 and given pseudo-members so fair CRPS is defined for it. The daily suite
 now runs over the **full historical record** and is in-sample throughout.
+**Gap item 7 (work package 7)** then finished **Tier III**: `PaleoProxyScore`
+reads the paleo pipeline's own per-dataset NetCDFs (discrepancy #18) and
+scores the paper's primary statistic — the **fair CRPS of a block
+pseudo-ensemble** against each proxy compilation, with σ_proxy as the
+observational variance term — keeping the site-consistency fraction as the
+complementary diagnostic; every gate now carries a protocol `tier` so the
+scorecard places a check by tier rather than by the suite it runs in; the
+perfect-model path of §III.2 exists (`score --truth DIR`, a
+`LocalCMORReference` DataSource, the `perfect-model` window label and the
+large-ensemble spread test) but has no data to run on; and the legacy
+`constants.py`/`utils.py`/`benchmark_scrips/` island is **deleted**.
 
 **Open ClimateEval PRs (2026-09).** Several upstream PRs are in flight, each
 unblocking something recorded below: **#44** a multi-member historical+SSP2-4.5
@@ -94,9 +105,11 @@ directories); **#46** accepting `window_length = 1` in `Nino34` (retires CB2's
 legacy
 `benchmark_scrips/*.py` scripts that earlier revisions of this document audited were
 deleted in migration Phases 1–5; **every status entry below refers to
-`climatebench2/`**, and the only legacy survivors are `constants.py`, `utils.py` and
-`benchmark_scrips/benchmark_utils.py`, kept for `paleo_scripts/paleo_benchmark.py
---use-picontrol`.
+`climatebench2/`**, and as of **work package 7** there are no legacy survivors at all:
+`constants.py`, `utils.py`, `benchmark_scrips/` and `env.yml` are gone, because
+`paleo_scripts/paleo_benchmark.py` now takes `--picontrol-dir DIR` instead of
+`benchmark_utils.DataFinder` and the three helpers it still needed moved to
+`paleo_scripts/paleo_utils.py` (delineation plan §9).
 
 **Conventions.**
 - TOA net downward flux: `N = rsdt − rsut − rlut`
@@ -1830,16 +1843,16 @@ of that window's per-calendar-month values (⚠ CB2 interpretation, Tier II prea
 
 ## Tier III status summary
 
-| Diagnostic | Spec (short) | Protocol status | Impl. (2026-09-14) | Code |
+| Diagnostic | Spec (short) | Protocol status | Impl. (2026-09-14, gap item 7) | Code |
 |---|---|---|---|---|
-| lig127k vs proxies | PMIP4 BCs; Osman 2026 / Hoffman 2017 SST; Otto-Bliesner 2021 land T; Scussolini 2019 (+ SISALv3) precip | **Extended** | 🟡 `PaleoProxyConsistencyGate(period_key="lig127k")` — site-wise z-fraction, tas-only, and it **expects `paleo_scripts/paleo_observations/processed/lig127k_proxies.csv`, a file the pipeline never writes** (it produces `paleo_data_cache/processed/observations/lig127k/OttoBliesner2021_tas.nc`, `Scussolini2019_pr.nc`) | `diags/tier3_paleo.py`; data via `paleo_scripts/` |
-| lgm vs proxies | Tierney 2020 / Osman 2021 SST; Bartlein 2011 / Cleator 2020 land T | **Required** | 🟡 same disconnect; the pipeline's LGM targets are **lgmDA (Tierney 2020) and LGMR (Osman 2021) data-assimilation fields**, whereas paper App. D (2026-09) says use the **raw proxy compilations, not DA products**; Bartlein 2011 tas/pr gridded ✓; Cleator 2020 ❌ | same |
-| midHolocene vs proxies | Osman 2021 SST 5–7 ka; Temp12K; Bartlein 2011 tas + water balance | **Extended** | 🟡 same disconnect; Temp12K and Bartlein 2011 processed ✓; Osman 2021 MH SST ❌; Harrison 2015 lake status ❌ | same |
-| midHolocene North-Africa monsoon check | JJAS pr anomaly ≥ +0.5 mm/day, 10–30N, 20W–30E, vs piControl | Extended (with midHolocene) | ✅ `MidHoloceneMonsoonGate` | `diags/tier3_paleo.py` |
-| Proxy-aware scoring | **Fair CRPS vs proxies**, proxy error in the observational variance term; pseudo-members from non-overlapping equilibrated blocks | — | ❌ fair CRPS; ❌ block pseudo-members; 🟡 site-consistency fraction (`scoring.proxy_site_consistency`) as the complementary diagnostic. `paleo_scripts/paleo_benchmark.py` computes RMSE/MAE and a *Gaussian* CRPS with the **proxy** σ as the forecast width (proxy-as-distribution, model-as-point) — the inverse of the protocol's statistic | `scoring.py`, `paleo_benchmark.py` |
-| Perfect-model: CESM2 train→SSP2-4.5 daily tas/pr, Tier II scoring | **Required (ML only)** | | ❌ no suite, no data path | — |
-| Perfect-model: MPI-ESM, GISS ModelE2 | **Extended (ML only)** | | ❌ | — |
-| Large-ensemble spread test vs CESM-LE (variance ratio + spatial corr of inter-member variability) | **Extended** | | 🟡 `scoring.le_variance_ratio`, `le_spread_pattern_correlation` pure functions + `tier3.le_spread.variance_ratio_range` [0.5, 2.0] (TODO bound); no diagnostic, suite or CESM-LE data path | `scoring.py` |
+| lig127k vs proxies | PMIP4 BCs; Osman 2026 / Hoffman 2017 SST; Otto-Bliesner 2021 land T; Scussolini 2019 (+ SISALv3) precip | **Extended** | ✅ wired to the pipeline: `PaleoProxyScore` stanzas for **Otto-Bliesner 2021 `tas`** (92 sites) and **Scussolini 2019 `pr`** (manual download; no `pr_std`, so it writes a reason). Hoffman 2017 and SISALv3 are `NOT_SCOREABLE` with their reasons; Osman 2026 has no public archive | `diags/tier3_paleo.py`; data via `paleo_scripts/` |
+| lgm vs proxies | Tierney 2020 / Osman 2021 SST; Bartlein 2011 / Cleator 2020 land T | **Required** | ✅ **Tierney 2020 `tos`** (512 sites, the raw compilation behind lgmDA), **Bartlein 2011 `tas`/`pr`** (gridded pollen) scored; **Cleator 2020 `tas`/`pr`** computed and reported but tagged `data_assimilation` and excluded (App. D). The lgmDA / LGMR *fields* are left out of the suite entirely — Tierney 2020 is their raw input, and scoring both double-counts it. Osman 2021's site file is uncalibrated geochemistry, so it is `NOT_SCOREABLE` | same |
+| midHolocene vs proxies | Osman 2021 SST 5–7 ka; Temp12K; Bartlein 2011 tas + water balance | **Extended** | 🟡 **Bartlein 2011 `tas`/`pr`** scored; **Temp12k** has a live stanza that writes a reason — the processed file is a *latitude-band ensemble* (method × latband × age × member), which needs a zonal-mean comparison rather than site sampling (**deferred**); Osman 2021 MH SST uncalibrated as above | same |
+| midHolocene North-Africa monsoon check | JJAS pr anomaly ≥ +0.5 mm/day, 10–30N, 20W–30E, vs piControl | Extended (with midHolocene) | ✅ `MidHoloceneMonsoonGate`, now also reporting the model's **annual**-mean North-Africa anomaly and, beside it, the **Harrison & Prentice 2015** observed magnitude (`northafrica_pr_anom_obs_mmday`) when the pipeline has processed it — reported, never gated, because Harrison is an annual profile and the gate is JJAS | `diags/tier3_paleo.py` |
+| Proxy-aware scoring | **Fair CRPS vs proxies**, proxy error in the observational variance term; pseudo-members from non-overlapping equilibrated blocks | — | ✅ `scoring.proxy_crps` — per-site fair CRPS with σ_proxy as the observational variance term (the same common draws as Tier II), equal-weight mean over sites — on the pseudo-ensemble `scoring.block_climatologies` builds from `nonoverlapping_blocks` of the equilibrated run. ✅ the site-consistency fraction survives as the complementary diagnostic, now with the pseudo-member spread in its denominator. 🟡 `paleo_benchmark.py` still computes the inverse *Gaussian* CRPS for the AR6-style figures (#19) | `scoring.py`, `diags/tier3_paleo.py` |
+| Perfect-model: CESM2 train→SSP2-4.5 daily tas/pr, Tier II scoring | **Required (ML only)** | | 🟡 **structure, no data**: `score --truth DIR [--truth-member LABEL=PATH]` swaps the cube suites' `reference_data:` to `diags.truth_reference.LocalCMORReference` (a thin `load_cmor_dir` adapter; upstream candidate) via a materialised suite YAML, drops the CMIP6 comparison models, zeroes σ_obs and labels every row `window = perfect-model`. CESM2/MPI-ESM/GISS-E2 staging is **pending** | `diags/truth_reference.py`, `_cli.py` |
+| Perfect-model: MPI-ESM, GISS ModelE2 | **Extended (ML only)** | | 🟡 the same path, just a different `--truth DIR`; no data | same |
+| Large-ensemble spread test vs CESM-LE (variance ratio + spatial corr of inter-member variability) | **Extended** | | 🟡 wired: `scoring_pass.le_spread_rows` runs both statistics whenever truth members are in the database, gates the ratio at `tier3.le_spread.variance_ratio_range` [0.5, 2.0] (**TODO bound**) as a Tier III Extended check and reports the correlation unbounded. Synthetic databases only — no CESM-LE | `scoring.py`, `scoring_pass.py` |
 
 ## III.1 Paleo time-slices (lig127k, lgm, midHolocene)
 
@@ -1886,52 +1899,94 @@ passes = area_mean(dP.sel(lat=slice(10,30), lon=slice(-20 % 360 ... 30))) >= 0.5
 # note: 20W-30E crosses lon=0; handle 0-360 wraparound explicitly
 ```
 
-**Status: 🟡 protocol diagnostics exist but are not connected to the data pipeline.**
+**Status: ✅ wired to the pipeline and scored (2026-09-14, gap item 7).**
 - ✅ `diags/tier3_paleo.py::MidHoloceneMonsoonGate` (`midholocene` + `picontrol`):
   `extract_region` 340–30°E × 10–30N (wrap handled), `climate_statistics(period="month")`,
   JJAS cos-weighted mean, anomaly × 86400 gated ≥ `tier3.midholocene_monsoon.jjas_pr_anom_min`
-  = 0.5 mm/day (row `midholocene_monsoon`). Matches the spec.
-- 🟡 `PaleoProxyConsistencyGate(period_key, proxy_csv, var_name="tas")`: full-period
-  climatological anomaly (period − piControl) on the 2° grid, nearest-gridpoint sampling
-  at proxy sites (`scoring.sample_at_sites`, longitude modulo 360), per-site z with the
-  proxy `error` as σ (`scoring.proxy_site_consistency`, p < 0.05 two-sided); emits
-  `<period>_site_consistency` (fraction consistent), `<period>_n_sites`,
-  `<period>_mean_abs_z`. No gate check (the paper sets no bound on the fraction); the
-  leaderboard shows the fraction. This is the *complementary* statistic — the primary
-  fair CRPS with block pseudo-members is ❌.
-- ❌ **Data contract mismatch.** `ClimateBench2_TierIII.yml` points the three gates at
-  `paleo_scripts/paleo_observations/processed/{midholocene,lgm,lig127k}_proxies.csv`
-  (columns `lat`, `lon`, `tas_anom`/`anom`, `error`). `paleo_scripts/process_paleo_observations.py`
-  writes nothing of the kind: its outputs are per-dataset NetCDFs under
-  `paleo_scripts/paleo_data_cache/processed/observations/<period>/` — gridded
-  (`lgmDA_v2.1_tas.nc` with `tas`/`tas_std`, `LGMR_SAT_tas.nc`, `LGMR_SST_tos.nc`,
-  `Bartlein2011_{tas,pr}.nc` with `*_std`/`*_sig_val`, `Temp12k_tas.nc` with `tas_anom`)
-  or on a `site` dimension (`OttoBliesner2021_tas.nc`, `Scussolini2019_pr.nc` with
-  `pr_reliability`). The gate must read these NetCDFs (per dataset, per variable —
-  `tas`, `tos`, `pr`) instead of a CSV, and the suite needs one stanza per (period,
-  dataset). Paths are also CWD-relative; make them a `--data-root`-relative kwarg.
-- ❌ **Dataset coverage vs App. D.** Present in the pipeline: Bartlein 2011 (tas, pr;
-  lgm + midHolocene), Temp12K (midHolocene), Otto-Bliesner 2021 (lig127k tas),
-  Scussolini 2019 (lig127k pr), the IPCC AR6 Fig. 7.19 global means; `sisal_v3` is
-  downloadable but not processed. LGM SST/SAT come only from the **lgmDA / LGMR
-  assimilation products**, which the paper now excludes from scoring. Missing: Tierney
-  2020 and Osman 2021 **raw** SST proxy compilations (LGM, and Osman's 5–7 ka MH
-  averages), Osman 2026 / Hoffman 2017 LIG SST, Cleator 2020, Harrison 2015 lake status,
-  SISALv3 processing. `download_paleo_observations.py` keys today: `ipcc_ar6`, `lgmda`,
-  `bartlein2011`, `temp12k`, `osman2021`, `sisal_v3`, `lig127k`, `scussolini2019`,
-  `tierney_hansen`.
-- 🟡 `paleo_scripts/paleo_benchmark.py` (the pre-protocol benchmark, `--model
-  --period [--use-picontrol]`) regrids model climatologies to each proxy product and
-  reports RMSE, MAE and a Gaussian CRPS whose distribution is the *proxy* (μ, σ) and
-  whose "observation" is the model value, plus a skill score against a climatological
-  proxy distribution. Useful for the AR6-style figures, but not the protocol's fair CRPS
-  of a model pseudo-ensemble against the proxy value. `--use-picontrol` is the last user
-  of the legacy `constants.py`/`utils.py`/`benchmark_utils.DataFinder` island; it
-  retires once the Tier III suite takes piControl via `--experiment picontrol=`.
+  = 0.5 mm/day (row `midholocene_monsoon`). Matches the spec. It now also emits the
+  model's **annual**-mean North-Africa anomaly and the observed magnitude from
+  **Harrison & Prentice 2015** (`Harrison2015_pr.nc`, a latitudinal mm/yr profile
+  cos-weighted over 10–30N and converted to mm/day) as
+  `northafrica_pr_anom_obs_mmday` — reported beside the gate, never gated with it,
+  because the compilation is an *annual* anomaly and the requirement is JJAS.
+- ✅ **`PaleoProxyScore`** replaces `PaleoProxyConsistencyGate` and its CSV contract.
+  Per suite stanza — one (period, dataset, variable) triple, kwargs `period_key`,
+  `dataset` (the file stem), `var_name`, `model_var`, `landsea_mask`, `season_months`,
+  `paleo_data_root`:
+  1. **pseudo-members.** The paleo run's per-year climatologies of the scored season
+     are cut into non-overlapping blocks of `tier3.block_years` after dropping
+     `tier3.spinup_years` (`scoring.nonoverlapping_blocks`/`block_climatologies`);
+     each block mean minus the **full piControl climatology** is one member. A short
+     remainder is dropped rather than averaged over fewer years. Fewer than
+     `tier3.min_pseudo_members` = 2 blocks → a `reason` row, never an |x − y| fallback.
+  2. **sampling.** Every member is sampled at the proxy sites with
+     `scoring.sample_at_sites` (nearest gridpoint, longitude modulo 360). A *gridded*
+     compilation is flattened to its own cell centres first, which is exactly
+     nearest-neighbour regridding of the model onto the proxy grid — the right
+     treatment for a sparse product, where interpolating invents data. Curvilinear
+     2-D `lat`/`lon` (LGMR) flatten the same way.
+  3. **the score.** `scoring.proxy_crps`: per-site fair CRPS with σ_proxy as the
+     observational variance term through `crps_fair_with_obs_draws`
+     (`tier2.obs_uncertainty` seed and draw count, so Tier II and Tier III see the
+     same machinery), summarised as the **equal-weight mean over sites**
+     (`tier3.site_weighting: equal` — cos-latitude weights weight grid cells, not
+     cores). ⚠ the standard error is `std / sqrt(n_sites)`, which **ignores spatial
+     correlation between nearby sites** and is optimistic: a CB2 reading.
+  4. **the complementary diagnostic.** `scoring.proxy_site_consistency` with the
+     pseudo-member spread *and* σ_proxy in the denominator (previously σ_proxy alone),
+     emitted as `<period>_<dataset>_<var>_site_consistency`.
+  Rows land in the diagnostic's own `metrics` table in the scoring pass's column
+  vocabulary (`crps`, `crps_se`, `n_members`, `n_sites`, `dataset_type`,
+  `window = held-out`), tagged `scorer = climatebench2.tier3` so that
+  `leaderboard --rescore` — which deletes rows tagged `climatebench2` — leaves them
+  alone. `skill`/`e_ref` stay NaN with `reason = "no PMIP4 comparison ensemble
+  (ClimateEval PR #45)"`.
+- ✅ **Units and masking.** The model anomaly is converted to the dataset's own units
+  from its `units` attribute (`_units_factor`): temperature anomalies are identical in
+  K and degC, precipitation is not — Bartlein/Harrison/Cleator publish **mm/yr**, so
+  the factor is 86400 × 365.25. An unrecognised unit is a `reason` row, never an
+  assumed 1 (for `pr` that would be 3 × 10⁷ wrong). The model variable carries
+  ClimateEval's own `landsea_mask` (`land_only` for pollen, `sea_only` for SST), so a
+  site whose nearest gridpoint is masked is dropped rather than compared to the wrong
+  surface.
+- ✅ **Seasonality.** Comparisons are climatological anomalies of the **annual mean**
+  (`tier3.seasonality: annual`) unless a stanza names `season_months`; no processed
+  dataset is explicitly seasonal today (Bartlein's MTCO/MTWA are in the source archive
+  but the pipeline does not extract them), so every live stanza is annual.
+- ✅ **Dataset coverage vs App. D** (`climatebench2/suites/ClimateBench2_TierIII.yml`,
+  one stanza per row): LGM — `Tierney2020_tos` (site, 512), `Bartlein2011_tas`,
+  `Bartlein2011_pr`, plus `Cleator2020_tas`/`_pr` **reported not scored**;
+  mid-Holocene — `Bartlein2011_tas`/`_pr` and `Temp12k_tas` (reason row, see below);
+  LIG — `OttoBliesner2021_tas` and `Scussolini2019_pr`. Excluded with a written
+  reason, in the suite and in `tier3_paleo.NOT_SCOREABLE`: `Osman2021Proxies_proxy`
+  (uncalibrated UK′37/TEX86/Mg-Ca/δ¹⁸O in native units — calibration needs the
+  Bayesian forward models the pipeline deliberately does not choose),
+  `SISALv3_d18O` (needs isotope-enabled output), `Hoffman2017_tos` (superseded by
+  Osman 2026, which has no public archive), `Temp12k_tas` (a latitude-band ensemble,
+  not a site or gridded field). The lgmDA / LGMR *fields* are omitted from the suite:
+  Tierney 2020 is the raw compilation behind lgmDA, so scoring both double-counts it.
+- **Still open here.** (i) A **zonal-mean comparison** for Temp12k — the only App. D
+  dataset with a live stanza that cannot be scored as written; (ii) Scussolini 2019
+  ships `pr_reliability`, a semi-quantitative flag rather than a σ, and needs a ruling
+  on what σ_proxy should be; (iii) `block_years = 30` and `spinup_years = 100` are CB2
+  defaults, not paper values (TODO(Duncan)); (iv) neither the proxy files nor the PMIP4
+  model runs have been put through the diagnostic end to end — the tests build
+  synthetic NetCDFs in `tmp_path` so they never depend on the gitignored data cache.
+- 🟡 `paleo_scripts/paleo_benchmark.py` (the pre-protocol benchmark) still reports
+  RMSE, MAE and a Gaussian CRPS whose distribution is the *proxy* (μ, σ) and whose
+  "observation" is the model value — useful for the AR6-style figures, the inverse of
+  the protocol's statistic (#19). Its `--use-picontrol` **no longer uses
+  `benchmark_utils.DataFinder`**: it takes `--picontrol-dir DIR` and reads the run with
+  plain xarray, which is what allowed `constants.py`, `utils.py`, `benchmark_scrips/`
+  and `env.yml` to be deleted (delineation plan §9). The three helpers the paleo
+  scripts still needed moved to `paleo_scripts/paleo_utils.py`.
 - Tier III experiments enter through `--experiment midholocene=DIR` etc. (local
-  CMOR directories from `download_model_data/*.sh` + `process_paleo_models.py`); there
-  is no ClimateEval PMIP4 DataSource generator yet (an obvious upstream addition:
-  `CMIP6LgmR1I1P1F1` etc. by analogy with `CMIP6PiControlR1I1P1F1`).
+  CMOR directories from `download_model_data/*.sh` + `process_paleo_models.py`), and
+  the proxy targets through `--paleo-data-root DIR` (default
+  `tier3.paleo_data_root`); there is no ClimateEval PMIP4 DataSource generator yet —
+  **upstream PR #45** adds the `lgm`/`midHolocene`/`lig127k` model generators, and a
+  `PMIP4Proxies` CMORizer for the compilations is the obvious companion, which is
+  where `PaleoProxyScore`'s NetCDF reading belongs in the end.
 
 ## III.2 Perfect-model experiments
 
@@ -1957,17 +2012,53 @@ var_ratio = pred.var("member") / truth.var("member")      # target ~1 (e.g. with
 r_spatial = pattern_corr(pred.var("member"), truth.var("member"), weights=coslat)
 ```
 
-**Status: ❌ (functions only).** `scoring.le_variance_ratio` and
-`scoring.le_spread_pattern_correlation` implement (i) and (ii) with unit tests, and
-`thresholds.yml` carries a provisional `tier3.le_spread.variance_ratio_range = [0.5,
-2.0]` (marked TODO). There is no diagnostic class, no suite, no CLI path for a
-"truth" run in place of observations, and no CESM2 / MPI-ESM / GISS-E2 / CESM-LE data
-staging (the paper promises these on publication). Design intent (delineation plan §5):
-a Tier II suite instance whose `reference_data` is a `ESMValToolCMORizerDataSource`
-pointing at the held-out SSP2-4.5 truth, so the identical scored diagnostics run
-unchanged; the spread test is one small `ComplexDiagnostic` taking `{"prediction":
-members, "truth": CESM-LE members}`. Blocked on multi-member ingestion (§II.0) as much
-as on data.
+**Status: 🟡 the structure exists; no data is staged (2026-09-14, gap item 7).**
+The design intent of delineation plan §5 — a Tier II suite instance whose
+`reference_data` points at the held-out truth, so the identical scored diagnostics run
+unchanged — is now built:
+
+- **The truth as a DataSource.** `diags/truth_reference.py::LocalCMORReference` is a
+  `climateeval.data.DataSource` over a **local CMOR directory**, delegating to
+  `climateeval._loader.load_cmor_dir` (the same loader the submission goes through)
+  and then to the base class's `get_prepared_cube`, so the truth gets the identical
+  unit conversion, masking and time extraction as any published product. ⚠ **upstream
+  candidate**: ClimateEval has no "local directory" DataSource — every one of its
+  sources downloads and CMORizes a published dataset — and a generic
+  `LocalCMORDataSource(path, information)` belongs beside
+  `ESMValToolCMORizerDataSource`. The class adds no preprocessing of its own.
+- **The CLI.** `climatebench2 score MODEL --truth DIR [--truth-member LABEL=PATH]...
+  [--truth-name CESM2]`. A suite YAML names a *class*, which ClimateEval instantiates
+  with no arguments, so the directories are registered on the module
+  (`configure_truth`) before any `Suite` is built, and each extra member gets its own
+  generated subclass (hence its own `data_id`). `_cli.materialise_truth_suite` then
+  writes a temporary copy of each **cube** suite with every `reference_data:` swapped
+  and `other_data:` replaced by the truth members — keeping the suite *stem*, so the
+  suite name and its `.ddb` filename are unchanged. The experiment suites (Tier I,
+  Tier III paleo) and the piControl-fed variability suite are untouched: they have no
+  observations to replace.
+- **What the pass does with it.** The truth records itself in `data_sources` with
+  `category = "truth"`, which makes the behaviour self-describing and survive
+  `leaderboard --rescore`: `scoring_pass.is_perfect_model` labels every row
+  `window = perfect-model` (a third label beside held-out/in-sample — out-of-sample
+  evidence, but against a model, not the world), **σ_obs is zero** (the truth is known
+  exactly; carrying the instrumental floor would flatter every submission equally),
+  the CMIP6 comparison models are gone so `E_ref` and the skill are empty by
+  construction, and a truth member gets a `reason` row rather than being scored as a
+  competitor against itself.
+- **The large-ensemble spread test.** `scoring_pass.le_spread_rows` runs whenever truth
+  members are present, for each variable of `tier3.le_spread.variables` (`tas`, `pr`):
+  `scoring.le_variance_ratio`, gated at `tier3.le_spread.variance_ratio_range`
+  = [0.5, 2.0] (**still a TODO bound**) as a Tier III **Extended** check — so it is
+  reported for credit and never part of the entry ticket — and
+  `scoring.le_spread_pattern_correlation`, reported without a bound because the paper
+  sets none. On a time-series `raw_output` the remaining axis is time, so "pattern"
+  means the shape of the spread through the record; the same two functions apply to a
+  Map `raw_output` whose axis is space, and only the stacking would differ.
+- ❌ **Data staging is pending.** No CESM2, MPI-ESM, GISS-E2 or CESM-LE output exists
+  in this repository or upstream (the paper promises them on publication), so *none*
+  of the above has run against real data: the tests build synthetic databases and a
+  synthetic CMOR directory. The submission side is also untested — nothing has yet
+  produced daily `tas`/`pr` predictions to score.
 
 ---
 
@@ -1977,7 +2068,7 @@ as on data.
 |---|---|---|---|---|
 | I | 18 sub-checks (16 Table-1 rows) + 2 code-only extras; all tagged Required / Extended / extra, entry ticket over the Required group only | **18 — every Table-1 row**: I.1, I.2a, I.2b, I.3a, I.3b, **I.3c**, I.4a, I.4b, I.5a, I.5b, **I.5c**, I.5d, I.6a, I.6b, I.6c, **I.7**, I.8a, I.8b (+ Bjerknes, C–C vs their own specs); I.6a/b, I.6c and I.8a are thin CB2 gates over ClimateEval `main`'s own diagnostics | 0 | 0 — but six gates (I.3b, I.3c, I.4a, I.4b, I.5c, I.5d) have only ever run on synthetic cubes, I.3c's stored reference slope is null, and I.5c has no ERA5 temperature reference upstream |
 | II | fair-CRPS engine + skill score + baselines + ~20 diagnostic families | **fair CRPS with the M = 1 rule; member stacking by model name; ESS correction; moving-block bootstrap; observational-uncertainty draws with a real σ_obs; CMIP6-median `E_ref` with leave-one-out; regime (b) as fair CRPS on the reference's fixed pre-2015 EOF basis; the aggregated-scalar regime; σ_int from piControl chunks in the consistency test; the reference's pre-test record carried past the test-window cut; one label per model across the tiers; the realized warming level and both GMST trends with the GSAT blending correction; held-out / in-sample labelling end to end; per-member runs of the Tier II events suite; the skill table in the leaderboard; the eight **ETCCDI extremes** on the 1° conservative grid; the **Perkins** PDF skill and its own leaderboard table; the three **seasonal-cycle** metrics; the **diurnal** first harmonic in local solar time with a (cos, sin) phase; the **pattern-scaling** baseline for GMST-type series, ERF-driven and calibrated through 2014**; deterministic metrics for tas/pr/TOA(all- and clear-sky)/prw/clouds/tos/OHC(total, 2000 m, 100 m)/sea-ice via ClimateEval | climatology baseline scored as a distribution (CB2 interpretation, ⚠) and only for regime (a); every σ_obs value — the GSAT blending factor and the packaged ERF table — provisional (⚠); the regime-(b) bootstrap axis, the model-anomaly definition, the EBM pseudo-members, the (cos, sin) phase, the per-calendar-month extremes threshold and `clt` as the low-cloud proxy are CB2 readings (⚠); Gaussian consistency null; Pinatubo `rsds` and the ITCZ shift still sign-only (no obs product); **the ETCCDI extremes computed but unscored — no daily obs DataSource (HadEX3)**; `tas` scored against HadCRUT5 alone, so no inter-product σ_obs; sea-ice area not extent (PR #47 stanza commented in) | ts; surface fluxes; the **spatial** half of pattern scaling (CMIP6-MMM pattern, PR #44); a regime-(b) climatology baseline; **post-2015 multi-member CMIP6 reference (ClimateEval) — without it `E_ref` and every skill number stay empty** |
-| III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | monsoon gate | site-consistency fraction for the three periods — disconnected from the pipeline's NetCDFs, tas-only, DA products instead of raw proxies; LE-spread functions | fair CRPS with block pseudo-members; raw SST proxy compilations; perfect-model suite and data |
+| III | 3 paleo periods + monsoon check + proxy scoring + perfect model + LE spread | **the monsoon gate (with the Harrison 2015 magnitude beside it); the fair CRPS of a block pseudo-ensemble against the proxy compilations, with σ_proxy as the observational variance term and the site-consistency fraction beside it; one suite stanza per (period, dataset, variable) reading the pipeline's own NetCDFs; the App. D scored/reported split by `dataset_type`; a `tier` tag on every gate so Tier III has its own scorecard section** | Temp12k needs a zonal-mean comparison (live stanza, writes its reason); Scussolini 2019 has a reliability flag, not a σ; `block_years`/`spinup_years` are CB2 defaults (⚠); the site standard error ignores inter-site correlation (⚠); **the perfect-model path and the LE-spread test are wired end to end but have never seen data** — no CESM2/MPI-ESM/GISS-E2/CESM-LE is staged, and the variance-ratio bound is a TODO | the PMIP4 comparison ensemble behind `E_ref` (upstream PR #45); a PMIP4-proxy DataSource upstream; Osman 2026 LIG SST (unarchived); calibrated Osman 2021 SSTs |
 
 **Cross-cutting discrepancies (paper vs current `climatebench2/` code) — complete list,
 2026-09-14:**
@@ -2099,10 +2190,23 @@ as on data.
     extra separately and computes the entry ticket (✓ / ✗ / ⚠ incomplete) over the
     Required group alone, with the full Required set taken from the gate classes so an
     unrun gate reads as a hole, not a pass.
-18. Tier III proxy gates read `{period}_proxies.csv` files the pipeline does not write;
-    the pipeline's LGM targets are DA products the paper now excludes; tas-only.
+18. ~~Tier III proxy gates read `{period}_proxies.csv` files the pipeline does not
+    write; the pipeline's LGM targets are DA products the paper now excludes;
+    tas-only.~~ **DONE (2026-09-14, gap item 7, `f1fbdfe`/`f39a9f2`):**
+    `PaleoProxyScore` reads one processed dataset NetCDF per (period, dataset,
+    variable) — site or gridded, `tas`/`tos`/`pr` — from `--paleo-data-root`; the raw
+    compilations (Tierney 2020, Bartlein 2011, Otto-Bliesner 2021, Scussolini 2019)
+    are scored, the DA products (Cleator 2020) reported and tagged, the lgmDA/LGMR
+    fields dropped as duplicates of Tierney 2020, and the primary statistic is the
+    **fair CRPS of a block pseudo-ensemble** rather than the consistency fraction
+    alone. *Open:* Temp12k's latitude bands need a zonal-mean comparison, and
+    Scussolini 2019 publishes a reliability flag rather than a σ.
 19. `paleo_benchmark.py`'s Gaussian CRPS treats the proxy as the forecast distribution —
-    the inverse of the protocol's model-ensemble fair CRPS.
+    the inverse of the protocol's model-ensemble fair CRPS. **Unchanged and
+    deliberate** (2026-09-14): the script now serves only the AR6-style figures, and
+    the protocol's statistic lives in `PaleoProxyScore`. What *did* change is its data
+    path — `--picontrol-dir DIR` instead of `benchmark_utils.DataFinder`, which
+    retired the last of the legacy island (§9 of the delineation plan).
 20. ~~Duplicate physics vs ClimateEval `main` — land–ocean, Arctic and MHT exist upstream
     with identical outputs; `_MISSING_FROM_REGISTRY`/`RegistryFreeVariable` are obsolete
     (`rsds`/`rsus`/`rlds`/`rlus` landed upstream); the pin is 2 months stale.~~
@@ -2319,14 +2423,45 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    (GISTEMP, Berkeley Earth, NOAAGlobalTemp — without which the GMST scalars
    have a single observational product and no inter-product σ_obs — HadSST/CRU
    TS, NSIDC Sea Ice Index, RSS, CERES SYN, BSRN).
-7. **Tier III**: read the pipeline's per-dataset NetCDFs instead of the non-existent
+7. ~~**Tier III**: read the pipeline's per-dataset NetCDFs instead of the non-existent
    CSVs, one stanza per (period, dataset, variable) (#18); add the raw SST compilations
    (Tierney 2020, Osman 2021/2026, Hoffman 2017), Cleator 2020, Harrison 2015 and SISALv3
    processing and drop the DA products from scoring; fair CRPS with block pseudo-members
    from the equilibrated run; a PMIP4 DataSource generator *upstream*; the perfect-model
    + LE-spread suite once CESM2/MPI/GISS/CESM-LE data are staged (#19); retire
    `paleo_benchmark.py --use-picontrol` and with it `constants.py`, `utils.py`,
-   `benchmark_utils.py`.
+   `benchmark_utils.py`.~~ — **DONE 2026-09-14 (work package 7, `f1fbdfe`, `f39a9f2`,
+   `8cfa36f` + this docs commit):**
+   - **The maths** (`f1fbdfe`): `scoring.nonoverlapping_blocks` /
+     `block_climatologies` / `proxy_crps` — the equilibrated-portion rule, the block
+     pseudo-members it selects, and the per-site fair CRPS with σ_proxy as the
+     observational variance term, meaned with equal weight over sites. The `tier3`
+     protocol constants (`block_years`, `spinup_years`, `paleo_data_root`,
+     `site_weighting`, `scored_dataset_types`, `seasonality`) and a `tier:` tag on
+     every gate block joined `thresholds.yml`.
+   - **The wiring** (`f39a9f2`): `PaleoProxyScore` replaces
+     `PaleoProxyConsistencyGate`, reading one processed NetCDF per stanza; the suite
+     carries a stanza for every scoreable (period, dataset, variable) and explains, in
+     place, each dataset it omits; the DA products are reported and tagged rather than
+     scored; gate rows carry their protocol `tier` and the leaderboard groups by it,
+     which moves `midholocene_monsoon` out of the Tier I Extended table.
+   - **The perfect model** (`8cfa36f`): `LocalCMORReference`, `score --truth DIR
+     --truth-member LABEL=PATH`, the materialised suite YAML, the `perfect-model`
+     window label with σ_obs = 0, and `le_spread_rows` for the III.2 spread test.
+   - **The legacy island** (this commit): `paleo_benchmark.py --picontrol-dir DIR`
+     replaces `DataFinder`, `paleo_scripts/paleo_utils.py` holds the three helpers the
+     paleo scripts needed, and `constants.py`, `utils.py`, `benchmark_scrips/` and
+     `env.yml` are **deleted**.
+
+   *Still open here:* a zonal-mean comparison for Temp12k; a σ for Scussolini 2019;
+   Duncan's ruling on the block length, the spin-up allowance and the site weighting;
+   the LE variance-ratio bound; and the whole of III.2 against real data —
+   CESM2/MPI-ESM/GISS-E2/CESM-LE staging is pending, so the perfect-model path has
+   only ever run on synthetic databases.
+   *Still open, upstream:* a PMIP4 model DataSource generator (**PR #45**) and a
+   `PMIP4Proxies` CMORizer for the compilations, which is where `PaleoProxyScore`'s
+   NetCDF reading ultimately belongs; a generic `LocalCMORDataSource` beside
+   `ESMValToolCMORizerDataSource`.
 8. **Upstream track** (delineation plan §7): the generic physics still in CB2 —
    geostrophic balance, MJO ratio, ITCZ–EFE, clear-sky β, closure residuals,
    teleconnection regression maps, amip-4xCO2 ERF, GFMIP Δλ, Pinatubo / hemispheric

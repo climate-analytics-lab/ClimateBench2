@@ -171,8 +171,8 @@ cells fall back to the raw CRPS), a **daily observational product** — no
 ClimateEval DataSource supplies `tasmax`/`tasmin`, so the extremes are
 reported model-only and unscored until HadEX3 lands upstream — the CMIP6
 multi-model-mean warming pattern for the *spatial* half of pattern scaling
-(ClimateEval PR #44), and wiring Tier III to the paleo pipeline's NetCDF
-outputs. Every σ_obs value in `thresholds.yml`, the GSAT blending factor and
+(ClimateEval PR #44), and data for Tier III's perfect-model half. Every σ_obs
+value in `thresholds.yml`, the GSAT blending factor and
 the packaged ERF table are provisional and need Duncan's ruling.
 Required/Extended/extra tagging of the Tier I gates, declared N/A and the
 Required-only entry ticket landed on 2026-09-14 (gap item 2). The same day
@@ -188,9 +188,33 @@ land–ocean, Arctic and meridional-heat-transport diagnostics upstream; CB2's
 copies have been replaced by thin gate wrappers that add only the protocol's
 thresholds.
 
-## Legacy remnant
+**Work package 7** then finished **Tier III**. The paleo diagnostics read the
+`paleo_scripts/` pipeline's own per-dataset NetCDFs — one suite stanza per
+(period, dataset, variable) — and compute the protocol's primary statistic:
+the **fair CRPS of a block pseudo-ensemble** (the climatological anomalies of
+non-overlapping blocks of the equilibrated paleo run, minus the full piControl
+climatology) against the proxy values, with the proxy σ as the observational
+variance term and an equal-weight mean over sites; the site-consistency
+fraction stays beside it as the complementary diagnostic. Paper Appendix D's
+distinction is enforced in code: the raw compilations (Tierney 2020,
+Bartlein 2011, Otto-Bliesner 2021, Scussolini 2019) are scored, the
+data-assimilation products (Cleator 2020) are computed, tagged and excluded,
+and a dataset that cannot be scored at all — uncalibrated proxies, speleothem
+δ¹⁸O without isotope-enabled output, a superseded compilation — writes the
+reason instead of a number. Every gate now also carries its protocol **tier**,
+so the scorecard places a check by tier rather than by the suite it runs in.
+The **perfect-model** half (III.2) exists as a code path —
+`score --truth DIR [--truth-member LABEL=PATH]` swaps the cube suites'
+reference for a held-out ESM run, labels the rows `perfect-model` and runs the
+large-ensemble spread test — but no CESM2/MPI-ESM/GISS-E2/CESM-LE output is
+staged, so it has only ever run on synthetic databases.
 
-`constants.py`, `utils.py` and `benchmark_scrips/benchmark_utils.py`
-(`DataFinder`) remain only because `paleo_scripts/paleo_benchmark.py
---use-picontrol` imports them; they retire together once the paleo pipeline
-loads piControl via ClimateEval. Do not add new functionality there.
+## No legacy remnant
+
+As of work package 7 the repository contains no pre-ClimateEval code:
+`constants.py`, `utils.py`, `benchmark_scrips/` (`DataFinder`) and `env.yml`
+have been deleted. `paleo_scripts/paleo_benchmark.py` now takes a local
+`--picontrol-dir DIR` instead of `DataFinder`, and the three general-purpose
+helpers the paleo scripts still needed live in `paleo_scripts/paleo_utils.py`.
+Everything outside `climatebench2/` is the paleo **data pipeline** — download
+and processing for the Tier III proxy targets — not protocol code.

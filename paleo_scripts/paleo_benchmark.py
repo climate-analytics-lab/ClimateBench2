@@ -22,14 +22,19 @@ whose paleo response falls outside proxy uncertainty bounds.
 
 For anomaly-based comparisons the model paleo temperature is differenced against
 the lgmDA Holocene (PI) field as a spatially resolved modern reference. Pass
---use-picontrol to load the model's own piControl from the main ClimateBench
-DataFinder pipeline instead (requires processed piControl data).
+--picontrol-dir DIR to use the model's own piControl instead: DIR is a local
+directory (or CMOR/DRS tree) of piControl NetCDF files, read with plain
+xarray so this script stays self-contained. This replaced the legacy
+`benchmark_utils.DataFinder` (local -> Pangeo GCS -> ESGF), whose retirement
+removed the last of the pre-ClimateEval code from the repository; if you want
+the old auto-discovery, fetch the piControl once and point this at it.
 
 Usage:
     cd paleo_scripts
     python paleo_benchmark.py --model AWI-ESM-1-1-LR --period lgm
     python paleo_benchmark.py --model all --period all
-    python paleo_benchmark.py --model MIROC-ES2L --period lgm --use-picontrol
+    python paleo_benchmark.py --model MIROC-ES2L --period lgm \
+        --picontrol-dir /data/MIROC-ES2L/piControl
     python paleo_benchmark.py --model all --period lgm --obs-source lgmDA
     python paleo_benchmark.py --model all --period lgm --obs-source Bartlein2011 --variable tas
     python paleo_benchmark.py --model all --period all --save-to-cloud
@@ -55,8 +60,7 @@ import pandas as pd
 import xarray as xr
 from scipy.special import erf
 
-sys.path.append("..")
-from utils import save_results_csv, standardize_dims
+from paleo_utils import save_results_csv, standardize_dims
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -234,19 +238,45 @@ def _load_model_pr(model: str, period: str) -> xr.DataArray | None:
     return da * 86400 * 365.25
 
 
-def _load_picontrol_tas(model: str) -> xr.DataArray | None:
-    """Load piControl annual-mean tas via the main ClimateBench DataFinder."""
-    try:
-        sys.path.append(str(PALEO_DIR.parent / "benchmark_scrips"))
-        from benchmark_utils import DataFinder
+def _load_picontrol_field(
+    picontrol_dir: Path, variable: str
+) -> xr.DataArray | None:
+    """Time-mean piControl field from a local directory of NetCDF files.
 
-        df = DataFinder(model=model, variable="tas", start_year=1850, end_year=2000)
-        pi_ds = df.load_experiment_ds(experiment="piControl", ensemble_mean=True)
-        pi_da = standardize_dims(pi_ds)["tas"]
-        return _to_celsius(pi_da.mean(dim="time"))
-    except Exception as e:
-        logger.warning(f"  Could not load piControl for {model}: {e}")
+    Plain xarray, recursively over `picontrol_dir`: files whose name starts
+    with the variable if there are any (a CMOR/DRS tree), every NetCDF
+    otherwise (a flat directory). Deliberately not ClimateEval's
+    `load_cmor_dir` — that returns iris cubes, and this script is xarray
+    throughout; keeping it self-contained is the point of the change.
+    """
+    paths = sorted(picontrol_dir.rglob(f"{variable}_*.nc")) or sorted(
+        picontrol_dir.rglob("*.nc")
+    )
+    if not paths:
+        logger.warning(f"  No NetCDF files for '{variable}' under {picontrol_dir}")
         return None
+    try:
+        ds = xr.open_mfdataset(
+            [str(path) for path in paths],
+            combine="by_coords",
+            use_cftime=True,
+        )
+        if variable not in ds:
+            logger.warning(
+                f"  {picontrol_dir} has no variable '{variable}' "
+                f"(found {sorted(ds.data_vars)})"
+            )
+            return None
+        return standardize_dims(ds)[variable].mean(dim="time").load()
+    except Exception as e:
+        logger.warning(f"  Could not load piControl {variable} from {picontrol_dir}: {e}")
+        return None
+
+
+def _load_picontrol_tas(picontrol_dir: Path) -> xr.DataArray | None:
+    """piControl time-mean tas (degC) from a local piControl directory."""
+    field = _load_picontrol_field(picontrol_dir, "tas")
+    return None if field is None else _to_celsius(field)
 
 
 def _load_lgmda_pi_tas() -> xr.DataArray | None:
@@ -537,7 +567,7 @@ OBS_SOURCE_REGISTRY: dict[str, dict[str, dict[str, tuple]]] = {
 
 def _run_lgm(
     model: str,
-    use_picontrol: bool,
+    picontrol_dir: Path | None,
     obs_sources: list[str] | None,
     variables: list[str],
 ) -> list[dict]:
@@ -549,8 +579,8 @@ def _run_lgm(
     if run_tas and model_tas is None:
         return rows
 
-    if use_picontrol:
-        pi_ref = _load_picontrol_tas(model)
+    if picontrol_dir is not None:
+        pi_ref = _load_picontrol_tas(picontrol_dir)
         if pi_ref is None:
             logger.warning("  Falling back to lgmDA PI reference")
             pi_ref = _load_lgmda_pi_tas()
@@ -578,7 +608,7 @@ def _run_lgm(
         if run_pr and "Bartlein2011" in sources:
             model_pr = _load_model_pr(model, "lgm")
             model_pr_anom = (
-                _compute_pr_anom(model_pr, model, "lgm", use_picontrol)
+                _compute_pr_anom(model_pr, "lgm", picontrol_dir)
                 if model_pr is not None
                 else None
             )
@@ -591,7 +621,7 @@ def _run_lgm(
 
 def _run_midholocene(
     model: str,
-    use_picontrol: bool,
+    picontrol_dir: Path | None,
     obs_sources: list[str] | None,
     variables: list[str],
 ) -> list[dict]:
@@ -603,7 +633,11 @@ def _run_midholocene(
     if run_tas and model_tas is None:
         return rows
 
-    pi_ref = _load_picontrol_tas(model) if use_picontrol else _load_lgmda_pi_tas()
+    pi_ref = (
+        _load_picontrol_tas(picontrol_dir)
+        if picontrol_dir is not None
+        else _load_lgmda_pi_tas()
+    )
     if pi_ref is None:
         logger.warning(
             "  No PI reference — skipping anomaly benchmarks for midHolocene"
@@ -622,7 +656,7 @@ def _run_midholocene(
     if run_pr and "Bartlein2011" in sources:
         model_pr = _load_model_pr(model, "midHolocene")
         model_pr_anom = (
-            _compute_pr_anom(model_pr, model, "midHolocene", use_picontrol)
+            _compute_pr_anom(model_pr, "midHolocene", picontrol_dir)
             if model_pr is not None
             else None
         )
@@ -633,7 +667,7 @@ def _run_midholocene(
 
 def _run_lig127k(
     model: str,
-    use_picontrol: bool,
+    picontrol_dir: Path | None,
     obs_sources: list[str] | None,
     variables: list[str],
 ) -> list[dict]:
@@ -643,7 +677,11 @@ def _run_lig127k(
 
     model_tas = _load_model_tas(model, "lig127k") if run_tas else None
 
-    pi_ref = _load_picontrol_tas(model) if use_picontrol else _load_lgmda_pi_tas()
+    pi_ref = (
+        _load_picontrol_tas(picontrol_dir)
+        if picontrol_dir is not None
+        else _load_lgmda_pi_tas()
+    )
     if pi_ref is None:
         logger.warning("  No PI reference — skipping anomaly benchmarks for lig127k")
         return rows
@@ -658,7 +696,7 @@ def _run_lig127k(
     if run_pr and "Scussolini2019" in sources:
         model_pr = _load_model_pr(model, "lig127k")
         model_pr_anom = (
-            _compute_pr_anom(model_pr, model, "lig127k", use_picontrol)
+            _compute_pr_anom(model_pr, "lig127k", picontrol_dir)
             if model_pr is not None
             else None
         )
@@ -669,28 +707,21 @@ def _run_lig127k(
 
 def _compute_pr_anom(
     model_pr: xr.DataArray | None,
-    model: str,
     period: str,
-    use_picontrol: bool,
+    picontrol_dir: Path | None,
 ) -> xr.DataArray | None:
     """Compute model precipitation anomaly (mm/yr) relative to PI reference."""
     if model_pr is None:
         return None
-    if use_picontrol:
-        try:
-            sys.path.append(str(PALEO_DIR.parent / "benchmark_scrips"))
-            from benchmark_utils import DataFinder
-
-            df = DataFinder(model=model, variable="pr", start_year=1850, end_year=2000)
-            pi_ds = df.load_experiment_ds(experiment="piControl", ensemble_mean=True)
-            pi_pr = standardize_dims(pi_ds)["pr"].mean(dim="time") * 86400 * 365.25
+    if picontrol_dir is not None:
+        pi_pr = _load_picontrol_field(picontrol_dir, "pr")
+        if pi_pr is not None:
+            pi_pr = pi_pr * 86400 * 365.25
             pi_pr_on_model = _regrid(pi_pr, model_pr.lat.values, model_pr.lon.values)
             return model_pr - pi_pr_on_model
-        except Exception as e:
-            logger.warning(f"  Could not load piControl pr: {e}")
     logger.warning(
         f"  No precipitation PI reference for {period} — skipping pr anomaly benchmarks. "
-        "Pass --use-picontrol to enable."
+        "Pass --picontrol-dir DIR to enable."
     )
     return None
 
@@ -709,7 +740,7 @@ PERIOD_RUNNERS = {
 def main(
     models: list[str],
     periods: list[str],
-    use_picontrol: bool = False,
+    picontrol_dir: Path | None = None,
     save_to_cloud: bool = False,
     overwrite: bool = False,
     obs_sources: list[str] | None = None,
@@ -728,7 +759,7 @@ def main(
                 )
                 continue
             logger.info(f"\n{'='*60}\n  {model} / {period}\n{'='*60}")
-            rows = PERIOD_RUNNERS[period](model, use_picontrol, obs_sources, variables)
+            rows = PERIOD_RUNNERS[period](model, picontrol_dir, obs_sources, variables)
             rows_by_period[period].extend(rows)
             if not rows:
                 logger.warning(f"  No benchmark results for {model}/{period}")
@@ -786,10 +817,26 @@ if __name__ == "__main__":
         help="Variable(s) to benchmark: tas, pr, or all (default: all)",
     )
     parser.add_argument(
+        "--picontrol-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory of piControl NetCDF files (flat or a CMOR/DRS tree) to "
+            "use as the PI reference for the model anomalies, instead of the "
+            "lgmDA Holocene field. Required for the precipitation benchmarks "
+            "(Bartlein MAP, Scussolini LIG)."
+        ),
+    )
+    parser.add_argument(
         "--use-picontrol",
         action="store_true",
         default=False,
-        help="Load model piControl from main ClimateBench DataFinder for anomaly computation",
+        help=(
+            "Deprecated: kept so old command lines fail loudly rather than "
+            "silently changing meaning. It now requires --picontrol-dir, "
+            "which replaced the retired DataFinder auto-discovery."
+        ),
     )
     parser.add_argument(
         "--save-to-cloud",
@@ -832,14 +879,23 @@ if __name__ == "__main__":
     logger.info(f"Periods:   {period_list}")
     logger.info(f"Variables: {variable_list}")
     logger.info(f"Sources:   {args.obs_source or 'all'}")
+    if args.use_picontrol and args.picontrol_dir is None:
+        logger.error(
+            "--use-picontrol no longer discovers the piControl by itself: the "
+            "legacy DataFinder (local -> Pangeo GCS -> ESGF) was retired with "
+            "constants.py/utils.py/benchmark_scrips/. Fetch the run once and "
+            "pass --picontrol-dir DIR."
+        )
+        sys.exit(2)
     logger.info(
-        f"PI reference: {'piControl (DataFinder)' if args.use_picontrol else 'lgmDA Holocene'}"
+        f"PI reference: "
+        f"{args.picontrol_dir if args.picontrol_dir else 'lgmDA Holocene'}"
     )
 
     main(
         models=model_list,
         periods=period_list,
-        use_picontrol=args.use_picontrol,
+        picontrol_dir=args.picontrol_dir,
         save_to_cloud=args.save_to_cloud,
         overwrite=args.overwrite,
         obs_sources=args.obs_source,

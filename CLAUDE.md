@@ -35,7 +35,7 @@ climatebench2/
 ├── physics.py           # pure Tier I physics + the ETCCDI indices (numpy only)
 ├── baselines.py         # climatology pseudo-members, the calibrated two-layer EBM
 ├── data/                # packaged protocol tables (the ERF series behind the EBM)
-├── leaderboard/         # .ddb results → scores table (→ static HTML page, Phase 6)
+├── leaderboard/         # .ddb results → scores table → static HTML page
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 ```
 
@@ -65,8 +65,13 @@ Key integration facts (verified against ClimateEval `main`):
   columns to `metrics`, never a new schema. `scoring_pass` recognises three
   `raw_output` shapes — a **time series** (regime a), an **EOF-coefficient**
   table (regime b) and **aggregated scalars** with no time axis (§II.1) —
-  and every row it writes carries a `held-out` / `in-sample` `window` label
-  from `tier2.window_labels`. A CB2 **`ScalarTableDiagnostic`**
+  and every row it writes carries a `held-out` / `in-sample` / `perfect-model`
+  `window` label (`tier2.window_labels`; `perfect-model` whenever the
+  reference's `data_sources.category` is `truth`). Tier III's paleo rows are
+  written by the diagnostic itself in the same column vocabulary, tagged
+  `scorer = climatebench2.tier3` so `--rescore` does not delete them, and
+  every **gate** row carries its protocol `tier` (I/II/III) as well as its
+  `requirement`, which is what the leaderboard groups by. A CB2 **`ScalarTableDiagnostic`**
   (`diags/tier2_daily.py`) is how a *simple* diagnostic writes that third
   shape, so the suite's own `reference_data:` supplies the observed value.
   A **skill** score that is not an error — the Perkins PDF overlap — is
@@ -90,6 +95,13 @@ climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --mem
 #   takes the post-2015 test window (tier2.test_window_start) once per ensemble
 #   member, and TierII_daily takes the FULL record (its extremes/PDF/diurnal
 #   climatologies are defined over it, so every entry there is in-sample)
+climatebench2 score MODEL --experiment lgm=DIR --experiment picontrol=DIR \
+    --paleo-data-root paleo_scripts/paleo_data_cache/processed/observations
+#   Tier III: the paleo slices vs the pipeline's processed proxy NetCDFs
+climatebench2 score MODEL --truth /data/CESM2/ssp245 --truth-member r2i1p1f1=DIR
+#   Tier III.2 perfect model: the cube suites score against a HELD-OUT ESM run
+#   instead of observations (window = perfect-model); truth members drive the
+#   large-ensemble spread test. No truth data is staged yet.
 climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scorecard (HTML)
 climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb  # re-run the Tier II pass
 climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report
@@ -100,9 +112,11 @@ cd ../ClimateEval && PYTHONPATH=$OLDPWD pixi run --frozen python -m pytest $OLDP
 
 ## Paleoclimate pipeline (`paleo_scripts/`)
 
-From the merged `paleo_data` PR (#114) — note this directory is spelled
-*correctly* (only `benchmark_scrips/` keeps its intentional typo). Tier III
-of the protocol wraps this in Phase 5 of the delineation plan.
+From the merged `paleo_data` PR (#114). This pipeline is **data preparation,
+not protocol**: it downloads and processes the proxy compilations of paper
+Appendix D, and `climatebench2/diags/tier3_paleo.py::PaleoProxyScore` scores
+the model against its output (one suite stanza per period/dataset/variable,
+reading `paleo_data_cache/processed/observations/<period>/<dataset>.nc`).
 
 ```bash
 cd paleo_scripts
@@ -120,20 +134,23 @@ python process_paleo_models.py --model all --period all      # model monthly cli
 # Benchmark (spatial RMSE/MAE/CRPS)
 python paleo_benchmark.py --model AWI-ESM-1-1-LR --period lgm
 python paleo_benchmark.py --model all --period all
-python paleo_benchmark.py --model MIROC-ES2L --period lgm --use-picontrol
+python paleo_benchmark.py --model MIROC-ES2L --period lgm \
+    --picontrol-dir /data/MIROC-ES2L/piControl
 ```
 
-PI reference for anomaly computation: lgmDA Holocene (default) or model
-piControl (`--use-picontrol`). Precipitation benchmarks (Bartlein MAP,
-Scussolini LIG) require `--use-picontrol` and processed `pr` data.
+PI reference for anomaly computation: lgmDA Holocene (default) or the model's
+own piControl (`--picontrol-dir DIR`, a local directory or CMOR/DRS tree read
+with plain xarray). Precipitation benchmarks (Bartlein MAP, Scussolini LIG)
+require `--picontrol-dir` and processed `pr` data.
 
-## Legacy remnant (do not extend)
+## No legacy remnant (WP7, 2026-09-14)
 
-The bespoke pipeline was retired piecewise across migration Phases 1–5
-(every deletion is one phase commit; see `git log`). The only survivors are
-`constants.py`, `utils.py` and `benchmark_scrips/benchmark_utils.py`
-(`DataFinder`: local → Pangeo GCS `gs://cmip6/` → ESGF), kept solely because
-`paleo_scripts/paleo_benchmark.py --use-picontrol` imports them (they need
-the legacy conda env: `conda env create -f env.yml`). Retire all three once
-the paleo pipeline loads piControl via ClimateEval. Note the intentional
-typo: `benchmark_scrips/`.
+The bespoke pipeline was retired piecewise across migration Phases 1–5 (every
+deletion is one phase commit; see `git log`), and work package 7 removed the
+last of it: `constants.py`, `utils.py`, `benchmark_scrips/` (`DataFinder`:
+local → Pangeo GCS → ESGF) and `env.yml` are **deleted**, because
+`paleo_benchmark.py` takes `--picontrol-dir DIR` instead of `DataFinder` and
+the three helpers the paleo scripts still used moved to
+`paleo_scripts/paleo_utils.py`. There is no legacy conda environment any
+more; everything runs in the ClimateEval pixi env (see `tests/README.md`).
+Nothing outside `climatebench2/` and `paleo_scripts/` should reappear.

@@ -47,6 +47,7 @@ from climatebench2.scoring_pass import (
     TIER3_SCORER,
     WINDOW_HELD_OUT,
     WINDOW_IN_SAMPLE,
+    WINDOW_PERFECT_MODEL,
 )
 
 if TYPE_CHECKING:
@@ -540,7 +541,7 @@ SKILL_DISPLAY_FLOOR = -1.0
 #: post-2015 test period — come first, with the in-sample ones (climatologies
 #: and event diagnostics over the historical record the models were developed
 #: against) reported after them and clearly marked.
-_WINDOW_ORDER = {WINDOW_HELD_OUT: 0, WINDOW_IN_SAMPLE: 1}
+_WINDOW_ORDER = {WINDOW_HELD_OUT: 0, WINDOW_PERFECT_MODEL: 1, WINDOW_IN_SAMPLE: 2}
 
 
 def variable_windows(crps: pd.DataFrame) -> dict[str, str]:
@@ -559,9 +560,22 @@ def variable_windows(crps: pd.DataFrame) -> dict[str, str]:
     return labels
 
 
+#: CSS class per window label. `perfect-model` shares the held-out styling:
+#: it is out-of-sample evidence too, just against a model rather than the
+#: real world.
+_WINDOW_CLASS = {
+    WINDOW_HELD_OUT: "held",
+    WINDOW_PERFECT_MODEL: "held",
+    WINDOW_IN_SAMPLE: "insample",
+}
+
+
+def _window_class(label: str) -> str:
+    return _WINDOW_CLASS.get(label, "insample")
+
+
 def _window_badge(label: str) -> str:
-    cls = "held" if label == WINDOW_HELD_OUT else "insample"
-    return f"<br><small class='badge {cls}'>{_esc(label)}</small>"
+    return f"<br><small class='badge {_window_class(label)}'>{_esc(label)}</small>"
 
 
 def _number(value: object) -> float:
@@ -805,7 +819,7 @@ def _consistency_table_html(consistency: pd.DataFrame) -> str:
                 cls = "pass" if val >= 1.0 else "fail"
                 cells.append(f"<td class='{cls}'>{'✓' if val >= 1.0 else '✗'}</td>")
             elif c == "window" and isinstance(val, str) and val:
-                badge = "held" if val == WINDOW_HELD_OUT else "insample"
+                badge = _window_class(val)
                 cells.append(f"<td><span class='badge {badge}'>{_esc(val)}</span></td>")
             elif isinstance(val, float) and not pd.isna(val):
                 cells.append(f"<td class='num'>{val:.4g}</td>")

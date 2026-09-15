@@ -18,6 +18,8 @@ Modules (docs/climateeval_delineation_plan.md §4):
 - ``baselines``      — climatology persistence / EBM pattern scaling / MME (Phase 4)
 - ``tier3_paleo``    — the Tier III fair CRPS against the pipeline's proxy
                        NetCDFs + the mid-Holocene monsoon check (WP7)
+- ``truth_reference``— the perfect-model (III.2) truth DataSource: a held-out
+                       ESM run standing in for the observations (WP7)
 
 Every diagnostic subclasses ``climateeval.diags._base.Diagnostic`` (usually via
 ``SimpleDiagnostic`` or ``ComplexDiagnostic``) and takes its thresholds from
@@ -77,6 +79,7 @@ from climatebench2.diags.tier3_paleo import (
     MidHoloceneMonsoonGate,
     PaleoProxyScore,
 )
+from climatebench2.diags.truth_reference import LocalCMORReference
 from climatebench2.diags.tier2_reference import (
     ReferenceBaselineRecord,
     ReferenceEOFProjection,
@@ -113,6 +116,7 @@ __all__ = [
     "LandAnnualTemperatureRange",
     "InternalVariability",
     "LandOceanWarmingGate",
+    "LocalCMORReference",
     "MJOGate",
     "MeridionalHeatTransportGate",
     "MidHoloceneMonsoonGate",

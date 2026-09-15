@@ -128,6 +128,10 @@ CLIMATOLOGY_DATA_ID = "Climatology"
 #: (:func:`_eof_pattern_scaling_row`).
 PATTERN_SCALING_DATA_ID = "PatternScaling"
 
+#: ``data_id`` of the III.2 large-ensemble spread rows. Not a model: the test
+#: is a statement about the *relationship* between two ensembles.
+LE_SPREAD_DATA_ID = "LargeEnsembleSpread"
+
 #: ``data_type`` of the reference's pre-test baseline-window rows, written by
 #: ``climatebench2.diags.ReferenceBaselineRecord`` (which imports these).
 #: They are a *sample*, never a target: nothing is ever scored against them.
@@ -170,6 +174,17 @@ SCALAR_CONSISTENCY_SUFFIX = "_consistency"
 #: test period (``in-sample``) or not (``held-out``).
 WINDOW_HELD_OUT = "held-out"
 WINDOW_IN_SAMPLE = "in-sample"
+
+#: Label of a row scored against a **held-out ESM run** rather than against
+#: observations (metrics_reference.md §III.2). It is neither of the other
+#: two: the truth is known exactly (σ_obs = 0) and the target is a model, so
+#: the number is not evidence about the real world at all.
+WINDOW_PERFECT_MODEL = "perfect-model"
+
+#: ``data_sources.category`` of a perfect-model truth run
+#: (:mod:`climatebench2.diags.truth_reference`). A truth source is never a
+#: comparison model: it must not enter ``E_ref``.
+TRUTH_CATEGORY = "truth"
 
 #: Minimum overlapping time steps for a score to be meaningful.
 _MIN_OVERLAP = 3
@@ -365,6 +380,22 @@ def is_observational(
     return any(categories.get(i, "") in OBSERVATIONAL_CATEGORIES for i in data_ids)
 
 
+def is_truth(
+    data_type: str,
+    data_ids: list[str],
+    categories: dict[str, str],
+) -> bool:
+    """Whether a group is a perfect-model **truth** run (§III.2).
+
+    Truth members ride in ``other_data`` so the large-ensemble spread test
+    can reach them, but they are the target, not a competitor: scoring them
+    would put the truth into its own ``E_ref``.
+    """
+    if data_type != "other":
+        return False
+    return any(categories.get(i, "") == TRUTH_CATEGORY for i in data_ids)
+
+
 def stack_members(
     members: list[pd.DataFrame],
     reference: pd.DataFrame,
@@ -429,10 +460,36 @@ def window_label(diagnostic: str, var_id: str) -> str:
     return str(table["default"])
 
 
-def _apply_window_labels(rows: list[dict[str, Any]], diagnostic: str) -> None:
-    """Stamp the held-out / in-sample label on every row, in place."""
+def is_perfect_model(
+    raw_df: pd.DataFrame,
+    categories: dict[str, str],
+) -> bool:
+    """Whether this diagnostic's reference is a held-out ESM run (§III.2).
+
+    Self-describing, so it survives ``leaderboard --rescore``: the truth
+    DataSource records itself in ``data_sources`` with
+    ``category = "truth"``, and any row scored against it is labelled
+    ``perfect-model`` rather than held-out/in-sample.
+    """
+    if "data_type" not in raw_df.columns:
+        return False
+    reference_ids = raw_df.loc[raw_df["data_type"] == "reference", "data_id"]
+    return any(categories.get(str(i), "") == TRUTH_CATEGORY for i in reference_ids)
+
+
+def _apply_window_labels(
+    rows: list[dict[str, Any]],
+    diagnostic: str,
+    *,
+    perfect_model: bool = False,
+) -> None:
+    """Stamp the held-out / in-sample / perfect-model label, in place."""
     for row in rows:
-        row["window"] = window_label(diagnostic, str(row.get("var_id", "")))
+        row["window"] = (
+            WINDOW_PERFECT_MODEL
+            if perfect_model
+            else window_label(diagnostic, str(row.get("var_id", "")))
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1047,13 +1104,18 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
     observational = {
         key: is_observational(key[0], ids.get(key, []), categories) for key in groups
     }
+    truth = {key: is_truth(key[0], ids.get(key, []), categories) for key in groups}
+    perfect_model = is_perfect_model(raw_df, categories)
 
     rows: list[dict[str, Any]] = []
     for column in var_columns:
         reference = reference_for_variable(references, column)
         if reference is None:
             continue
-        floor = obs_sigma_floor(column)
+        # A perfect-model truth run is known exactly: there is no
+        # observational error to draw over, and carrying the instrumental
+        # floor here would flatter every submission equally.
+        floor = 0.0 if perfect_model else obs_sigma_floor(column)
         sigma = observational_sigma(
             reference,
             [f for key, frames in groups.items() if observational[key] for f in frames],
@@ -1071,6 +1133,15 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
                     data_type,
                     column,
                     "observational product (a term in sigma_obs, not scored)",
+                )
+                continue
+            if truth[key]:
+                scored[key] = _empty_row(
+                    name,
+                    data_type,
+                    column,
+                    "perfect-model truth member (the spread-test target, "
+                    "not a comparison model)",
                 )
                 continue
             members, obs, times = stack_members(member_frames, reference, column)
@@ -1133,7 +1204,149 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
         _apply_reference_skill(scored)
         rows.extend(scored.values())
         rows.extend(consistency)
-    _apply_window_labels(rows, diagnostic)
+    rows.extend(le_spread_rows(groups, truth, var_columns))
+    _apply_window_labels(rows, diagnostic, perfect_model=perfect_model)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# III.2: the large-ensemble spread test
+# ---------------------------------------------------------------------------
+
+
+def _stacked(frames: list[pd.DataFrame], column: str) -> pd.DataFrame | None:
+    """Inner-join member series on their shared times: one column per member."""
+    merged: pd.DataFrame | None = None
+    for i, frame in enumerate(frames):
+        part = frame[["time", column]].rename(columns={column: f"m{i}"}).dropna()
+        merged = (
+            part if merged is None else pd.merge(merged, part, on="time", how="inner")
+        )
+    if merged is None or merged.empty:
+        return None
+    return merged.sort_values("time")
+
+
+def _matrix(stacked: pd.DataFrame, times: pd.Series) -> np.ndarray:
+    """``(n_members, n_time)`` of a stacked frame, cut to ``times``."""
+    frame = stacked[stacked["time"].isin(set(times))].sort_values("time")
+    columns = [c for c in frame.columns if c != "time"]
+    return frame[columns].to_numpy(float).T
+
+
+def le_spread_rows(
+    groups: dict[tuple[str, str], list[pd.DataFrame]],
+    truth: dict[tuple[str, str], bool],
+    var_columns: list[str],
+) -> list[dict[str, Any]]:
+    """The perfect-model large-ensemble spread test (metrics_reference §III.2).
+
+    When a database carries **truth members** — the truth model's own
+    ensemble, ingested through ``other_data`` by ``score --truth-member`` —
+    the submission's inter-member variability is compared with the truth
+    ensemble's, for each variable of ``tier3.le_spread.variables``:
+
+    (i) the **variance ratio** (predicted / true inter-member variance),
+        gated at ``tier3.le_spread.variance_ratio_range`` — an Extended Tier
+        III check, reported for credit and never part of the entry ticket;
+    (ii) the **pattern correlation** of the two inter-member variance
+         fields, reported without a bound (the paper sets none).
+
+    Both come from :mod:`climatebench2.scoring`; this is only the plumbing
+    that finds the two ensembles and writes the rows. On a *time-series*
+    raw_output the remaining axis is time, so "pattern" is the shape of the
+    spread through the record; the same two functions apply unchanged to a
+    Map raw_output whose axis is space — only the stacking would differ, and
+    the pass scores no Map today.
+
+    ⚠ Never exercised on real data: CESM2 / MPI-ESM / GISS-E2 and CESM-LE
+    are not staged (the paper promises them on publication), so the tests
+    are synthetic databases and the bound is still a TODO.
+    """
+    truth_frames = [f for key, frames in groups.items() if truth[key] for f in frames]
+    predicted = [
+        frames
+        for key, frames in groups.items()
+        if key[0] == "to_benchmark" and not truth[key]
+    ]
+    if not truth_frames or not predicted:
+        return []
+    lower, upper = get_threshold("tier3.le_spread.variance_ratio_range")
+    requirement = str(get_threshold("tier3.le_spread.requirement"))
+    tier = str(get_threshold("tier3.le_spread.tier"))
+    wanted = set(get_threshold("tier3.le_spread.variables"))
+
+    def reason_row(column: str, reason: str) -> dict[str, Any]:
+        return empty_score_row(
+            LE_SPREAD_DATA_ID,
+            "to_benchmark",
+            f"{column}_le_variance_ratio",
+            reason,
+        )
+
+    rows: list[dict[str, Any]] = []
+    for column in var_columns:
+        if column not in wanted:
+            continue
+        true = _stacked(truth_frames, column)
+        if true is None:
+            continue
+        for member_frames in predicted:
+            pred = _stacked(member_frames, column)
+            if pred is None:
+                continue
+            common = pred.merge(true[["time"]], on="time", how="inner")["time"]
+            if common.size < _MIN_OVERLAP:
+                continue
+            pred_matrix = _matrix(pred, common)
+            true_matrix = _matrix(true, common)
+            if min(pred_matrix.shape[0], true_matrix.shape[0]) < _MIN_MEMBERS:
+                rows.append(
+                    reason_row(
+                        column,
+                        f"needs >= {_MIN_MEMBERS} members on each side, got "
+                        f"{pred_matrix.shape[0]} predicted and "
+                        f"{true_matrix.shape[0]} truth",
+                    ),
+                )
+                continue
+            try:
+                ratio = scoring.le_variance_ratio(pred_matrix, true_matrix)
+                correlation = scoring.le_spread_pattern_correlation(
+                    pred_matrix,
+                    true_matrix,
+                )
+            except ValueError as exc:
+                rows.append(reason_row(column, str(exc)))
+                continue
+            ratio_row = empty_score_row(
+                LE_SPREAD_DATA_ID,
+                "to_benchmark",
+                f"{column}_le_variance_ratio",
+            )
+            ratio_row.update(
+                value=ratio,
+                passes=float(lower <= ratio <= upper),
+                bound_lower=float(lower),
+                bound_upper=float(upper),
+                requirement=requirement,
+                tier=tier,
+                applicable=1.0,
+                n_members=float(pred_matrix.shape[0]),
+                n_time=float(common.size),
+            )
+            correlation_row = empty_score_row(
+                LE_SPREAD_DATA_ID,
+                "to_benchmark",
+                f"{column}_le_spread_pattern_corr",
+                "reported without a bound (the paper sets none)",
+            )
+            correlation_row.update(
+                value=correlation,
+                n_members=float(pred_matrix.shape[0]),
+                n_time=float(common.size),
+            )
+            rows.extend([ratio_row, correlation_row])
     return rows
 
 
@@ -1333,6 +1546,15 @@ def score_scalar_output(  # noqa: C901
                     "observational product (a term in sigma_obs, not scored)",
                 )
                 continue
+            if is_truth(data_type, ids[key], categories):
+                scored[key] = _empty_row(
+                    name,
+                    data_type,
+                    column,
+                    "perfect-model truth member (the spread-test target, "
+                    "not a comparison model)",
+                )
+                continue
             values = np.asarray(member_values, dtype=float)
             if values.size < _MIN_MEMBERS:
                 scored[key] = _empty_row(name, data_type, column, "single member")
@@ -1375,7 +1597,11 @@ def score_scalar_output(  # noqa: C901
         _apply_reference_skill(scored)
         rows.extend(scored.values())
         rows.extend(consistency)
-    _apply_window_labels(rows, diagnostic)
+    _apply_window_labels(
+        rows,
+        diagnostic,
+        perfect_model=is_perfect_model(raw_df, categories),
+    )
     return rows
 
 
@@ -1482,7 +1708,11 @@ def score_eof_output(
         )
         _apply_reference_skill(scored)
         rows.extend(scored.values())
-    _apply_window_labels(rows, diagnostic)
+    _apply_window_labels(
+        rows,
+        diagnostic,
+        perfect_model=is_perfect_model(raw_df, source_categories(data_sources)),
+    )
     return rows
 
 

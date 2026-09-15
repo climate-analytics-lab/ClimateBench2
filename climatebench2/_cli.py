@@ -228,6 +228,56 @@ def _resolve_suite(name: str) -> str:
     return name
 
 
+def substitute_reference(node: Any, reference: str, others: list[str]) -> Any:  # noqa: ANN401
+    """Replace every ``reference_data``/``other_data`` in a suite definition.
+
+    The perfect-model test (metrics_reference.md §III.2) runs the **ordinary**
+    Tier II diagnostics with a held-out ESM run in place of the observations,
+    so nothing about the diagnostics changes — only which DataSource class
+    their variables name. Walking the parsed YAML and swapping those two keys
+    is the whole substitution; the result is written to a temporary suite
+    file with the *same stem*, so the suite keeps its name and its database
+    filename.
+
+    ``other_data`` becomes the truth model's remaining ensemble members (or
+    is dropped): the CMIP6 comparison models belong to the observational
+    scorecard, and leaving them in would make ``E_ref`` a comparison against
+    the real world inside a perfect-model experiment.
+    """
+    if isinstance(node, list):
+        return [substitute_reference(item, reference, others) for item in node]
+    if not isinstance(node, dict):
+        return node
+    out: dict[str, Any] = {}
+    for key, value in node.items():
+        if key == "reference_data":
+            out[key] = reference
+        elif key == "other_data":
+            if others:
+                out[key] = list(others)
+        else:
+            out[key] = substitute_reference(value, reference, others)
+    if "reference_data" in node and others and "other_data" not in out:
+        out["other_data"] = list(others)
+    return out
+
+
+def materialise_truth_suite(
+    resolved: str,
+    out_dir: Path,
+    reference: str,
+    others: list[str],
+) -> str:
+    """Write a copy of a suite YAML whose references are the truth run."""
+    import yaml
+
+    definition = yaml.safe_load(Path(resolved).read_text(encoding="utf-8"))
+    swapped = substitute_reference(definition, reference, others)
+    target = out_dir / f"{Path(resolved).stem}.yml"
+    target.write_text(yaml.safe_dump(swapped, sort_keys=False), encoding="utf-8")
+    return str(target)
+
+
 def _parse_experiments(specs: list[str] | None) -> dict[str, Path]:
     """Parse repeated ``--experiment KEY=PATH`` options."""
     experiments: dict[str, Path] = {}
@@ -361,6 +411,46 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
 
     not_applicable = [name.strip() for name in (args.not_applicable or [])]
 
+    # Perfect model (III.2): the cube suites score against a held-out ESM run
+    # instead of observations. Registering the directories here, before any
+    # Suite is built, is what lets a suite YAML name the DataSource class.
+    truth_reference: str | None = None
+    truth_others: list[str] = []
+    truth_suite_dir: Path | None = None
+    if args.truth is not None:
+        from climatebench2.diags.truth_reference import configure_truth
+
+        if not args.truth.exists():
+            msg = f"Truth path not found: {args.truth}"
+            raise SystemExit(msg)
+        truth_members = _parse_members(args.truth_member)
+        for label, path in truth_members.items():
+            if not path.exists():
+                msg = f"Truth member path not found: {label}={path}"
+                raise SystemExit(msg)
+        truth_reference, truth_others = configure_truth(
+            args.truth,
+            truth_members,
+            name=args.truth_name,
+        )
+        truth_suite_dir = out_dir / "_perfect_model_suites"
+        truth_suite_dir.mkdir(parents=True, exist_ok=True)
+        print(
+            f"Perfect-model run: scoring against the held-out truth "
+            f"'{args.truth_name}' at {args.truth}"
+            + (
+                f" with {len(truth_members)} further truth member(s) "
+                f"({', '.join(truth_members)}) for the large-ensemble spread "
+                f"test"
+                if truth_members
+                else " (no --truth-member given: no spread test)"
+            )
+            + ". Every scored row is labelled window = perfect-model, and the "
+            "CMIP6 comparison models are dropped — E_ref against the real "
+            "world is meaningless here.",
+            file=sys.stderr,
+        )
+
     def build_suite(
         resolved: str,
         extra: dict[str, Any],
@@ -383,6 +473,23 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
         diagnostics = build_suite(resolved, {}, None)._get_diagnostics()
         spec = _suite_spec(stem, diagnostics, ComplexDiagnostic)
         timerange = suite_timerange(spec, args.timerange)
+
+        # The truth run replaces the observations only where there ARE
+        # observations to replace: the cube suites fed by the submission. The
+        # piControl-sourced variability suite and the experiment suites (Tier
+        # I gates, Tier III paleo) are unaffected by a perfect-model run.
+        if (
+            truth_reference is not None
+            and truth_suite_dir is not None
+            and spec.shape == "cubes"
+            and spec.source == "model"
+        ):
+            resolved = materialise_truth_suite(
+                resolved,
+                truth_suite_dir,
+                truth_reference,
+                truth_others,
+            )
 
         # `not_applicable` is a complex-diagnostic kwarg (declared N/A gates);
         # ClimateEval's simple diagnostics take no **kwargs, so it is only
@@ -675,6 +782,36 @@ def build_parser() -> argparse.ArgumentParser:
             "member's own record as its `historical` experiment); the Tier I "
             "and paleo suites run once per model, on the first member."
         ),
+    )
+    score.add_argument(
+        "--truth",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Perfect-model test (Tier III.2): CMOR output of a HELD-OUT ESM "
+            "run to score against instead of observations. The cube-based "
+            "Tier II suites then use it as their reference for every "
+            "variable, the CMIP6 comparison models are dropped (E_ref against "
+            "the real world is meaningless in a perfect-model experiment) and "
+            "every scored row is labelled window = perfect-model."
+        ),
+    )
+    score.add_argument(
+        "--truth-member",
+        action="append",
+        metavar="LABEL=PATH",
+        help=(
+            "A further ensemble member of the truth model (repeatable). These "
+            "are not extra references: they are what the large-ensemble "
+            "spread test compares the submission's own inter-member spread "
+            "against (tier3.le_spread, Extended)."
+        ),
+    )
+    score.add_argument(
+        "--truth-name",
+        default="PerfectModelTruth",
+        help="Name the truth run is recorded under (e.g. CESM2).",
     )
     score.add_argument(
         "--timerange",

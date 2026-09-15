@@ -31,14 +31,21 @@ ratio, Arctic amplification, meridional heat transport), which take their
 protocol constants from `thresholds.yml`, so their suite entries keep
 `additional_diagnostic_kwargs: {}`.
 
-| Suite | Data shape | Contents |
-|---|---|---|
-| `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | 17 physical-consistency gates: ECS, energy balance, closures, clear-sky β, precip–buoyancy, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ + the Bjerknes and C–C extras — **plus** `internal_variability`, which is not a gate: it reports the piControl σ_int the Tier II consistency test needs, and rides here because this is where the control is loaded in full |
-| `ClimateBench2_TierI_variability` | cubes (monthly `tos`) | ENSO amplitude + spectral-shape gates |
-| `ClimateBench2_TierII` | cubes (monthly) | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4 — `tas`, `pr`, all-sky **and clear-sky** TOA (`rsut`/`rlut`/`rtnt`/`rsutcs`/`rlutcs`), `prw`, clouds (`clt`/`clwvi`/`clivi`), SST, sea ice, OHC (total, 0–2000 m **and 0–100 m**) — plus `reference_baseline` / `sst_baseline` (the reference's pre-test 1985–2014 record) and `eof_projection` / `sst_eof_projection` (the regime-(b) coefficients on the reference's fixed pre-2015 EOF basis) |
-| `ClimateBench2_TierII_daily` | cubes (daily/hourly), **full record**, once per member | `extremes` — the eight ETCCDI indices (TXx, TNn, TX90p, WSDI; Rx1day, Rx5day, R95pTOT, CDD) as a climatological mean and a decadal trend per land band, on the ~1° conservative grid; `perkins` — the PDF-overlap skill of daily `tas` anomalies and wet-day `pr` intensity; `diurnal_harmonic` — first-harmonic amplitude and (cos, sin) phase of the sub-daily `pr` climatology in local solar time; plus the older deterministic displays (TXx block maxima, pr intensity histogram, `DiurnalCycle`) |
-| `ClimateBench2_TierII_events` | experiment dict (`historical`), **once per ensemble member** | The Tier II aggregated scalars of §II.1 — realized warming level (the protocol's primary test-window statistic) and the two GMST trends, the Pinatubo response, the aerosol-era hemispheric asymmetry, and the three **seasonal-cycle metrics** (land annual temperature range; SST–low-cloud covariance and the seasonal cloud-radiative feedback over the five stratocumulus decks). Reported and *scored*, never part of the Tier I entry ticket |
-| `ClimateBench2_TierIII` | experiment dict (`picontrol` + `midholocene`/`lgm`/`lig127k`) | The mid-Holocene Green-Sahara monsoon gate (with the Harrison 2015 North-Africa magnitude reported beside it) plus **one `PaleoProxyScore` stanza per (period, dataset, variable)** — LGM Tierney 2020 `tos`, Bartlein 2011 `tas`/`pr` and Cleator 2020 `tas`/`pr` (data assimilation: reported, not scored); mid-Holocene Bartlein 2011 `tas`/`pr` and Temp12k; LIG Otto-Bliesner 2021 `tas` and Scussolini 2019 `pr`. Each reads one processed NetCDF from `paleo_scripts/process_paleo_observations.py` (`--paleo-data-root DIR`, default `tier3.paleo_data_root`), scores the model's **block pseudo-ensemble** against it with fair CRPS and reports the site-consistency fraction |
+| Suite | Data shape | Window | Per member? | Contents |
+|---|---|---|---|---|
+| `ClimateBench2_TierI` | experiment dict (`picontrol`, `4xco2`, `histaer`, `historical`, `day`, `amip`, `amip4xco2`, `patch_ep`, `patch_wp`) | full | no | 17 physical-consistency gates: ECS, energy balance, closures, clear-sky β, precip–buoyancy, land–ocean, Arctic, aerosol ERF, MHT, ITCZ–EFE, ENSO teleconnections, geostrophic balance, MJO, amip-4xCO2 ERF, GFMIP Δλ + the Bjerknes and C–C extras — **plus** `internal_variability`, which is not a gate: it reports the piControl σ_int the Tier II consistency test needs, and rides here because this is where the control is loaded in full |
+| `ClimateBench2_TierI_variability` | cubes (monthly `tos`), from `picontrol` | full (≥ 100 yr) | no | ENSO amplitude + spectral-shape gates |
+| `ClimateBench2_TierII` | cubes (monthly) | post-2015 test window | **yes** | Core variables vs HadCRUT5/GPCP/CERES/ESACCI/OSI-450/EN4 — `tas`, `pr`, all-sky **and clear-sky** TOA (`rsut`/`rlut`/`rtnt`/`rsutcs`/`rlutcs`), `prw`, clouds (`clt`/`clwvi`/`clivi`), SST, sea ice, OHC (total, 0–2000 m **and 0–100 m**) — plus `reference_baseline` / `sst_baseline` (the reference's pre-test 1985–2014 record) and `eof_projection` / `sst_eof_projection` (the regime-(b) coefficients on the reference's fixed pre-2015 EOF basis) |
+| `ClimateBench2_TierII_daily` | cubes (daily/hourly) | **full record** | **yes** | `extremes` — the eight ETCCDI indices (TXx, TNn, TX90p, WSDI; Rx1day, Rx5day, R95pTOT, CDD) as a climatological mean and a decadal trend per land band, on the ~1° conservative grid; `perkins` — the PDF-overlap skill of daily `tas` anomalies and wet-day `pr` intensity; `diurnal_harmonic` — first-harmonic amplitude and (cos, sin) phase of the sub-daily `pr` climatology in local solar time; plus the older deterministic displays (TXx block maxima, pr intensity histogram, `DiurnalCycle`) |
+| `ClimateBench2_TierII_events` | experiment dict (`historical`) | full | **yes** | The Tier II aggregated scalars of §II.1 — realized warming level (the protocol's primary test-window statistic) and the two GMST trends, the Pinatubo response, the aerosol-era hemispheric asymmetry, and the three **seasonal-cycle metrics** (land annual temperature range; SST–low-cloud covariance and the seasonal cloud-radiative feedback over the five stratocumulus decks). Reported and *scored*, never part of the Tier I entry ticket |
+| `ClimateBench2_TierIII` | experiment dict (`picontrol` + `midholocene`/`lgm`/`lig127k`) | full | no | The mid-Holocene Green-Sahara monsoon gate (with the Harrison 2015 North-Africa magnitude reported beside it) plus **one `PaleoProxyScore` stanza per (period, dataset, variable)** — LGM Tierney 2020 `tos`, Bartlein 2011 `tas`/`pr` and Cleator 2020 `tas`/`pr` (data assimilation: reported, not scored); mid-Holocene Bartlein 2011 `tas`/`pr` and Temp12k; LIG Otto-Bliesner 2021 `tas` and Scussolini 2019 `pr`. Each reads one processed NetCDF from `paleo_scripts/process_paleo_observations.py` (`--paleo-data-root DIR`, default `tier3.paleo_data_root`), scores the model's **block pseudo-ensemble** against it with fair CRPS and reports the site-consistency fraction |
+
+Four of the six are CLI defaults (`DEFAULT_SUITES`): Tier I, the variability suite,
+the Tier II events suite and the monthly Tier II suite. `ClimateBench2_TierII_daily`
+and `ClimateBench2_TierIII` are **not** — they need `day`-table output and the paleo
+experiments respectively — so ask for them explicitly with `--suite`. Every suite in
+`SUITE_REGISTRY`, defaults included, is built and type-checked by
+`tests/test_suites.py`.
 
 The `Scored*` diagnostics named by the Tier II suites (and `TrendConsistency`,
 kept only so older YAMLs stay valid) are **thin subclasses of the ClimateEval
@@ -128,6 +135,20 @@ Sea ice is scored as **area** (Σ siconc·A), which is what ClimateEval's
 siconc > 15 %). `ClimateBench2_TierII.yml` carries a commented-out
 `SeaIceExtentTimeSeries` stanza against ClimateEval PR #47 rather than
 mislabelling area as extent.
+
+## The perfect-model variant (Tier III.2)
+
+`climatebench2 score --truth DIR` does not add a suite: it **materialises a copy** of
+each cube suite with every `reference_data:` swapped for
+`climatebench2.diags.truth_reference.LocalCMORReference`, pointed at a held-out ESM
+run. The CMIP6 comparison models are dropped (an `E_ref` against the real world is
+meaningless in a perfect-model experiment), σ_obs is zeroed and every scored row is
+labelled `window = perfect-model`. `--truth-member LABEL=PATH` adds members of the
+truth model — not extra references, but the inter-member spread the large-ensemble
+test (`tier3.le_spread`, Extended) compares the submission's own against.
+`LocalCMORReference` is a declared **upstream candidate**: ClimateEval has no
+"local directory" DataSource, and PR #55 (`LocalCMORDataSource`) is where this belongs.
+No truth data is staged, so this path has only ever run on synthetic databases.
 
 Every threshold referenced by a diagnostic comes from
 [`../thresholds.yml`](../thresholds.yml) — never hard-coded, and that includes each

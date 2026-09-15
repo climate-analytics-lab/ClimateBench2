@@ -14,13 +14,16 @@ Tier III Table 3). Where the paper and this document disagree, **the paper is th
 truth**; open a PR against this file rather than diverging in code.
 
 **Implementation synchronisation.** Status entries were re-audited on **2026-09-14**
-against the `climatebench2/` package at commit `8cfa36f` (migration Phase 6 of
-`docs/climateeval_delineation_plan.md`) and against **ClimateEval `main` @ `b0e941c`**
-(2026-09), which now contains the merged CB2 upstream PR #35 (`LandOceanWarmingRatio`,
+against the `climatebench2/` package at commit **`d21be52`** (migration **Phase 7**,
+"protocol re-alignment", of `docs/climateeval_delineation_plan.md`), where
+**314 tests pass** (`pytest tests -q` in ClimateEval's pixi env with this repo on
+`PYTHONPATH`), and against **ClimateEval `main` @ `b0e941c`** — **still the pin in
+`pyproject.toml`**, because none of the twelve PRs tabulated below has merged.
+`b0e941c` (2026-09) contains the merged CB2 upstream PR #35 (`LandOceanWarmingRatio`,
 `ArcticAmplification`, `MeridionalHeatTransport` complex diagnostics; the
 `rsds`/`rsus`/`rlds`/`rlus`/`tasmax`/`tasmin` variables), the ocean-transport
-diagnostics of #34, and the relative-score leaderboard of #37. **`pyproject.toml` now
-pins `b0e941c`** (gap item 0, `b7e8593`): the three duplicated Tier I diagnostics are
+diagnostics of #34, and the relative-score leaderboard of #37. **The pin was bumped to
+`b0e941c`** (gap item 0, `b7e8593`): the three duplicated Tier I diagnostics are
 thin `GateMixin` wrappers over the upstream classes, the CB2-side registry stopgap
 (`RegistryFreeVariable`) is gone and the daily suite scores `tasmax`. **Gap item 1**
 (the same day) then corrected the gates that were wrong as written — the I.2b identity,
@@ -90,19 +93,35 @@ perfect-model path of §III.2 exists (`score --truth DIR`, a
 large-ensemble spread test) but has no data to run on; and the legacy
 `constants.py`/`utils.py`/`benchmark_scrips/` island is **deleted**.
 
-**Open ClimateEval PRs (2026-09).** Several upstream PRs are in flight, each
-unblocking something recorded below: **#44** a multi-member historical+SSP2-4.5
-comparison generator (`E_ref` and every Tier II skill number, #10/#13 — and,
-with it, the CMIP6 multi-model-mean warming pattern the *spatial* half of the
-pattern-scaling baseline needs); **#48** ERA5 `zg`/`ts` (I.3c's hydrostatic
-fallback, I.5c's temperature reference); **#49** GISTEMP / Berkeley Earth /
-NOAAGlobalTemp / CRU sources (the inter-product σ_obs of the GMST scalars, and
-a land-only reference for the seasonal temperature range);
-**#45** hist-aer / amip / amip-4xCO2 / PMIP4 DataSource generators (running
-I.4a/b, I.7 and Tier III against archived data rather than submission-supplied
-directories); **#46** accepting `window_length = 1` in `Nino34` (retires CB2's
-`ENSOGate._preprocess` override, I.5a); **#47** sea-ice **extent** (#15). The
-legacy
+**Open ClimateEval PRs (2026-09-14) — twelve, none merged.** Every one was opened by
+this effort; the pin therefore stays at `b0e941c` and **nothing below has been run
+against real model or observational data**. URLs are
+`https://github.com/climate-federation/ClimateEval/pull/N`. Two ordering constraints:
+**#44 must merge before #45** (they add generators to the same module — an additive
+conflict) and **#49 before #53**. GitHub Actions did not trigger on any of them, so
+each carries only local `pixi` test + `ruff`/pre-commit evidence.
+
+| PR | What it adds upstream | What it unblocks in CB2 | What CB2 changes when it merges |
+|---|---|---|---|
+| **#44** | `CMIP6HistoricalSSP245` multi-member generator (+ `CMIP6HistoricalAllMembers`) | **The binding constraint on every Tier II number**: comparison models with M ≥ 2 over the test window (#10, #13), and the CMIP6 multi-model-mean warming pattern | `E_ref` becomes non-empty and the skill column shows `S` instead of raw CRPS; `_eof_pattern_scaling_row` stops writing a `reason` and scores the **spatial** half of the pattern-scaling baseline; bump the pin |
+| **#45** | hist-aer / amip / amip-4xCO2 / lgm / midHolocene / lig127k generators | Running I.4a/b, I.7 and Tier III against archived data instead of submission-supplied `--experiment` directories | PMIP4 and DAMIP **comparison ensembles** become available, so Tier III gets an `E_ref` of its own; the CLI's experiment flags become optional rather than required |
+| **#46** | `Nino34` accepting `window_length = 1` | I.5a's unsmoothed monthly index without a CB2 override | **Delete `ENSOGate._preprocess`** — the gate becomes a pure threshold wrapper |
+| **#47** | `SeaIceExtent*` diagnostics (Σ A where siconc > 15 %) | The protocol's sea-ice definition (#15) | Uncomment the `SeaIceExtentTimeSeries` stanza in `ClimateBench2_TierII.yml` and **switch the sea-ice rows from area to extent** |
+| **#48** | ERA5 `zg` / `ts` | I.3c's geopotential reference, I.5c's temperature reference | I.3c drops the `physics.hydrostatic_height` fallback; I.5c's `ts` pattern uses ERA5 rather than HadISST `tos` alone (no more pairwise land masking) |
+| **#49** | GISTEMP / BerkeleyEarth / NOAAGlobalTemp / CRU sources (+ the `tasa` variable) | The paper's four GMST products, hence a **measured inter-product σ_obs** for `tas`; a land-only reference for the seasonal temperature range | Add three suite entries and `tas` gains a real observational spread term instead of the provisional 0.05 K constant; `LandAnnualTemperatureRange` switches ERA5 → CRU TS |
+| **#50** | Tier I energy budget / covariance — `EnergyBalance`, `BudgetClosure`, `ClearSkyLongwaveFeedback`, `PrecipitationBuoyancy`, `ClausiusClapeyronScaling` | Nothing new scientifically — this is the **upstream track** (gap item 8) | **Delete the CB2 copies in `diags/tier1_physics.py` / `tier1_extended.py`** and keep only `GateMixin` wrappers, exactly as `ECSGate` already is |
+| **#51** | dynamics / variability — `GeostrophicBalance`, `MJOEastWestPowerRatio`, `ITCZEnergyFluxEquator`, `BjerknesCompensation`, `ENSOTeleconnectionPatterns` | Same | Same: CB2 keeps the thresholds, upstream keeps the physics |
+| **#52** | forcing — `Amip4xCO2ERF`, `GFMIPPatchFeedback`, `AerosolERF` + a branch-time helper | Same, plus the parallel-segment selector moves next to `ECS` where it belongs | Same; and see decision D.3 — adopting the helper in `ECS` would move ClimateEval's published ECS numbers |
+| **#53** | HadEX3 + `ESACCISeaIceNH/SH` (depends on #49) | **A daily observational product** — the one thing standing between the eight ETCCDI extremes and a score (#16) | Add one `reference_data:` line to the `extremes` entry; nothing else changes, the shape is already the scored one |
+| **#54** | `ERA5Daily` | A daily reference that is not `ERA5Hourly`'s single hard-wired year | The commented-out daily-`pr` stanza can be uncommented; Perkins and the diurnal harmonic stop depending on one staged year |
+| **#55** | `LocalCMORDataSource` | The perfect-model path's reference (§III.2) | **Replace `climatebench2/diags/truth_reference.py`** with the upstream class — CB2's last piece of data-loading code |
+
+Beyond the twelve, three references named in this document have no upstream PR at all
+and no CB2 workaround: **warming-level multi-product spread** beyond #49's four,
+sub-daily CRE (CERES-SYN, IMERG), and a **`PMIP4Proxies` CMORizer** for the paleo
+compilations — which is where `PaleoProxyScore`'s NetCDF reading ultimately belongs.
+
+The legacy
 `benchmark_scrips/*.py` scripts that earlier revisions of this document audited were
 deleted in migration Phases 1–5; **every status entry below refers to
 `climatebench2/`**, and as of **work package 7** there are no legacy survivors at all:
@@ -141,6 +160,146 @@ deleted in migration Phases 1–5; **every status entry below refers to
 - Status legend: ✅ implemented per the (2026-09) spec · 🟡 implemented but deviates
   from spec · ❌ missing · ⬆ generic physics now provided by ClimateEval `main`
   (CB2 should keep only the threshold wrapper).
+
+---
+
+# Decisions needed from Duncan (2026-09-14)
+
+Every ⚠ and `TODO(Duncan)` the implementation raised, in one list. Nothing here blocks
+the code from running — each item is a **choice already made provisionally**, recorded
+so it can be ratified or overruled rather than discovered later. Each line says what
+was decided and where it lives; the detail is in the section named. (Sources: the ⚠
+marks throughout this document and the `TODO(Duncan)` comments in
+`climatebench2/thresholds.yml` and `climatebench2/data/erf_ar6_ssp245.csv`.)
+
+### A. Paper text — manuscript edits, no code change (5)
+
+1. **§5.4 mixture vs Fig. 4 median.** §5.4 defines the reference score as an "unweighted
+   **mixture**" of the CMIP6 models; the Fig. 4 caption says the **median** `E`. The
+   code follows Fig. 4. One of the two must change. → discrepancy #10, §II.0.
+2. **App. B.8 aerosol-ERF sign.** App. B.8 writes `F = ΔN + λΔT` while the same sentence
+   defines λ as the (negative) Gregory slope; the correct form, and what the code does,
+   is `F = ΔN − λΔT`. → I.7, discrepancy #8.
+3. **App. E hosting claim.** "The Tier I–III diagnostics are hosted in the ClimateEval
+   repository" is not true today: 3 of 18 Tier I sub-checks are upstream and none of the
+   Tier II/III scoring is. Either land PRs #50–#52 before submission or soften the
+   sentence. → discrepancy #21, gap item 8.
+4. **Open Research org name.** The section places ClimateBench under `climate-federation`;
+   the repository is `climate-analytics-lab/ClimateBench2` (`climate-federation` is
+   ClimateEval's org). → discrepancy #21.
+5. **§4.3 cross-reference.** The ENSO paragraph cites `app:implementation` where
+   `app:tier1` is meant. → discrepancy #21.
+
+### B. Protocol interpretations made in code — ratify or overrule (23)
+
+Each of these is a reading CB2 had to commit to in order to compute anything. All are
+implemented and unit-tested; none is claimed to be the paper's own words.
+
+1. **Climatology baseline as a distribution.** A deterministic monthly mean is M = 1, for
+   which fair CRPS is undefined, so the baseline is scored as the **distribution** of the
+   1985–2014 values per calendar month (30 pseudo-members). → §II.0 "Baselines",
+   `baselines.climatology_pseudo_members`.
+2. **EBM pattern-scaling pseudo-members.** Same problem, same fix: the calibrated EBM
+   trajectory is displaced by the detrended observed residuals of the baseline window.
+   → §II.0, `baselines.ebm_pseudo_members`.
+3. **`E_ref` = median with leave-one-out.** Median of the per-model fair CRPS over
+   comparison models with M ≥ 2, excluding any model of the submission's own name.
+   → item A.1 above; `scoring_pass.score_raw_output`.
+4. **Regime-(b) bootstrap axis.** CB2 resamples the orthogonal EOF **coefficients** with
+   `T_eff = K` rather than bootstrapping spatial blocks, on the reading that the retained
+   modes *are* the discounted effective sample. → Tier II preamble, discrepancy #12.
+5. **Model test-window anomaly.** Defined as the test-window mean minus the **reference's**
+   baseline climatology (not the model's own), so a mean bias is penalised.
+   → Tier II preamble, discrepancy #12.
+6. **Aerosol window `[2010, 2019]`, clipped.** A hist-aer record ending in 2014 has the
+   decade slid back keeping its length, and the window actually used is emitted as
+   `window_first/last_year`. → I.7, `tier1.aerosol_forcing.window`.
+7. **TX90p / WSDI thresholds are per calendar month**, not per calendar day: the ETCCDI
+   calendar-day form needs a 5-day window and Zhang et al.'s bootstrap, which a monthly
+   threshold sidesteps at the cost of a smoother annual cycle. → §II.1 extremes,
+   `physics.calendar_percentile`.
+8. **R95pTOT denominator.** The fraction of the **annual total** precipitation above the
+   base-period wet-day 95th percentile (the other common convention is the wet-day total).
+   → §II.1, `physics.heavy_precipitation_fraction`.
+9. **`clt` as the low-cloud proxy.** Total cloud fraction stands in for low cloud in the
+   stratocumulus metrics; a genuine low-cloud fraction needs `cl` on levels.
+   → §II.1 seasonal cycle, `tier2.seasonal`.
+10. **The five stratocumulus boxes** (Californian, Peruvian, Namibian, Canarian,
+    Australian) are the conventional decks, not the paper's own list.
+    → `tier2.seasonal.stratocumulus_regions`.
+11. **Perkins baseline is fixed, not moving.** The paper says "a moving climatological
+    baseline"; CB2 uses the fixed 1985–2014 monthly climatology. → §II.1 Perkins,
+    `tier2.perkins`.
+12. **Extremes regions are land latitude bands** (`global_land`, `tropical_land`, the two
+    extratropical land bands), not AR6 reference regions. → `tier2.extremes.regions`.
+13. **Diurnal phase as (cos, sin).** The phase is emitted as two components and never as
+    an hour, because fair CRPS on an angle is ill-defined (23 h and 1 h are not 22 h
+    apart). → §II.1 diurnal, `physics.phase_components`.
+14. **`block_years` = 30, `spinup_years` = 100.** CB2 defaults, not paper values: 30 yr is
+    the conventional PMIP4 climatology, 100 yr the usual equilibration allowance.
+    → §III.1, `tier3.block_years` / `tier3.spinup_years`.
+15. **Equal site weighting** for the Tier III variable-level score — proxy networks are
+    point measurements, so cos-latitude weighting would weight grid cells, not cores.
+    → `tier3.site_weighting`.
+16. **DA products reported, not scored.** Only `dataset_type: proxy_compilation` enters the
+    protocol score; Cleator 2020 is computed, tagged and excluded (App. D).
+    → `tier3.scored_dataset_types`, §III.1.
+17. **Scussolini 2019 σ refusal.** Its uncertainty column is a semi-quantitative
+    reliability flag, not a σ, so the stanza reports that rather than inventing an
+    observational variance term. → `suites/ClimateBench2_TierIII.yml`.
+18. **Entry-ticket precedence: ✗ beats ⚠.** A submission with one failed Required check
+    *and* one missing Required check reads ✗, not ⚠ incomplete. → Tier I wiring note,
+    `leaderboard.entry_ticket`.
+19. **GSAT blending factor 1.09 and its 10 % uncertainty.** 1.09 is the ~9 % more warming
+    SAT shows than a blended product (Cowtan 2015; Richardson 2016); the paper's "at most
+    10 % of the long-term change" is read as 10 % of the corrected statistic's own
+    magnitude, added in quadrature to σ_obs. → §II.1,
+    `tier2.gsat_blending_factor` / `_relative_uncertainty`.
+20. **Every `tier2.obs_sigma` value.** tas/ts 0.05 K, tos 0.05 K, TOA fluxes
+    0.20 W m⁻², `pr` and `default` `null`. All provisional; `null` means "unknown" and
+    scores at zero — an honest no-op, not a claim of zero error. → `tier2.obs_sigma`.
+21. **`scalar_consistency` mapping for Pinatubo.** The Jul 1991–Dec 1993 anomaly (~2.5 yr)
+    is matched to the `test`-window mean σ_int, the nearer of the two reported lengths —
+    an *under*-estimate of a 2.5-yr mean's spread, so a conservative (stricter) test.
+    → `tier2.scalar_consistency`.
+22. **Trend σ_obs by conversion, not quadrature.** σ_obs on a *trend* is obtained from the
+    per-step σ through `scoring.ols_trend_sigma`; the paper states the quadrature sum.
+    Unit-tested against Monte Carlo. → §II.0.
+23. **Tier III site standard error ignores spatial correlation.** `std / sqrt(n_sites)`
+    treats nearby cores as independent and is therefore optimistic. → §III.1.
+
+### C. Placeholder data — must be replaced before publication (3)
+
+1. **`climatebench2/data/erf_ar6_ssp245.csv`** is a piecewise-linear interpolation between
+   published AR6 anchor values of *total anthropogenic* ERF, with **natural (volcanic and
+   solar) forcing omitted** — not the AR6 annual series. Its own header carries the
+   anchors and the consequences. Needs the digitised AR6 Ch. 7 / Annex III series.
+   → §II.0 baselines.
+2. **`tier1.precip_buoyancy.reference_slope: null`.** Until it is pinned, I.3c computes
+   the GPCP/ERA5 slope at run time where the data are reachable and otherwise reports the
+   model slope with **no gate row** at all. → I.3c.
+3. **`tier3.le_spread.variance_ratio_range: [0.5, 2.0]`** is provisional and has never
+   been exercised against CESM-LE. → §III.2.
+
+### D. Upstream and process (5)
+
+1. **PR merge order.** #44 before #45 (both add generators to the same module — an
+   additive conflict), and #49 before #53. → "Implementation synchronisation" table below.
+2. **GitHub Actions did not trigger on any of the twelve PRs.** Each was validated only by
+   local `pixi` tests plus `ruff`/pre-commit; worth saying so when asking for review.
+3. **Adopting the parallel-segment helper upstream would move published ECS numbers.**
+   `physics.parallel_control_window` is the natural companion to ClimateEval's `ECS`,
+   which has the same branch-time need — but switching `ECS` from a long-term-mean to a
+   parallel-segment control baseline changes every ECS value ClimateEval has published.
+   Duncan's call whether to propose it. → I.7, gap item 5.
+4. **Osman 2021 needs a proxy calibration.** Its site file is uncalibrated geochemistry
+   (δ¹⁸O, Mg/Ca), so both the LGM and mid-Holocene stanzas are `NOT_SCOREABLE`. Scoring it
+   means adopting a calibration, which is a protocol choice. → §III.1.
+5. **Otto-Bliesner 2021 marine/terrestrial split.** The paper calls it "terrestrial T", but
+   the pipeline pools annual Tables S2–S4, which include NH and SH **ocean** sites, and the
+   suite stanza then applies a `land_only` mask. Confirm whether the target is the
+   terrestrial subset (Table S6) or all 92 sites. → §III.1,
+   `paleo_scripts/process_paleo_observations.py`.
 
 ---
 
@@ -1136,7 +1295,7 @@ gone.
 | **Fair** CRPS of ensemble time series | (a) | ✅ (2026-09-14, gap item 3, `a4c5948`/`732e860`) `scoring.crps_fair` — spread term `1/(2M(M−1))ΣᵢΣⱼ\|xᵢ−xⱼ\|`, i.e. the average over the i ≠ j pairs; **M < 2 raises** (never \|x−y\|), and a single-member model is reported as `n/a (single member)`. The empirical `crps_ensemble` is deleted rather than left as a trap. Unit-tested for the two-member analytic case and for size-independence (M = 2 vs M = 20) | `climatebench2/scoring.py`, `scoring_pass.py` |
 | ESS correction on the reported SE | (a) | ✅ `crps_ess_score` (lag-1 r → T_eff; `crps_se`, `t_eff`, `r1` emitted) | `scoring.py` |
 | Fair CRPS on fixed pre-2015 **reference** EOFs, standardised coefficients, block bootstrap | (b) | ✅ (2026-09-14, gap item 3b, `a3ff255`) `ReferenceEOFProjection` loads the reference over the pre-2015 window, forms monthly anomalies against that window's monthly climatology, builds the **area-weighted** basis truncated by `tier2.eof.variance_explained` = 0.9 (cap `max_modes` = 20) and projects the test-window climatological anomaly of the model (per member), of the reference and of every comparison source onto it, standardising each coefficient by its pre-2015 PC σ; one `raw_output` row per (source, variable, mode). `scoring_pass.score_eof_output` takes the fair CRPS per coefficient, its equal-weight mean as the variable score, and the same `E_ref`/skill as (a). ⚠ two interpretations flagged in the preamble: the bootstrap axis and the definition of the model anomaly. The old model-variability `field_consistency` z-test is left in place, unwired | `diags/tier2_reference.py`, `scoring.eof_basis`/`standardised_coefficients`, `scoring_pass.score_eof_output` |
-| Ensemble-consistency test — complementary | (c) | 🟡 → ✅ **wired** (2026-09-14, gap item 3b, `a3ff255`): the test moved out of `TrendConsistency` (a thin alias now, dropped from the Tier II YAML) into `scoring_pass`, the only place that has the members grouped by model, the reference and the σ_int rows. σ_total² = var(**member** trends) + σ_int² + σ_obs², with σ_int from `InternalVariability`'s piControl chunks and σ_obs from `tier2.obs_sigma` + the inter-product spread, converted to a trend σ by `scoring.ols_trend_sigma` (⚠ CB2 interpretation). Rows keep the old columns plus `sigma_internal`/`sigma_obs`. Still 🟡 versus the paper: Gaussian null (no Mahalanobis, no empirically calibrated null), and only the OLS trend is tested — the realized-warming-level statistic of §II.1 is still missing | `scoring.py`, `scoring_pass.trend rows`, `tier2_scores.InternalVariability` |
+| Ensemble-consistency test — complementary | (c) | 🟡 → ✅ **wired** (2026-09-14, gap item 3b, `a3ff255`): the test moved out of `TrendConsistency` (a thin alias now, dropped from the Tier II YAML) into `scoring_pass`, the only place that has the members grouped by model, the reference and the σ_int rows. σ_total² = var(**member** trends) + σ_int² + σ_obs², with σ_int from `InternalVariability`'s piControl chunks and σ_obs from `tier2.obs_sigma` + the inter-product spread, converted to a trend σ by `scoring.ols_trend_sigma` (⚠ CB2 interpretation). Rows keep the old columns plus `sigma_internal`/`sigma_obs`. The **aggregated scalars** of §II.1 — the realized warming level, both GMST trends, the Pinatubo cooling and the NH−SH trend difference — get the same test through `score_scalar_output`, each naming its (variable, statistic, window) triple in `tier2.scalar_consistency` (gap item 6, `9d4b7a9`). Still 🟡 versus the paper: a **Gaussian null** (no Mahalanobis, no empirically calibrated null), and Pinatubo's ~2.5-yr window is matched to the nearest reported σ_int length (⚠ decision B.21) | `scoring.py`, `scoring_pass.trend rows`/`score_scalar_output`, `tier2_scores.InternalVariability` |
 | Skill score S = 1 − E/E_ref, E_ref = CMIP6 median, leave-one-out | — | ✅ **code** (2026-09-14, `732e860`): `E_ref` = median of the per-model fair CRPS over comparison models with M ≥ 2, excluding any whose name equals the scored model's; `skill`, `e_ref`, `n_ref_models` are metrics columns and the leaderboard shows S per model and variable (clipped at −1), the Climatology skill alongside. ❗ **numerically empty until the upstream post-2015 multi-member CMIP6 generator lands** — today's r1i1p1f1 comparison models are all M = 1, so `E_ref` has nothing to take a median of and the cells fall back to the raw CRPS. Pooled `CMIP6-MME` deleted | `scoring_pass.score_raw_output`, `leaderboard/_crps_table_html` |
 | Moving-block-bootstrap CIs; observational-uncertainty draws | (a)/(b) | ✅ both regimes (2026-09-14, `a4c5948` + `a3ff255`): `scoring.moving_block_bootstrap_ci` (blocks from `tier2.bootstrap`, optional member resampling; `crps_ci_lo`/`crps_ci_hi`) for (a) and the same function at `block_length = 1` over the coefficients for (b). `crps_fair_with_obs_draws` now *bites*: σ_obs is `tier2.obs_sigma` (a protocol constant per variable, ⚠ provisional) combined in quadrature with the per-time-step **spread across observational products**, and every model and baseline sees the same draws from `tier2.obs_uncertainty.seed`. σ_obs = 0 still reproduces the plain fair CRPS exactly | `scoring.py`, `scoring_pass.observational_sigma` |
 | **Observational uncertainty σ_obs** | (a)/(c) | 🟡 ClimateEval exposes **no** error field for any DataSource (HadCRUT5 CMORizes `tas`/`tasa` only — no ensemble, no uncertainty variable), so the floor is the fixed table `tier2.obs_sigma` (tas/ts 0.05 K, tos 0.05 K, TOA fluxes 0.20 W m⁻², `pr: null`). **Every non-null value is provisional and needs Duncan's ruling; GPCP's is a TODO.** `null` means "unknown" and scores at 0 — an honest no-op, not a claim of zero error. Measured on top of it: the inter-product spread (below). An upstream HadCRUT5 ensemble/error variable would replace the `tas` entry with a real field | `thresholds.yml tier2.obs_sigma`, `scoring_pass.obs_sigma_floor` |
@@ -1362,13 +1521,18 @@ consistency rows `value`, `z`, `p_value`, `passes`, `ensemble_mean`, `total_sigm
 `sigma_internal`, `sigma_obs`) and `scorer = "climatebench2"` on every row, deleted
 before a re-run, so the pass is idempotent.
 
-**Baselines (`baselines.py`).** `climatology_pseudo_members` ✅ (wired through
-`scoring_pass`) — the climatology as a *distribution* rather than a deterministic mean
-(⚠ CB2 interpretation, Tier II preamble). `two_layer_ebm` (Held/Geoffroy two-layer,
-explicit Euler, parameters from `thresholds.yml tier2.ebm`) and
-`pattern_scaling_forecast` remain pure functions, **not wired**; no ERF series, no
-observational calibration through 2014, no CMIP6-MMM pattern in the package —
-`scoring_pass.PATTERN_SCALING_DATA_ID` is the hook they will write through.
+**Baselines (`baselines.py`).** Baseline (ii), `climatology_pseudo_members` ✅ (wired
+through `scoring_pass`) — the climatology as a *distribution* rather than a
+deterministic mean (⚠ CB2 interpretation, Tier II preamble). Baseline (iii) is now
+wired too (work package 6b, `ce509c3` + `74a4841`): `load_erf_series` reads the
+packaged annual ERF table, `two_layer_ebm` (Held/Geoffroy, explicit Euler, parameters
+from `thresholds.yml tier2.ebm`) integrates it, `calibrate_two_layer_ebm` fits one
+parameter to the observed GMST through 2014, and `ebm_pseudo_members` gives the
+trajectory the spread fair CRPS needs; `scoring_pass._pattern_scaling_row` writes the
+row through `PATTERN_SCALING_DATA_ID`. **Still a pure, unwired function:**
+`pattern_scaling_forecast` — the *spatial* half needs the CMIP6-MMM normalized warming
+pattern, which upstream PR #44 supplies, so `_eof_pattern_scaling_row` emits a `reason`
+naming it instead of a score.
 
 **Leaderboard (`leaderboard/__init__.py`).** `build_scores` classifies `metrics` rows
 into gates (a **row** with `passes` and no `p_value`, plus declared-N/A rows with
@@ -2073,21 +2237,25 @@ unchanged — is now built:
 **Cross-cutting discrepancies (paper vs current `climatebench2/` code) — complete list,
 2026-09-14:**
 1. ~~**I.2b atmospheric energy identity reversed in code**~~ — **DONE (2026-09-14, gap
-   item 1):** `physics.atmospheric_energy_residual` returns the paper's
+   item 1, `a030496`):** `physics.atmospheric_energy_residual` returns the paper's
    `|Q_rad − (LP + SHF)|` with `Q_rad = sfc_net_rad − TOA_net`.
-2. ~~I.1 evaluated over the whole supplied piControl~~ — **DONE (2026-09-14):** both
+2. ~~I.1 evaluated over the whole supplied piControl~~ — **DONE (2026-09-14, gap
+   item 1, `a030496`):** both
    criteria use the last `tier1.energy_balance.evaluation_years = 100` annual values
    (the stale `min_years: 500 # TODO` is gone); shorter controls are used whole with a
    warning and reported through `n_years`.
-3. ~~I.3a regresses annual means~~ — **DONE (2026-09-14):** deseasonalised monthly
+3. ~~I.3a regresses annual means~~ — **DONE (2026-09-14, gap item 1, `a030496`):**
+   deseasonalised monthly
    anomalies (`anomalies(period="month")`) for both `rlutcs` and `ts`.
 4. ~~I.5a — σ of a smoothed index, computed on the historical cubes~~ — **DONE
-   2026-09-14:** the unsmoothed monthly index (`_rolling_window_length = 1`, gap item 1)
-   *and* the right record — the CLI's suite registry feeds
+   2026-09-14, `a030496` + `a4cca38`:** the unsmoothed monthly index
+   (`_rolling_window_length = 1`, gap item 1) *and* the right record — the CLI's suite
+   registry feeds
    `ClimateBench2_TierI_variability` the `picontrol` experiment in full (gap item 4),
    re-confirmed with gap item 5. *Residual:* the unsmoothed index needs CB2's
    `ENSOGate._preprocess` override until **ClimateEval PR #46** merges.
-5. ~~I.5b band-power ratio uses mean PSD per band~~ — **DONE (2026-09-14):** integrated
+5. ~~I.5b band-power ratio uses mean PSD per band~~ — **DONE (2026-09-14, gap item 1,
+   `a030496`):** integrated
    power (`np.trapezoid`) per band, so the 1.5 bound means what the paper says.
 6. ~~I.5c implements the superseded scalar criterion (ta500 / Maritime-Continent sign
    checks); the pattern-correlation test and its HadISST/ERA5/GPCP reference patterns do
@@ -2098,7 +2266,7 @@ unchanged — is now built:
    exposes no ERA5 `ts`, so the temperature reference is HadISST alone (SST-only, land
    masked pairwise), and the reference branch has never run against real files.
 7. ~~I.6a emits both the `> 1` and the `[1.2, 1.6]` checks~~ — **DONE (2026-09-14, gap
-   item 0):** one strict-range check `land_ocean_warming` on
+   item 0, `b7e8593`):** one strict-range check `land_ocean_warming` on
    `tier1.land_ocean_warming.range`; `required_min`/`expected_range` removed.
 8. ~~I.7 "2015" = last-30-yr mean (paper: decadal mean centred on 2015); no
    parallel-segment drift removal.~~ **DONE (2026-09-14, gap item 5, `8f8a36a`):**
@@ -2124,7 +2292,7 @@ unchanged — is now built:
     upstream:* with today's single-member r1i1p1f1 comparison ensemble no comparison
     model reaches M ≥ 2, so `E_ref` is empty in practice (#13).
 11. ~~`tier2.climatology_baseline_period = [1990, 2020]` overlaps the reserved test
-    window~~ — **DONE (2026-09-14, gap item 1):** `[1985, 2014]` for both the
+    window~~ — **DONE (2026-09-14, gap item 1, `a030496`):** `[1985, 2014]` for both the
     Climatology baseline and the Pinatubo reference; `baselines.py` docstrings follow,
     and the hemispheric-asymmetry era is now `tier2.hemispheric_asymmetry.era`.
 12. ~~Aggregated-diagnostic scoring is still the old model-variability-EOF z-test
@@ -2143,7 +2311,7 @@ unchanged — is now built:
     (test-window mean minus the *reference's* baseline climatology, so a mean bias is
     penalised).
 13. **Test window** — ~~the CLI default `--timerange 19790101/20141231` applies to
-    every suite~~ **CB2 side DONE 2026-09-14 (gap item 4):** each suite gets its own
+    every suite~~ **CB2 side DONE 2026-09-14 (gap item 4, `a4cca38`):** each suite gets its own
     window from `_cli.SUITE_REGISTRY`, and the Tier II suites default to
     `20150101/<last complete year>1231` derived from `tier2.test_window_start`;
     `--timerange` is now only an explicit override. ~~A side effect was that the cut
@@ -2164,12 +2332,14 @@ unchanged — is now built:
     `732e860`): `scoring_pass` maps `data_id → (name, variant)` through the
     `data_sources` table, groups by name and scores each model's members as one
     fair-CRPS ensemble.
-15. Sea ice: ClimateEval computes area, the paper scores extent (15 % threshold).
+15. **OPEN (blocked on upstream #47).** Sea ice: ClimateEval computes area, the paper
+    scores extent (15 % threshold).
     *Since 2026-09-14 (gap item 6, `9d4b7a9`)* `ClimateBench2_TierII.yml` carries a
     **commented-out** `SeaIceExtentTimeSeries` stanza with the 15 % definition, keyed to
     *upstream* PR #47, plus a note that the active rows are AREA — so the mismatch is
     visible in the suite itself rather than only here. Uncomment it when #47 merges.
-16. TXx now uses daily `tasmax` (registry variable, suite id `tasmax_txx`; **done**
+16. **PARTIAL — computed, not scored (blocked on upstream #53/#54).**
+    TXx now uses daily `tasmax` (registry variable, suite id `tasmax_txx`; **done**
     2026-09-14 with gap item 0) but still against an `ERA5Monthly` placeholder
     reference. **Superseded 2026-09-14 (work package 6b, `d8df85b`):** the
     protocol-conforming statistic is the `extremes` entry — the eight ETCCDI
@@ -2181,7 +2351,8 @@ unchanged — is now built:
 17. ~~**Entry ticket** — the leaderboard `ALL` column spans every gate present,
     including the Bjerknes and C–C extras, the Extended GFMIP/MJO gates and the Tier II
     Pinatubo / hemispheric-asymmetry gates; there is no Required/Extended/extra tag and
-    no three-valued pass/fail/N-A state.~~ **DONE (2026-09-14, gap item 2):** every gate
+    no three-valued pass/fail/N-A state.~~ **DONE (2026-09-14, gap item 2, `5d600d3`):**
+    every gate
     block in `thresholds.yml` carries `requirement:` (required / extended / extra /
     diagnostic), read by one helper (`pass_fail.gate_requirement`); gate rows carry
     `requirement` + `applicable`; `score --not-applicable NAME` declares a test N/A
@@ -2201,20 +2372,22 @@ unchanged — is now built:
     **fair CRPS of a block pseudo-ensemble** rather than the consistency fraction
     alone. *Open:* Temp12k's latitude bands need a zonal-mean comparison, and
     Scussolini 2019 publishes a reliability flag rather than a σ.
-19. `paleo_benchmark.py`'s Gaussian CRPS treats the proxy as the forecast distribution —
-    the inverse of the protocol's model-ensemble fair CRPS. **Unchanged and
-    deliberate** (2026-09-14): the script now serves only the AR6-style figures, and
+19. **RESOLVED as won't-fix.** `paleo_benchmark.py`'s Gaussian CRPS treats the proxy as
+    the forecast distribution — the inverse of the protocol's model-ensemble fair CRPS.
+    **Unchanged and deliberate** (2026-09-14): the script now serves only the AR6-style figures, and
     the protocol's statistic lives in `PaleoProxyScore`. What *did* change is its data
     path — `--picontrol-dir DIR` instead of `benchmark_utils.DataFinder`, which
     retired the last of the legacy island (§9 of the delineation plan).
 20. ~~Duplicate physics vs ClimateEval `main` — land–ocean, Arctic and MHT exist upstream
     with identical outputs; `_MISSING_FROM_REGISTRY`/`RegistryFreeVariable` are obsolete
     (`rsds`/`rsus`/`rlds`/`rlus` landed upstream); the pin is 2 months stale.~~
-    **DONE (2026-09-14, gap item 0):** pin bumped to `b0e941c`; `LandOceanWarmingGate`,
+    **DONE (2026-09-14, gap item 0, `b7e8593`):** pin bumped to `b0e941c`;
+    `LandOceanWarmingGate`,
     `ArcticAmplificationGate` and `MeridionalHeatTransportGate` are `GateMixin`
     wrappers over the upstream classes; `_WarmingResponseGate`, `_transport_profiles`,
     `_MISSING_FROM_REGISTRY`, `RegistryFreeVariable` and `physics.nh_peak` deleted.
-21. Paper-side items to fix in the manuscript: App. E says "the Tier I–III diagnostics
+21. **OPEN, paper-side (no code change) — the manuscript items**, consolidated with
+    the rest in "Decisions needed from Duncan", group A. App. E says "the Tier I–III diagnostics
     are hosted in the ClimateEval repository" — today 3 of 18 Tier I sub-checks and none
     of the Tier II/III scoring are; the Open Research section places ClimateBench under
     `climate-federation`, but the repository is `climate-analytics-lab/ClimateBench2`;
@@ -2431,7 +2604,7 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    + LE-spread suite once CESM2/MPI/GISS/CESM-LE data are staged (#19); retire
    `paleo_benchmark.py --use-picontrol` and with it `constants.py`, `utils.py`,
    `benchmark_utils.py`.~~ — **DONE 2026-09-14 (work package 7, `f1fbdfe`, `f39a9f2`,
-   `8cfa36f` + this docs commit):**
+   `8cfa36f`, `d21be52`):**
    - **The maths** (`f1fbdfe`): `scoring.nonoverlapping_blocks` /
      `block_climatologies` / `proxy_crps` — the equilibrated-portion rule, the block
      pseudo-members it selects, and the per-site fair CRPS with σ_proxy as the
@@ -2448,7 +2621,7 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    - **The perfect model** (`8cfa36f`): `LocalCMORReference`, `score --truth DIR
      --truth-member LABEL=PATH`, the materialised suite YAML, the `perfect-model`
      window label with σ_obs = 0, and `le_spread_rows` for the III.2 spread test.
-   - **The legacy island** (this commit): `paleo_benchmark.py --picontrol-dir DIR`
+   - **The legacy island** (`d21be52`): `paleo_benchmark.py --picontrol-dir DIR`
      replaces `DataFinder`, `paleo_scripts/paleo_utils.py` holds the three helpers the
      paleo scripts needed, and `constants.py`, `utils.py`, `benchmark_scrips/` and
      `env.yml` are **deleted**.
@@ -2462,9 +2635,48 @@ ClimateEval's data and diagnostics. Items marked *upstream* are ClimateEval PRs.
    `PMIP4Proxies` CMORizer for the compilations, which is where `PaleoProxyScore`'s
    NetCDF reading ultimately belongs; a generic `LocalCMORDataSource` beside
    `ESMValToolCMORizerDataSource`.
-8. **Upstream track** (delineation plan §7): the generic physics still in CB2 —
-   geostrophic balance, MJO ratio, ITCZ–EFE, clear-sky β, closure residuals,
-   teleconnection regression maps, amip-4xCO2 ERF, GFMIP Δλ, Pinatubo / hemispheric
-   anomalies — are candidates for ClimateEval; the paper's App. E claim becomes accurate
-   only once they land, so either upstream them before submission or soften the
-   sentence (#21).
+8. **Upstream track** (delineation plan §7) — **proposed 2026-09-14, awaiting review.**
+   The generic physics still in CB2 has been offered to ClimateEval as three PRs:
+   **#50** (energy balance, budget closure, clear-sky β, precipitation–buoyancy,
+   Clausius–Clapeyron), **#51** (geostrophic balance, MJO ratio, ITCZ–EFE, Bjerknes,
+   ENSO teleconnection patterns) and **#52** (amip-4xCO2 ERF, GFMIP Δλ, aerosol ERF +
+   the branch-time helper). When they merge, CB2 deletes its copies in
+   `diags/tier1_physics.py` / `diags/tier1_extended.py` and keeps only `GateMixin`
+   wrappers, as `ECSGate` already is. *Not offered, deliberately:* the Pinatubo and
+   hemispheric-anomaly diagnostics, which are Tier II protocol scalars with a
+   CB2-specific observational correction, not reusable physics.
+   *Still open:* the paper's App. E claim becomes accurate only once #50–#52 land, so
+   either they merge before submission or the sentence is softened (#21, decision A.3).
+
+---
+
+## What is left to run against CMIP6
+
+The protocol is complete in code and empty of results. **Nothing in this repository has
+been exercised on real model or observational data** — every number in every test comes
+from synthetic cubes, synthetic databases or pure-function fixtures. Five concrete
+things stand between here and a first real scorecard, roughly in order:
+
+1. **Merge of upstream #44 and a pin bump.** Until `CMIP6HistoricalSSP245` exists, no
+   comparison model has M ≥ 2 over the test window, so `E_ref` has nothing to take a
+   median of and **every Tier II skill cell falls back to the raw CRPS** — in regime (b)
+   exactly as in regime (a). This is the single blocking dependency; the other eleven
+   PRs each widen coverage, but only #44 turns the headline score on.
+2. **Pin `tier1.precip_buoyancy.reference_slope`.** Null today, so I.3c either computes
+   the GPCP/ERA5 slope at run time (never yet attempted against real files) or writes no
+   gate row at all — which the entry ticket reads as ⚠ incomplete, not a pass.
+3. **Settle the provisional constants.** Every `tier2.obs_sigma` value, the GSAT
+   blending factor and its uncertainty, the ERF table, `tier3.block_years` /
+   `spinup_years`, and the LE variance-ratio bound — section "Decisions needed from
+   Duncan", groups B and C. None blocks a run; all of them change the numbers a run
+   produces, so ratifying them before the first real run avoids re-publishing.
+4. **Data staging for the perfect model.** §III.2 is wired end to end —
+   `score --truth DIR`, the `perfect-model` window label, the large-ensemble spread
+   test — and has never seen a file. It needs CESM2 (Required, ML only), MPI-ESM and
+   GISS-E2 (Extended) and CESM-LE for the spread test.
+5. **The first real run itself.** Six gates (I.3b, I.3c, I.4a, I.4b, I.5c, I.5d) have
+   only ever seen synthetic cubes; the daily suite has never met a real `day`-table DRS
+   tree (memory footprint unknown); the observational branches of I.3c and I.5c have
+   never fetched a real GPCP/HadISST/ERA5 file; and no Tier III stanza has been run
+   against a real PMIP4 experiment. Expect this step, not the code, to be where the
+   remaining surprises are.

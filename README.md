@@ -46,11 +46,30 @@ climatebench2 score model/Amon --name MyModel \
 climatebench2 score emulator_output --name MyEmulator \
     --not-applicable geostrophic_balance
 
+# Tier III: the paleo time-slices, scored against the processed proxy NetCDFs
+climatebench2 score model/Amon --name MyModel --suite ClimateBench2_TierIII \
+    --experiment picontrol=/path/piControl --experiment lgm=/path/lgm \
+    --paleo-data-root paleo_scripts/paleo_data_cache/processed/observations
+
+# Tier III.2 perfect model: score against a HELD-OUT ESM run instead of observations
+# (every row is labelled window = perfect-model; truth members drive the
+# large-ensemble spread test). No truth data is staged yet.
+climatebench2 score model/Amon --name MyModel \
+    --truth /data/CESM2/ssp245 --truth-member r2i1p1f1=/data/CESM2/r2i1p1f1
+
+# Write the suite databases but defer the Tier II scoring pass
+climatebench2 score model/Amon --name MyModel --no-score
+
 # Build the leaderboard (static HTML) from one or more models' results
 climatebench2 leaderboard MyModel_climatebench2/*.ddb -o leaderboard.html
-# Re-run the Tier II scoring pass over existing databases (idempotent):
+# Re-run the Tier II scoring pass over existing databases (idempotent) — also how
+# a thresholds.yml change reaches databases that already exist:
 climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb
 ```
+
+`ClimateBench2_TierI`, `_TierI_variability`, `_TierII_events` and `_TierII` are the
+default suites; `_TierII_daily` and `_TierIII` need extra data (`day`-table output and
+the paleo experiments respectively), so ask for them with `--suite`.
 
 **Tier II scoring is a pass over the finished databases, not a diagnostic.**
 Ensemble members are ingested as separate data sources, so a model's fair CRPS
@@ -100,13 +119,14 @@ can never be mistaken for a pass.
 Each suite is given the data shape and time window the protocol asks for, so
 there is no single global slice of the submission:
 
-| Suite | Gets | Window |
-|---|---|---|
-| `ClimateBench2_TierI`, `_TierIII` | an experiment dict (`historical` = the submission unless `--experiment historical=DIR`), **once per model** | every experiment in **full** |
-| `ClimateBench2_TierII_events` | the same experiment dict, but **once per ensemble member**, each with its own `historical` record — its Tier II scalars are scored across the ensemble | full |
-| `ClimateBench2_TierI_variability` | the `picontrol` experiment (ENSO wants ≥ 100 yr of control) | full |
-| `ClimateBench2_TierII` | the model's cubes, once per ensemble member | the reserved post-2015 test window, `tier2.test_window_start` → last complete year |
-| `ClimateBench2_TierII_daily` | the model's daily/hourly cubes, once per ensemble member | **full record** — the paper defines the extremes, PDF and diurnal climatologies over it, so every entry is in-sample |
+| Suite | Data shape | Window | Per member? |
+|---|---|---|---|
+| `ClimateBench2_TierI` | experiment dict (`historical` = the submission unless `--experiment historical=DIR`) | every experiment in **full** | no — a gate is a property of the model |
+| `ClimateBench2_TierI_variability` | cubes, from the `picontrol` experiment (ENSO wants ≥ 100 yr of control) | full | no |
+| `ClimateBench2_TierII` | the model's monthly cubes | the reserved post-2015 test window, `tier2.test_window_start` → last complete year | **yes** |
+| `ClimateBench2_TierII_daily` | the model's daily/hourly cubes | **full record** — the paper defines the extremes, PDF and diurnal climatologies over it, so every entry is in-sample | **yes** |
+| `ClimateBench2_TierII_events` | the same experiment dict, each run with its own `historical` record — its Tier II scalars are scored across the ensemble | full | **yes** |
+| `ClimateBench2_TierIII` | experiment dict (`picontrol` + the paleo slices) | full | no |
 
 `--timerange` overrides the window of the cube-based suites only. Note that
 ClimateEval's CMIP6 comparison generator is still hard-wired to 1979–2014 and
@@ -122,7 +142,8 @@ Per-model interactive reports remain available through ClimateEval:
 climatebench2/           # the installable package
 ├── diags/               # CB2 protocol diagnostics (plug into ClimateEval suites)
 ├── suites/              # CB2 suite YAMLs — Tier I/II/III (see suites/README.md)
-├── thresholds.yml       # single source of truth for every pass/fail bound
+├── thresholds.yml       # single source of truth for every bound, requirement and tier tag
+├── _thresholds.py       # the only reader of the above (`get_threshold("tier1.ecs.range")`)
 ├── scoring.py           # fair CRPS, ESS + block bootstrap, consistency, EOF, proxy
 ├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
 ├── windows.py           # the protocol's time windows (test / baseline / long trend)
@@ -133,14 +154,26 @@ climatebench2/           # the installable package
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 docs/                    # delineation plan, metrics reference
 paleo_scripts/           # Tier III data pipeline (download/process/benchmark)
+analysis/                # standalone studies behind paper figures — not protocol code
 tests/                   # engine + diagnostics tests (see tests/README.md)
 ```
 
+`analysis/` is exploratory work that predates and informs the protocol; it makes its
+own choices (for instance a 1990–2020 anomaly reference) that are **not** the
+protocol's. The protocol's own windows live in `climatebench2/windows.py` and
+`thresholds.yml`, and nothing under `analysis/` is imported by the package.
+
 ## Status
 
-Phases 0–6 of the [migration plan](docs/climateeval_delineation_plan.md#6-migration--phased-retire-as-parity)
+Phases 0–7 of the [migration plan](docs/climateeval_delineation_plan.md#6-migration--phased-retire-as-parity)
 are implemented: tier suites, the probabilistic scoring engine, the Tier I
-physics gates, baselines, Tier III paleo protocol, and the leaderboard.
+physics gates, baselines, Tier III paleo protocol, and the leaderboard, then
+(Phase 7) the 2026-09-14 re-alignment of all of it against the paper draft.
+**314 tests pass** — and every one of them runs on synthetic data:
+nothing here has yet been exercised against real model or observational output.
+The concrete blockers are listed under "What is left to run against CMIP6" in
+[docs/metrics_reference.md](docs/metrics_reference.md), and every provisional
+constant under "Decisions needed from Duncan" in the same file.
 The implementation was re-audited against the 2026-09 paper draft on
 2026-09-14: see the status tables and the prioritized gap list in
 [docs/metrics_reference.md](docs/metrics_reference.md). The scoring-engine core is now on the

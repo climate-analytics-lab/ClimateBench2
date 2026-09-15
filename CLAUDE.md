@@ -13,9 +13,18 @@ Two documents govern all work here:
 
 - [docs/climateeval_delineation_plan.md](docs/climateeval_delineation_plan.md) —
   the architecture, the CB2⟷ClimateEval ownership boundary, and the phased
-  migration (Phase 0 done: package scaffold).
+  migration (**Phases 0–7 done**; Phase 7 is the 2026-09-14 protocol
+  re-alignment). §7 lists the twelve open upstream PRs (#44–#55, none merged).
+  Read its §9 "definition of done" before claiming anything is finished.
 - [docs/metrics_reference.md](docs/metrics_reference.md) — the authoritative
-  spec (inputs, formula, threshold) for every Tier I/II/III check.
+  spec (inputs, formula, threshold) for every Tier I/II/III check. **The paper
+  is the truth**: fix a disagreement there, never by diverging in code. Its
+  "Decisions needed from Duncan" section is where every ⚠ / `TODO(Duncan)`
+  lives — add to it rather than inventing a value.
+
+**Current state (2026-09-14): 314 tests pass, and nothing has been
+run on real model or observational data.** Every test fixture is synthetic. Do
+not describe a diagnostic as "working" on that evidence.
 
 **Ownership test:** code that loads/regrids data or is a generic physical
 diagnostic belongs in ClimateEval (upstream PR); code that encodes a threshold,
@@ -28,7 +37,8 @@ climatebench2/
 ├── diags/               # ClimateEval-compatible Diagnostic subclasses (the protocol)
 ├── suites/              # CB2 suite YAMLs; may reference climatebench2.diags.* AND climateeval.diags.*
 ├── thresholds.yml       # EVERY pass/fail bound + each gate's `requirement:` tag
-│                        #   (required/extended/extra/diagnostic) — never hard-code one
+│                        #   (required/extended/extra/diagnostic) and `tier:` — never hard-code one
+├── _thresholds.py       # get_threshold("tier1.ecs.range") — the only reader of the above
 ├── scoring.py           # pure fair-CRPS / bootstrap / consistency / EOF engine (numpy only)
 ├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
 ├── windows.py           # the protocol's time windows (test / 1985-2014 baseline / 1950-)
@@ -102,8 +112,11 @@ climatebench2 score MODEL --truth /data/CESM2/ssp245 --truth-member r2i1p1f1=DIR
 #   Tier III.2 perfect model: the cube suites score against a HELD-OUT ESM run
 #   instead of observations (window = perfect-model); truth members drive the
 #   large-ensemble spread test. No truth data is staged yet.
+climatebench2 score MODEL --no-score      # suites only; run the Tier II pass later
 climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scorecard (HTML)
 climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb  # re-run the Tier II pass
+#   --rescore is also how a thresholds.yml change reaches existing databases; the
+#   pass is idempotent (it deletes its own `scorer` rows before rewriting them)
 climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report
 
 # Tests (ClimateEval pixi env + this repo on PYTHONPATH; see tests/README.md)

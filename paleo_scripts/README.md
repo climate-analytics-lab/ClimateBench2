@@ -286,7 +286,7 @@ Its CRPS is also **not** the protocol's: it treats the proxy (μ, σ) as the for
 distribution and the model value as the observation — the inverse of Tier III's fair
 CRPS of a model pseudo-ensemble against the proxy value. Keep it for the AR6-style
 figures; for the protocol score use `climatebench2 score --suite ClimateBench2_TierIII`
-(see below).
+(the "data preparation, not protocol" section at the top of this file).
 
 **Results:** `../results/paleo/{period}_paleo_benchmark_results.csv`  
 Columns: `model`, `period`, `dataset`, `variable`, `n_sites`, `rmse`, `mae`, `mean_crps`, `crps_skill`

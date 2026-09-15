@@ -60,10 +60,12 @@ def test_gate_metrics_emits_requirement_and_applicable_columns() -> None:
             lower=1.0,
             upper=7.0,
             requirement="required",
+            tier="I",
         ),
     )
     metrics = gate_metrics(raw, checks)
     assert metrics.loc[0, "requirement"] == "required"
+    assert metrics.loc[0, "tier"] == "I"
     assert metrics.loc[0, "applicable"] == 1.0
     assert metrics.loc[0, "passes"] == 1.0
     expected = {
@@ -75,6 +77,7 @@ def test_gate_metrics_emits_requirement_and_applicable_columns() -> None:
         "bound_upper",
         "passes",
         "requirement",
+        "tier",
         "applicable",
     }
     assert set(metrics.columns) == expected

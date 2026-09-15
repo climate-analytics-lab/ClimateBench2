@@ -3,33 +3,154 @@
 #   climatebench2 score MODEL --experiment picontrol=DIR \
 #       --experiment midholocene=DIR [--experiment lgm=DIR ...] \
 #       --suite ClimateBench2_TierIII
-# Proxy CSVs come from paleo_scripts/process_paleo_observations.py; point the
-# proxy_csv kwargs at the processed files (paths below are the pipeline
-# defaults, override via suite diagnostic_kwargs if staged elsewhere).
 #
-# III.2 (perfect-model, CESM-LE spread) has no suite yet: it scores a
+# The proxy targets are the per-dataset NetCDFs written by
+# `paleo_scripts/process_paleo_observations.py` under
+#   <paleo_data_root>/<period>/<dataset>.nc
+# with `paleo_data_root` defaulting to `tier3.paleo_data_root` and overridable
+# per run with `climatebench2 score --paleo-data-root DIR`. One stanza per
+# (period, dataset, variable): each is scored on its own terms, because each
+# compilation has its own sites, units, uncertainty and PI baseline.
+#
+# Every stanza's `dataset_type` is read from the file and carried onto its
+# rows. Paper Appendix D (2026-09) scores the RAW proxy compilations only, so
+# the Cleator 2020 stanzas below are computed and reported but tagged
+# `data_assimilation` and excluded from the protocol score. The lgmDA / LGMR
+# fields are the same case and are left out entirely: Tierney2020_tos is the
+# raw compilation behind lgmDA, and scoring both would double-count it.
+#
+# III.2 (perfect-model, CESM-LE spread) has no suite of its own: it scores a
 # submission against a designated truth run through the ordinary Tier II
-# suites, plus climatebench2.scoring.le_variance_ratio /
-# le_spread_pattern_correlation for the spread test.
+# suites (`climatebench2 score --truth DIR --truth-member LABEL=PATH`), and
+# the scoring pass adds the large-ensemble spread test from the truth
+# members it finds in the database.
 
 - name: midholocene_monsoon           # hard requirement: Green Sahara
   diagnostic: climatebench2.diags.MidHoloceneMonsoonGate
-  additional_diagnostic_kwargs: {}
+  additional_diagnostic_kwargs: {}    # Harrison2015_pr reported when processed
 
-- name: midholocene_proxies
-  diagnostic: climatebench2.diags.PaleoProxyConsistencyGate
-  additional_diagnostic_kwargs:
-    period_key: midholocene
-    proxy_csv: paleo_scripts/paleo_observations/processed/midholocene_proxies.csv
+# ---------------------------------------------------------------------------
+# LGM (Required)
+# ---------------------------------------------------------------------------
 
-- name: lgm_proxies
-  diagnostic: climatebench2.diags.PaleoProxyConsistencyGate
+- name: lgm_tierney2020_tos           # raw SST compilation (the lgmDA input)
+  diagnostic: climatebench2.diags.PaleoProxyScore
   additional_diagnostic_kwargs:
     period_key: lgm
-    proxy_csv: paleo_scripts/paleo_observations/processed/lgm_proxies.csv
+    dataset: Tierney2020_tos          # site (512); Tierney2020_5x5_tos is the
+    var_name: tos                     # same data binned to 5x5 if a gridded
+    landsea_mask: sea_only            # comparison is wanted instead
 
-- name: lig127k_proxies
-  diagnostic: climatebench2.diags.PaleoProxyConsistencyGate
+- name: lgm_bartlein2011_tas          # pollen-based mean annual temperature
+  diagnostic: climatebench2.diags.PaleoProxyScore
+  additional_diagnostic_kwargs:
+    period_key: lgm
+    dataset: Bartlein2011_tas
+    var_name: tas
+    landsea_mask: land_only
+
+- name: lgm_bartlein2011_pr           # pollen-based mean annual precipitation
+  diagnostic: climatebench2.diags.PaleoProxyScore
+  additional_diagnostic_kwargs:
+    period_key: lgm
+    dataset: Bartlein2011_pr
+    var_name: pr
+    landsea_mask: land_only
+
+- name: lgm_cleator2020_tas           # DA product: reported, NOT scored
+  diagnostic: climatebench2.diags.PaleoProxyScore
+  additional_diagnostic_kwargs:
+    period_key: lgm
+    dataset: Cleator2020_tas
+    var_name: tas
+    landsea_mask: land_only
+
+- name: lgm_cleator2020_pr            # DA product: reported, NOT scored
+  diagnostic: climatebench2.diags.PaleoProxyScore
+  additional_diagnostic_kwargs:
+    period_key: lgm
+    dataset: Cleator2020_pr
+    var_name: pr
+    landsea_mask: land_only
+
+# Not scoreable targets — the diagnostic writes the reason rather than a
+# number, so they are left here as documentation of the gap:
+#   Osman2021Proxies_proxy  uncalibrated UK'37 / TEX86 / Mg-Ca / d18O in native
+#                           units, not SST. Calibrating needs the Bayesian
+#                           forward models (BAYSPLINE / BAYMAG / BAYFOX /
+#                           BAYSPAR) the pipeline deliberately does not pick;
+#                           Tierney2020_tos above is the calibrated LGM SST.
+#   lgmDA_v2.1_tas,         data-assimilation fields whose spatial covariances
+#   LGMR_SAT_tas,           come from the assimilating model (paper App. D
+#   LGMR_SST_tos            excludes them); the raw compilations are scored.
+
+# ---------------------------------------------------------------------------
+# mid-Holocene (Extended)
+# ---------------------------------------------------------------------------
+
+- name: midholocene_bartlein2011_tas
+  diagnostic: climatebench2.diags.PaleoProxyScore
+  additional_diagnostic_kwargs:
+    period_key: midholocene
+    dataset: Bartlein2011_tas
+    var_name: tas
+    landsea_mask: land_only
+
+- name: midholocene_bartlein2011_pr   # water balance (mean annual precip)
+  diagnostic: climatebench2.diags.PaleoProxyScore
+  additional_diagnostic_kwargs:
+    period_key: midholocene
+    dataset: Bartlein2011_pr
+    var_name: pr
+    landsea_mask: land_only
+
+# Temp12k (Kaufman et al. 2020) is in the paper's App. D list, so the stanza
+# stays live — but the processed file is a latitude-band ensemble
+# (method x latband x age x member), not a site or gridded field, so site
+# sampling cannot reach it and the diagnostic writes that as its reason. A
+# zonal-mean comparison against the band means is the missing piece.
+- name: midholocene_temp12k_tas
+  diagnostic: climatebench2.diags.PaleoProxyScore
+  additional_diagnostic_kwargs:
+    period_key: midholocene
+    dataset: Temp12k_tas
+    var_name: tas_anom
+    landsea_mask: land_only
+
+# Harrison & Prentice 2015 is the North-Africa moisture reference for the
+# monsoon gate above (reported beside the modelled JJAS anomaly), not a
+# separate scored stanza: it is a latitudinal profile of ANNUAL precipitation.
+
+# ---------------------------------------------------------------------------
+# LIG 127 ka (Extended)
+# ---------------------------------------------------------------------------
+
+- name: lig127k_ottobliesner2021_tas
+  diagnostic: climatebench2.diags.PaleoProxyScore
   additional_diagnostic_kwargs:
     period_key: lig127k
-    proxy_csv: paleo_scripts/paleo_observations/processed/lig127k_proxies.csv
+    dataset: OttoBliesner2021_tas
+    var_name: tas
+    landsea_mask: land_only
+
+# Scussolini et al. 2019 needs a manual download (science.org blocks scripts),
+# so the processed file may be absent — the diagnostic then says so. Its
+# uncertainty column is `pr_reliability`, a semi-quantitative flag rather than
+# a sigma; without a `pr_std` the fair CRPS has no observational variance term
+# and the stanza reports that instead of inventing one. TODO(Duncan).
+- name: lig127k_scussolini2019_pr
+  diagnostic: climatebench2.diags.PaleoProxyScore
+  additional_diagnostic_kwargs:
+    period_key: lig127k
+    dataset: Scussolini2019_pr
+    var_name: pr
+    landsea_mask: land_only
+
+# Not scoreable targets (reason rows if enabled):
+#   Hoffman2017_tos   LIG SST compilation superseded by Osman et al. 2026,
+#                     which App. D names and which has no public archive as
+#                     of 2026-09. Uncomment once Osman 2026 is archived and
+#                     the pipeline processes it as `Osman2026_tos`.
+#   SISALv3_d18O      speleothem d18O needs isotope-enabled model output
+#                     (d18O of precipitation/drip water), and no calcite-
+#                     precipitation fractionation is applied here.

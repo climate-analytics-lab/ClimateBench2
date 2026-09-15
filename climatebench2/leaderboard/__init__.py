@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 from climatebench2.scoring_pass import (
     CLIMATOLOGY_DATA_ID,
     SCORER,
+    TIER3_SCORER,
     WINDOW_HELD_OUT,
     WINDOW_IN_SAMPLE,
 )
@@ -56,6 +57,12 @@ if TYPE_CHECKING:
 #: Prefix of the metrics columns the Perkins diagnostic writes
 #: (``perkins_djf``, …, ``perkins_all``).
 PERKINS_PREFIX = "perkins_"
+
+#: Protocol tiers, in scorecard order. A gate row carries its own tier
+#: (``thresholds.yml``), so a check appears under the tier the protocol gives
+#: it rather than under the suite it happened to run in — which is what keeps
+#: the mid-Holocene monsoon gate (Tier III, Extended) out of the Tier I table.
+TIER_I, TIER_II, TIER_III = "I", "II", "III"
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +95,13 @@ class Scores:
     #: error, so it is kept apart from `crps` and never enters E_ref.
     distribution: pd.DataFrame = field(default_factory=lambda: _empty())
     deterministic: pd.DataFrame = field(default_factory=lambda: _empty())
+    #: Tier III ``raw_output`` rows carrying the ``*_site_consistency``
+    #: fractions (the complementary diagnostic).
     tier3: pd.DataFrame = field(default_factory=lambda: _empty())
+    #: Tier III ``metrics`` rows the paleo diagnostics write themselves
+    #: (``scorer = TIER3_SCORER``): the fair CRPS per (period, dataset,
+    #: variable), its `dataset_type` and the reasons for the unscored ones.
+    tier3_scores: pd.DataFrame = field(default_factory=lambda: _empty())
 
 
 def _empty() -> pd.DataFrame:
@@ -98,30 +111,37 @@ def _empty() -> pd.DataFrame:
 
 
 def _normalise_gates(gates: pd.DataFrame) -> pd.DataFrame:
-    """Fill the requirement/applicable columns (databases predating them).
+    """Fill the requirement/tier/applicable columns (databases predating them).
 
     Older result databases carry only ``passes``; their rows are all
-    applicable, and their requirement tag is recovered from the gate classes
-    (``climatebench2.diags``), defaulting to ``required``.
+    applicable, and their requirement and tier tags are recovered from the
+    gate classes (``climatebench2.diags``), defaulting to ``required`` and
+    Tier I.
     """
     if gates.empty:
         return gates
     if "applicable" not in gates.columns:
         gates["applicable"] = 1.0
     gates["applicable"] = gates["applicable"].astype(float).fillna(1.0)
-    registry: dict[str, str] = {}
+    requirements: dict[str, str] = {}
+    tiers: dict[str, str] = {}
     try:
-        from climatebench2.diags.pass_fail import gate_requirements
+        from climatebench2.diags.pass_fail import gate_requirements, gate_tiers
 
-        registry = gate_requirements()
+        requirements = gate_requirements()
+        tiers = gate_tiers()
     except Exception:  # noqa: BLE001 - climateeval may be unavailable
-        registry = {}
-    if "requirement" not in gates.columns:
-        gates["requirement"] = ""
-    gates["requirement"] = [
-        tag if isinstance(tag, str) and tag else registry.get(var_id, "required")
-        for tag, var_id in zip(gates["requirement"], gates["var_id"], strict=True)
-    ]
+        requirements, tiers = {}, {}
+    for column, registry, default in (
+        ("requirement", requirements, "required"),
+        ("tier", tiers, TIER_I),
+    ):
+        if column not in gates.columns:
+            gates[column] = ""
+        gates[column] = [
+            tag if isinstance(tag, str) and tag else registry.get(var_id, default)
+            for tag, var_id in zip(gates[column], gates["var_id"], strict=True)
+        ]
     return gates
 
 
@@ -148,6 +168,7 @@ def build_scores(db_paths: list[Path]) -> Scores:
 
     gates, crps, consistency, deterministic, tier3 = [], [], [], [], []
     distribution: list[pd.DataFrame] = []
+    tier3_scores: list[pd.DataFrame] = []
     names: dict[str, str] = {}
     for suite, diag, table, df in _read_all(db_paths):
         if df.empty:
@@ -176,11 +197,21 @@ def build_scores(db_paths: list[Path]) -> Scores:
                 # Rows the scoring pass wrote are kept even with a NaN score:
                 # "n/a (single member)" is a result the scorecard must show.
                 keep = tagged["crps"].notna()
+                is_tier3 = (
+                    tagged["scorer"] == TIER3_SCORER
+                    if "scorer" in tagged.columns
+                    else tagged["crps"].isna() & False
+                )
                 if "scorer" in tagged.columns:
                     keep = keep | (tagged["scorer"] == SCORER)
                 if "p_value" in tagged.columns:
                     keep = keep & tagged["p_value"].isna()
-                crps.append(tagged[keep])
+                # Tier III rows share the vocabulary but not the table: their
+                # ensemble is a block pseudo-ensemble of one run, so they have
+                # no E_ref and belong under Tier III, not in the skill table.
+                crps.append(tagged[keep & ~is_tier3])
+                if is_tier3.any():
+                    tier3_scores.append(tagged[is_tier3])
             if "p_value" in df.columns:
                 consistency.append(tagged[tagged["p_value"].notna()])
             # The Perkins skill score (climatebench2.diags.PerkinsSkillScore)
@@ -217,6 +248,7 @@ def build_scores(db_paths: list[Path]) -> Scores:
         distribution=_label_by_model(cat(distribution), names),
         deterministic=_label_by_model(cat(deterministic), names),
         tier3=_label_by_model(cat(tier3), names),
+        tier3_scores=_label_by_model(cat(tier3_scores), names),
     )
 
 
@@ -315,25 +347,30 @@ def _gate_states(gates: pd.DataFrame) -> dict[str, dict[str, str]]:
     return states
 
 
-def _check_requirements(gates: pd.DataFrame) -> dict[str, str]:
-    """``check_id -> requirement`` for every known gate, run or not.
+def _check_tags(gates: pd.DataFrame, column: str) -> dict[str, str]:
+    """``check_id -> requirement`` (or ``tier``) for every known gate, run or not.
 
     The gate classes are the authority on the *full* Required set (a gate
     that never ran writes no row, and its absence is what makes an entry
     ticket incomplete); tags found in the databases win where they differ.
     """
-    requirements: dict[str, str] = {}
+    tags: dict[str, str] = {}
     try:
-        from climatebench2.diags.pass_fail import gate_requirements
+        from climatebench2.diags.pass_fail import gate_requirements, gate_tiers
 
-        requirements.update(gate_requirements())
+        tags.update(gate_requirements() if column == "requirement" else gate_tiers())
     except Exception:  # noqa: BLE001 - climateeval may be unavailable
         pass
-    if not gates.empty:
-        for var_id, tag in zip(gates["var_id"], gates["requirement"], strict=True):
+    if not gates.empty and column in gates.columns:
+        for var_id, tag in zip(gates["var_id"], gates[column], strict=True):
             if isinstance(tag, str) and tag:
-                requirements[str(var_id)] = tag
-    return requirements
+                tags[str(var_id)] = tag
+    return tags
+
+
+def _check_requirements(gates: pd.DataFrame) -> dict[str, str]:
+    """``check_id -> requirement`` for every known gate, run or not."""
+    return _check_tags(gates, "requirement")
 
 
 def entry_ticket(
@@ -383,23 +420,45 @@ def _gate_group_table(
     )
 
 
+def _grouped_checks(
+    gates: pd.DataFrame,
+    tier: str,
+) -> tuple[dict[str, dict[str, str]], dict[str, list[str]]]:
+    """``(states, {requirement: [check_id]})`` for one protocol tier.
+
+    A check is placed by its own ``tier`` tag, so a gate emitted through the
+    Tier I machinery but belonging to Tier III (the mid-Holocene monsoon
+    check) lands in the Tier III table. Required checks are listed even when
+    they produced no row — that hole is what makes an entry ticket ⚠.
+    """
+    requirements = _check_requirements(gates)
+    tiers = _check_tags(gates, "tier")
+    states = _gate_states(gates)
+    seen = set(gates["var_id"].astype(str)) if not gates.empty else set()
+
+    def group(tag: str, *, include_unrun: bool) -> list[str]:
+        ids = {
+            c
+            for c, t in requirements.items()
+            if t == tag and tiers.get(c, TIER_I) == tier
+        }
+        return sorted(ids if include_unrun else ids & seen)
+
+    return states, {
+        "required": group("required", include_unrun=True),
+        "extended": group("extended", include_unrun=False),
+        "extra": group("extra", include_unrun=False),
+        "diagnostic": group("diagnostic", include_unrun=False),
+    }
+
+
 def _gate_matrix_html(gates: pd.DataFrame) -> str:
     """The Tier I scorecard: Required (+ entry ticket), Extended, extra."""
     if gates.empty:
         return "<p class='na'>No Tier I gate results in the given databases.</p>"
 
-    requirements = _check_requirements(gates)
-    states = _gate_states(gates)
-    seen = set(gates["var_id"].astype(str))
-
-    def group(tag: str, *, include_unrun: bool) -> list[str]:
-        ids = {c for c, t in requirements.items() if t == tag}
-        return sorted(ids if include_unrun else ids & seen)
-
-    required = group("required", include_unrun=True)
-    extended = group("extended", include_unrun=False)
-    extra = group("extra", include_unrun=False)
-
+    states, groups = _grouped_checks(gates, TIER_I)
+    required = groups["required"]
     tickets = {m: entry_ticket(s, required) for m, s in states.items()}
     order = {"pass": 0, "incomplete": 1, "fail": 2}
     models = sorted(states, key=lambda m: (order[tickets[m]], m))
@@ -414,20 +473,20 @@ def _gate_matrix_html(gates: pd.DataFrame) -> str:
         "has no result at all.</p>",
         _gate_group_table(states, required, models, tickets=tickets),
     ]
-    if extended:
+    if groups["extended"]:
         html += [
             "<h3>Extended checks</h3>",
             "<p>Reported alongside the entry ticket and contributing "
             "additional credit; these do <em>not</em> gate entry (their "
             "inputs are outside the CMIP6 protocol or need daily fields).</p>",
-            _gate_group_table(states, extended, models),
+            _gate_group_table(states, groups["extended"], models),
         ]
-    if extra:
+    if groups["extra"]:
         html += [
             "<h3>Extra checks (not part of the protocol)</h3>",
             "<p>Code-only sanity checks kept from the legacy pipeline; "
             "excluded from the entry ticket pending paper reconciliation.</p>",
-            _gate_group_table(states, extra, models),
+            _gate_group_table(states, groups["extra"], models),
         ]
     return "".join(html)
 
@@ -436,12 +495,8 @@ def _event_flags_html(gates: pd.DataFrame) -> str:
     """Tier II aggregated event diagnostics (Pinatubo, hemispheric asymmetry)."""
     if gates.empty:
         return ""
-    requirements = _check_requirements(gates)
-    states = _gate_states(gates)
-    seen = set(gates["var_id"].astype(str))
-    checks = sorted(
-        {c for c, t in requirements.items() if t == "diagnostic"} & seen,
-    )
+    states, groups = _grouped_checks(gates, TIER_II)
+    checks = groups["diagnostic"]
     if not checks:
         return ""
     models = sorted(m for m, s in states.items() if s.keys() & set(checks))
@@ -452,6 +507,26 @@ def _event_flags_html(gates: pd.DataFrame) -> str:
         "These are Tier II diagnostics, not Tier I gates: they are reported, "
         "never part of the entry ticket.</p>"
         + _gate_group_table(states, checks, models)
+    )
+
+
+def _tier3_gates_html(gates: pd.DataFrame) -> str:
+    """Tier III pass/fail checks (the mid-Holocene monsoon, the LE spread)."""
+    if gates.empty:
+        return ""
+    states, groups = _grouped_checks(gates, TIER_III)
+    checks = groups["required"] + groups["extended"] + groups["extra"]
+    if not checks:
+        return ""
+    models = sorted(m for m, s in states.items() if s.keys() & set(checks))
+    return (
+        "<h3>Tier III checks</h3>"
+        "<p>Pass/fail checks belonging to Tier III — the mid-Holocene "
+        "Green-Sahara monsoon requirement (JJAS precipitation anomaly over "
+        "North Africa) and, for a perfect-model submission, the "
+        "large-ensemble spread test. mid-Holocene is an <em>Extended</em> "
+        "period, so these are reported for credit and never part of the "
+        "Tier I entry ticket.</p>" + _gate_group_table(states, checks, models)
     )
 
 
@@ -752,6 +827,68 @@ def _consistency_table_html(consistency: pd.DataFrame) -> str:
     )
 
 
+def _tier3_scores_html(tier3_scores: pd.DataFrame) -> str:
+    """Tier III fair CRPS per (period, dataset, variable).
+
+    The primary Tier III statistic (§III.1): the fair CRPS of the model's
+    **block pseudo-ensemble** against one proxy compilation, with the proxy
+    σ as the observational uncertainty and an equal-weight mean over sites.
+    There is no ``E_ref`` behind it — that needs a PMIP4 comparison ensemble
+    — so the table shows the raw score, never a skill.
+    """
+    import numpy as np
+
+    if tier3_scores.empty:
+        return ""
+    # The `<key>_skill` companions only carry the "no comparison ensemble"
+    # reason; the note below says it once instead of once per row.
+    rows = []
+    for _, row in tier3_scores.sort_values("var_id", kind="stable").iterrows():
+        var_id = str(row.get("var_id", ""))
+        if var_id.endswith("_skill"):
+            continue
+        crps = _number(row.get("crps"))
+        dataset_type = str(row.get("dataset_type") or "")
+        reason = str(row.get("reason") or "")
+        if np.isfinite(crps):
+            scored = not reason
+            cls = "num" if scored else "num na"
+            value = f"{crps:.4g}" + ("" if scored else " †")
+        else:
+            cls = "na"
+            value = "n/a"
+        n_sites = _number(row.get("n_sites"))
+        n_members = _number(row.get("n_members"))
+        rows.append(
+            f"<tr><td><strong>{_esc(row.get('data_id', '?'))}</strong></td>"
+            f"<td><code>{_esc(var_id)}</code></td>"
+            f"<td>{_esc(dataset_type)}</td>"
+            f"<td class='{cls}' title='{_esc(reason)}'>{value}</td>"
+            f"<td class='num'>{'' if not np.isfinite(n_sites) else f'{n_sites:.0f}'}</td>"
+            f"<td class='num'>{'' if not np.isfinite(n_members) else f'{n_members:.0f}'}</td>"
+            f"<td>{_esc(reason)}</td></tr>",
+        )
+    if not rows:
+        return ""
+    return (
+        "<h3>Paleo fair CRPS vs the proxy compilations</h3>"
+        "<p>The protocol's primary Tier III score: <strong>fair CRPS</strong> "
+        "of the model's block pseudo-ensemble — the climatological anomalies "
+        "of non-overlapping blocks of the equilibrated paleo run, minus the "
+        "full piControl climatology — against the proxy values, with the "
+        "proxy uncertainty as the observational variance term and an "
+        "equal-weight mean over sites. Lower is better; there is no skill "
+        "score because a PMIP4 comparison ensemble does not exist yet "
+        "(upstream ClimateEval PR #45). <strong>†</strong> marks a value that "
+        "is reported but <em>not</em> part of the protocol score — a "
+        "data-assimilation product, which paper App. D excludes because its "
+        "spatial covariances come from the assimilating model.</p>"
+        "<table><thead><tr><th>Model</th><th>Period / dataset / variable</th>"
+        "<th>Type</th><th>fair CRPS</th><th>Sites</th><th>M</th>"
+        f"<th>Note</th></tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
 def _tier3_html(tier3: pd.DataFrame) -> str:
     if tier3.empty:
         return ""
@@ -772,11 +909,33 @@ def _tier3_html(tier3: pd.DataFrame) -> str:
     if not rows:
         return ""
     return (
-        "<h2>Tier III — paleo proxy-site consistency</h2>"
-        "<p>Fraction of proxy sites where the model anomaly is consistent "
-        "with the proxy within its uncertainty (regime-b, p ≥ 0.05).</p>"
-        "<table><thead><tr><th>Model</th><th>Period</th><th>Consistent sites"
-        f"</th></tr></thead><tbody>{''.join(rows)}</tbody></table>"
+        "<h3>Paleo proxy-site consistency</h3>"
+        "<p>The complementary diagnostic: the fraction of proxy sites where "
+        "the model anomaly is consistent with the proxy within the combined "
+        "pseudo-member spread and proxy uncertainty (p ≥ 0.05).</p>"
+        "<table><thead><tr><th>Model</th><th>Period / dataset / variable</th>"
+        f"<th>Consistent sites</th></tr></thead><tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def _tier3_section_html(scores: Scores) -> str:
+    """The whole Tier III block: gates, the fair CRPS and the consistency."""
+    parts = [
+        _tier3_gates_html(scores.gates),
+        _tier3_scores_html(scores.tier3_scores),
+        _tier3_html(scores.tier3),
+    ]
+    body = "".join(p for p in parts if p)
+    if not body:
+        return ""
+    return (
+        "<h2>Tier III — paleoclimate and perfect-model tests</h2>"
+        "<p>Out-of-sample evidence: PMIP4 time slices against the proxy "
+        "compilations of paper Appendix D (LGM <strong>Required</strong>; "
+        "mid-Holocene and LIG <strong>Extended</strong>), and — for a "
+        "submission scored against a held-out ESM — the perfect-model "
+        "spread test.</p>" + body
     )
 
 
@@ -798,6 +957,6 @@ Spec: <code>docs/metrics_reference.md</code>.</p>
 {_event_flags_html(scores.gates)}
 {_distribution_table_html(scores.distribution)}
 {_consistency_table_html(scores.consistency)}
-{_tier3_html(scores.tier3)}
+{_tier3_section_html(scores)}
 <footer>Generated by <code>climatebench2 leaderboard</code> from: {sources}
 </footer></body></html>"""

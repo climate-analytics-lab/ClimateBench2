@@ -444,3 +444,84 @@ def test_distribution_skill_table_is_separate_from_the_crps_table(tmp_path) -> N
     # always in-sample, and never part of the headline skill
     assert "in-sample" in html
     assert "E_ref" in html.split("distribution skill (Perkins)")[1]
+
+
+# ---------------------------------------------------------------------------
+# Tier labels (WP7): a gate is shown under its own tier, not its suite's
+# ---------------------------------------------------------------------------
+
+
+def test_tier3_gates_leave_the_tier_i_extended_table() -> None:
+    """The mid-Holocene monsoon gate is Tier III Extended, not Tier I.
+
+    It is emitted through the same gate machinery as the Tier I checks and
+    used to appear in the Tier I Extended table; the `tier` tag it now carries
+    (`thresholds.yml`) is what moves it.
+    """
+    from climatebench2.diags.pass_fail import gate_requirements, gate_tiers
+    from climatebench2.leaderboard import Scores, render_html
+
+    requirements = gate_requirements()
+    tiers = gate_tiers()
+    assert tiers["midholocene_monsoon"] == "III"
+    assert requirements["midholocene_monsoon"] == "extended"
+
+    gates = _gate_rows(
+        "M",
+        {
+            "ecs_gate": "pass",
+            "mjo_east_west": "pass",       # Tier I, Extended
+            "midholocene_monsoon": "fail",  # Tier III, Extended
+        },
+    )
+    html = render_html(Scores(gates=gates))
+
+    tier1_extended = html.split("<h3>Extended checks</h3>", 1)[1].split("</table>", 1)[0]
+    assert "mjo_east_west" in tier1_extended
+    assert "midholocene_monsoon" not in tier1_extended
+
+    tier3 = html.split("<h3>Tier III checks</h3>", 1)[1].split("</table>", 1)[0]
+    assert "midholocene_monsoon" in tier3
+    assert "Tier III — paleoclimate and perfect-model tests" in html
+
+
+def test_tier3_scores_table_separates_scored_from_reported(tmp_path) -> None:  # noqa: ANN001
+    """Tier III CRPS rows get their own table, never the Tier II skill one."""
+    from climatebench2.leaderboard import build_scores, render_html
+    from climatebench2.scoring_pass import SCORER, TIER3_SCORER
+
+    rows = pd.DataFrame(
+        {
+            "data_id": ["M", "M", "M"],
+            "data_type": ["to_benchmark"] * 3,
+            "var_id": [
+                "lgm_Tierney2020_tos_tos",
+                "lgm_Cleator2020_tas_tas",
+                "lgm_Scussolini2019_pr_pr",
+            ],
+            "scorer": [TIER3_SCORER] * 3,
+            "reason": ["", "data_assimilation product: reported", "no dataset"],
+            "window": ["held-out"] * 3,
+            "crps": [0.42, 1.31, np.nan],
+            "n_sites": [512.0, 1180.0, np.nan],
+            "n_members": [5.0, 5.0, np.nan],
+            "dataset_type": ["proxy_compilation", "data_assimilation", ""],
+        },
+    )
+    db_path = tmp_path / "ClimateBench2_TierIII.ddb"
+    conn = ibis.connect(f"duckdb://{db_path}")
+    conn.create_database("lgm_tierney2020_tos")
+    conn.create_table("metrics", ibis.memtable(rows), database="lgm_tierney2020_tos")
+    conn.disconnect()
+
+    scores = build_scores([db_path])
+    assert scores.crps.empty, "Tier III rows must not enter the Tier II skill table"
+    assert len(scores.tier3_scores) == 3
+    assert set(scores.tier3_scores["scorer"]) == {TIER3_SCORER}
+    assert SCORER not in set(scores.tier3_scores["scorer"])
+
+    html = render_html(scores)
+    assert "Paleo fair CRPS vs the proxy compilations" in html
+    assert "0.42" in html
+    assert "1.31 †" in html      # reported, excluded from the protocol score
+    assert "no dataset" in html  # the unscored one still says why

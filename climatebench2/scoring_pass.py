@@ -106,6 +106,15 @@ if TYPE_CHECKING:
 #: this tag are deleted before a re-run, which makes the pass idempotent.
 SCORER = "climatebench2"
 
+#: ``scorer`` tag of the score rows the **Tier III paleo diagnostics** write
+#: for themselves (:mod:`climatebench2.diags.tier3_paleo`). Their pseudo-
+#: ensemble is built inside the diagnostic from blocks of one run, so there
+#: is nothing for the pass to stack afterwards — but the rows use the same
+#: column vocabulary (:data:`_SCORE_COLUMNS`) so the leaderboard reads one
+#: schema. The distinct tag matters: :func:`_write_rows` deletes rows with
+#: ``scorer = SCORER`` before re-inserting, and must not delete these.
+TIER3_SCORER = "climatebench2.tier3"
+
 #: ``data_id`` of the climatology-baseline row.
 CLIMATOLOGY_DATA_ID = "Climatology"
 
@@ -210,7 +219,29 @@ _SCORE_COLUMNS: dict[str, str] = {
     "total_sigma": "DOUBLE",
     "sigma_internal": "DOUBLE",
     "sigma_obs": "DOUBLE",
+    # Tier III (metrics_reference.md §III.1/§III.2). The paleo diagnostics
+    # write their own score rows in this vocabulary (`TIER3_SCORER`); the
+    # scoring axis there is the set of proxy SITES, so `n_sites` accompanies
+    # `n_time`, and `dataset_type` carries the App. D distinction between a
+    # raw proxy compilation (scored) and a data-assimilation product
+    # (computed and reported, excluded from the protocol score).
+    "n_sites": "DOUBLE",
+    "dataset_type": "VARCHAR",
+    # Gate-shaped columns, so the pass can emit a pass/fail row of its own
+    # (the III.2 large-ensemble spread test) into the same table and the
+    # leaderboard can place it by tier without a second schema.
+    "requirement": "VARCHAR",
+    "tier": "VARCHAR",
+    "applicable": "DOUBLE",
+    "bound_lower": "DOUBLE",
+    "bound_upper": "DOUBLE",
 }
+
+#: Columns of :data:`_SCORE_COLUMNS` that must always hold a string: a NaN in
+#: a VARCHAR column fails the DuckDB insert.
+_TEXT_COLUMNS = frozenset(
+    key for key, dtype in _SCORE_COLUMNS.items() if dtype == "VARCHAR"
+)
 
 
 @dataclass
@@ -569,17 +600,41 @@ def _bootstrap_settings() -> dict[str, Any]:
     }
 
 
-def _empty_row(data_id: str, data_type: str, var_id: str, reason: str) -> dict[str, Any]:
-    """A row that records *why* there is no score, keeping the model visible."""
-    row: dict[str, Any] = dict.fromkeys(_SCORE_COLUMNS, np.nan)
+def empty_score_row(
+    data_id: str,
+    data_type: str,
+    var_id: str,
+    reason: str = "",
+    *,
+    scorer: str = SCORER,
+) -> dict[str, Any]:
+    """A score row with every numeric column NaN and every text column empty.
+
+    The shared constructor for :data:`_SCORE_COLUMNS`-shaped rows: the pass
+    builds every row it writes from it, and so do the Tier III paleo
+    diagnostics, which pass ``scorer=TIER3_SCORER`` (their rows are written
+    by the diagnostic, not by the pass, and must survive a re-run of it).
+
+    With a ``reason`` and nothing else it is the protocol's "why there is no
+    score here" row, which keeps a model visible on the scorecard instead of
+    letting it silently vanish.
+    """
+    row: dict[str, Any] = {
+        key: ("" if key in _TEXT_COLUMNS else np.nan) for key in _SCORE_COLUMNS
+    }
     row.update(
         data_id=data_id,
         data_type=data_type,
         var_id=var_id,
-        scorer=SCORER,
+        scorer=scorer,
         reason=reason,
     )
     return row
+
+
+def _empty_row(data_id: str, data_type: str, var_id: str, reason: str) -> dict[str, Any]:
+    """A row that records *why* there is no score, keeping the model visible."""
+    return empty_score_row(data_id, data_type, var_id, reason)
 
 
 def _score_row(

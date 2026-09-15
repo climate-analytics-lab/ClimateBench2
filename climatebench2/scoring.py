@@ -31,6 +31,7 @@ results database is ``climatebench2.scoring_pass``.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -743,7 +744,10 @@ def block_climatologies(
     blocks = nonoverlapping_blocks(array.shape[0], block_length, spinup=spinup)
     if not blocks:
         return np.empty((0, *array.shape[1:]), dtype=float)
-    with np.errstate(invalid="ignore"):
+    with warnings.catch_warnings():
+        # A gridpoint masked for the whole block (land under an SST field)
+        # is NaN by design, not a problem to warn about.
+        warnings.filterwarnings("ignore", message="Mean of empty slice")
         return np.stack([np.nanmean(array[b], axis=0) for b in blocks])
 
 

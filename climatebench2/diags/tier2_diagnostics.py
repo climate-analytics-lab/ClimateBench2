@@ -77,7 +77,7 @@ from climateeval.diags._utils import union
 
 from climatebench2 import physics, windows
 from climatebench2._thresholds import get_threshold
-from climatebench2.diags.pass_fail import GateCheck, gate_requirement
+from climatebench2.diags.pass_fail import GateCheck, gate_requirement, gate_tier
 from climatebench2.diags.tier1_physics import CB2ComplexDiagnostic, _filled, _mon
 from climatebench2.scoring_pass import SCALAR_SIGMA_OBS_SUFFIX
 
@@ -435,12 +435,14 @@ class PinatuboResponseGate(_GlobalMeanTasMixin, CB2ComplexDiagnostic):
             column="pinatubo_rsds_anom",
             upper=get_threshold("tier2.pinatubo.rsds_anomaly_max"),
             requirement=gate_requirement("tier2.pinatubo"),
+            tier=gate_tier("tier2.pinatubo"),
         ),
         GateCheck(
             check_id="pinatubo_cooling",
             column="pinatubo_tas_anom",
             upper=get_threshold("tier2.pinatubo.tas_anomaly_max"),
             requirement=gate_requirement("tier2.pinatubo"),
+            tier=gate_tier("tier2.pinatubo"),
         ),
     )
 
@@ -518,12 +520,14 @@ class HemisphericAsymmetryGate(_GlobalMeanTasMixin, CB2ComplexDiagnostic):
             column="nh_minus_sh_trend",
             upper=get_threshold("tier2.hemispheric_asymmetry.nh_minus_sh_trend_max"),
             requirement=gate_requirement("tier2.hemispheric_asymmetry"),
+            tier=gate_tier("tier2.hemispheric_asymmetry"),
         ),
         GateCheck(
             check_id="itcz_southward_shift",
             column="itcz_shift_deg_per_decade",
             upper=get_threshold("tier2.hemispheric_asymmetry.itcz_shift_max"),
             requirement=gate_requirement("tier2.hemispheric_asymmetry"),
+            tier=gate_tier("tier2.hemispheric_asymmetry"),
         ),
     )
 

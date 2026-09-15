@@ -53,6 +53,7 @@ from climatebench2._thresholds import get_threshold
 from climatebench2.diags.pass_fail import (
     GateCheck,
     gate_requirement,
+    gate_tier,
     GateMixin,
     SupersetExperimentMixin,
 )
@@ -271,6 +272,7 @@ class ECSGate(_UpstreamGate, ECS):
             lower=get_threshold("tier1.ecs.range")[0],
             upper=get_threshold("tier1.ecs.range")[1],
             requirement=gate_requirement("tier1.ecs"),
+            tier=gate_tier("tier1.ecs"),
         ),
     )
 
@@ -298,12 +300,14 @@ class EnergyBalanceGate(CB2ComplexDiagnostic):
             column="toa_net_mean_abs",
             upper=get_threshold("tier1.energy_balance.mean_toa_net_abs_max"),
             requirement=gate_requirement("tier1.energy_balance"),
+            tier=gate_tier("tier1.energy_balance"),
         ),
         GateCheck(
             check_id="energy_balance_drift",
             column="toa_net_drift_abs",
             upper=get_threshold("tier1.energy_balance.drift_10yr_running_abs_max"),
             requirement=gate_requirement("tier1.energy_balance"),
+            tier=gate_tier("tier1.energy_balance"),
         ),
     )
 
@@ -346,12 +350,14 @@ class ClosureGate(CB2ComplexDiagnostic):
             column="water_budget_residual_mmday",
             upper=get_threshold("tier1.water_budget.p_minus_e_abs_max"),
             requirement=gate_requirement("tier1.water_budget"),
+            tier=gate_tier("tier1.water_budget"),
         ),
         GateCheck(
             check_id="atm_energy_budget",
             column="atm_energy_residual_wm2",
             upper=get_threshold("tier1.atm_energy_budget.residual_abs_max"),
             requirement=gate_requirement("tier1.atm_energy_budget"),
+            tier=gate_tier("tier1.atm_energy_budget"),
         ),
     )
 
@@ -419,6 +425,7 @@ class ClearSkyFeedbackGate(CB2ComplexDiagnostic):
             lower=_reference * (1.0 - _tolerance),
             upper=_reference * (1.0 + _tolerance),
             requirement=gate_requirement("tier1.clear_sky_lw_feedback"),
+            tier=gate_tier("tier1.clear_sky_lw_feedback"),
         ),
     )
 
@@ -469,6 +476,7 @@ class LandOceanWarmingGate(_UpstreamGate, LandOceanWarmingRatio):
             lower=get_threshold("tier1.land_ocean_warming.range")[0],
             upper=get_threshold("tier1.land_ocean_warming.range")[1],
             requirement=gate_requirement("tier1.land_ocean_warming"),
+            tier=gate_tier("tier1.land_ocean_warming"),
         ),
     )
 
@@ -489,6 +497,7 @@ class ArcticAmplificationGate(_UpstreamGate, ArcticAmplification):
             column="arctic_amplification",
             lower=get_threshold("tier1.arctic_amplification.ratio_min"),
             requirement=gate_requirement("tier1.arctic_amplification"),
+            tier=gate_tier("tier1.arctic_amplification"),
         ),
     )
 
@@ -529,12 +538,14 @@ class AerosolForcingGate(CB2ComplexDiagnostic):
             lower=get_threshold("tier1.aerosol_forcing.erf_range")[0],
             upper=get_threshold("tier1.aerosol_forcing.erf_range")[1],
             requirement=gate_requirement("tier1.aerosol_forcing"),
+            tier=gate_tier("tier1.aerosol_forcing"),
         ),
         GateCheck(
             check_id="aerosol_cooling",
             column="delta_t_end",
             upper=0.0,
             requirement=gate_requirement("tier1.aerosol_forcing"),
+            tier=gate_tier("tier1.aerosol_forcing"),
         ),
     )
 
@@ -749,6 +760,7 @@ class MeridionalHeatTransportGate(_UpstreamGate, MeridionalHeatTransport):
             lower=get_threshold("tier1.meridional_heat_transport.omet_peak_range")[0],
             upper=get_threshold("tier1.meridional_heat_transport.omet_peak_range")[1],
             requirement=gate_requirement("tier1.meridional_heat_transport"),
+            tier=gate_tier("tier1.meridional_heat_transport"),
         ),
         GateCheck(
             check_id="omet_peak_lat",
@@ -756,6 +768,7 @@ class MeridionalHeatTransportGate(_UpstreamGate, MeridionalHeatTransport):
             lower=float(_omet_lat[0]),
             upper=float(_omet_lat[1]),
             requirement=gate_requirement("tier1.meridional_heat_transport"),
+            tier=gate_tier("tier1.meridional_heat_transport"),
         ),
         GateCheck(
             check_id="amet_peak",
@@ -763,6 +776,7 @@ class MeridionalHeatTransportGate(_UpstreamGate, MeridionalHeatTransport):
             lower=get_threshold("tier1.meridional_heat_transport.amet_peak_range")[0],
             upper=get_threshold("tier1.meridional_heat_transport.amet_peak_range")[1],
             requirement=gate_requirement("tier1.meridional_heat_transport"),
+            tier=gate_tier("tier1.meridional_heat_transport"),
         ),
         GateCheck(
             check_id="amet_peak_lat",
@@ -770,6 +784,7 @@ class MeridionalHeatTransportGate(_UpstreamGate, MeridionalHeatTransport):
             lower=_amet_lat_ref - _amet_lat_tol,
             upper=_amet_lat_ref + _amet_lat_tol,
             requirement=gate_requirement("tier1.meridional_heat_transport"),
+            tier=gate_tier("tier1.meridional_heat_transport"),
         ),
     )
 
@@ -797,12 +812,14 @@ class ITCZEFEGate(CB2ComplexDiagnostic):
             lower=_slope_ref * (1.0 - _slope_tol),
             upper=_slope_ref * (1.0 + _slope_tol),
             requirement=gate_requirement("tier1.itcz_efe"),
+            tier=gate_tier("tier1.itcz_efe"),
         ),
         GateCheck(
             check_id="itcz_efe_correlation",
             column="itcz_efe_r_abs",
             lower=get_threshold("tier1.itcz_efe.corr_min"),
             requirement=gate_requirement("tier1.itcz_efe"),
+            tier=gate_tier("tier1.itcz_efe"),
         ),
     )
 
@@ -876,6 +893,7 @@ class BjerknesGate(CB2ComplexDiagnostic):
             column="bjerknes_r",
             upper=get_threshold("tier1.bjerknes.corr_max"),
             requirement=gate_requirement("tier1.bjerknes"),
+            tier=gate_tier("tier1.bjerknes"),
         ),
     )
 
@@ -930,6 +948,7 @@ class CCScalingGate(CB2ComplexDiagnostic):
             lower=get_threshold("tier1.cc_scaling.slope_range")[0],
             upper=get_threshold("tier1.cc_scaling.slope_range")[1],
             requirement=gate_requirement("tier1.cc_scaling"),
+            tier=gate_tier("tier1.cc_scaling"),
         ),
     )
 

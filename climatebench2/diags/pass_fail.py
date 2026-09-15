@@ -69,6 +69,15 @@ REQUIREMENT_TAGS = ("required", "extended", "extra", "diagnostic")
 #: Tag assumed for a check whose block predates the tags (backward compat).
 DEFAULT_REQUIREMENT = "required"
 
+#: Protocol tier a check belongs to. Independent of the *suite* it runs in:
+#: the mid-Holocene monsoon gate is emitted through the same gate machinery
+#: as the Tier I checks but is a Tier III Extended test, and the Pinatubo /
+#: hemispheric-asymmetry sign flags are Tier II.
+TIER_TAGS = ("I", "II", "III")
+
+#: Tier assumed for a check whose ``thresholds.yml`` block has no ``tier:``.
+DEFAULT_TIER = "I"
+
 
 def gate_requirement(threshold_block: str) -> str:
     """Return the ``requirement`` tag of a ``thresholds.yml`` gate block.
@@ -95,6 +104,33 @@ def gate_requirement(threshold_block: str) -> str:
     return str(tag)
 
 
+def gate_tier(threshold_block: str) -> str:
+    """Return the ``tier`` tag (I / II / III) of a ``thresholds.yml`` block.
+
+    Which tier a check belongs to is protocol metadata, so — like
+    ``requirement`` — it lives beside the bounds rather than being inferred
+    from the suite the gate happens to run in. A block with no ``tier:`` key
+    falls back to :data:`DEFAULT_TIER`, which keeps result databases written
+    before the tag readable.
+
+    Raises
+    ------
+    ValueError
+        If the tag is not one of :data:`TIER_TAGS`.
+    """
+    try:
+        tag = get_threshold(f"{threshold_block}.tier")
+    except KeyError:
+        return DEFAULT_TIER
+    if tag not in TIER_TAGS:
+        msg = (
+            f"Unknown tier '{tag}' in thresholds.yml block "
+            f"'{threshold_block}' (expected one of {TIER_TAGS})"
+        )
+        raise ValueError(msg)
+    return str(tag)
+
+
 @dataclass(frozen=True)
 class GateCheck:
     """One pass/fail check on a column of a diagnostic's raw output.
@@ -104,7 +140,9 @@ class GateCheck:
     scalar (one row per data source). Bounds are inclusive; ``None`` means
     unbounded on that side. ``requirement`` is the protocol standing of the
     check (:data:`REQUIREMENT_TAGS`) and comes from
-    :func:`gate_requirement`.
+    :func:`gate_requirement`; ``tier`` (:data:`TIER_TAGS`) is the protocol
+    tier it belongs to and comes from :func:`gate_tier`. Both are carried on
+    every gate row, and the leaderboard groups the scorecard by the pair.
     """
 
     check_id: str
@@ -113,6 +151,7 @@ class GateCheck:
     lower: float | None = None
     upper: float | None = None
     requirement: str = DEFAULT_REQUIREMENT
+    tier: str = DEFAULT_TIER
 
 
 def _gate_row(check: GateCheck, **fields: Any) -> dict[str, Any]:
@@ -122,6 +161,7 @@ def _gate_row(check: GateCheck, **fields: Any) -> dict[str, Any]:
         "bound_lower": np.nan if check.lower is None else check.lower,
         "bound_upper": np.nan if check.upper is None else check.upper,
         "requirement": check.requirement,
+        "tier": check.tier,
         **fields,
     }
 
@@ -206,9 +246,10 @@ def _with_gate_rows(
     if output.metrics is not None:
         existing = output.metrics.to_pandas()
         gates_df = pd.concat([existing, gates_df], ignore_index=True, sort=False)
-        # Keep `requirement` a string column: rows from non-gate metrics have
-        # no tag, and a NaN there would make ibis infer a numeric column.
-        gates_df["requirement"] = gates_df["requirement"].fillna("")
+        # Keep `requirement`/`tier` string columns: rows from non-gate metrics
+        # have no tag, and a NaN there would make ibis infer a numeric column.
+        for column in ("requirement", "tier"):
+            gates_df[column] = gates_df[column].fillna("")
     return DiagnosticOutput(
         raw_output=output.raw_output if raw_output is None else raw_output,
         metrics=ibis.memtable(gates_df),
@@ -231,21 +272,33 @@ def apply_gate(
     return _with_gate_rows(output, gates_df)
 
 
-def gate_requirements() -> dict[str, str]:
-    """Map every CB2 gate ``check_id`` to its requirement tag.
+def _gate_attribute(attribute: str) -> dict[str, str]:
+    """Map every CB2 gate ``check_id`` to one attribute of its check.
 
     Collected from the ``_gate_checks`` of every diagnostic exported by
-    :mod:`climatebench2.diags`, so the leaderboard knows the *full* Required
-    set — including checks whose gate did not run and therefore wrote no row.
+    :mod:`climatebench2.diags`, so the leaderboard knows the *full* set of
+    checks — including those whose gate did not run and therefore wrote no
+    row, which is what makes an entry ticket read "incomplete" rather than
+    silently passing.
     """
     from climatebench2 import diags  # local: climatebench2.diags imports this module
 
-    requirements: dict[str, str] = {}
+    values: dict[str, str] = {}
     for name in diags.__all__:
         for check in getattr(getattr(diags, name), "_gate_checks", ()):
             if isinstance(check, GateCheck):
-                requirements[check.check_id] = check.requirement
-    return requirements
+                values[check.check_id] = getattr(check, attribute)
+    return values
+
+
+def gate_requirements() -> dict[str, str]:
+    """Map every CB2 gate ``check_id`` to its requirement tag."""
+    return _gate_attribute("requirement")
+
+
+def gate_tiers() -> dict[str, str]:
+    """Map every CB2 gate ``check_id`` to its protocol tier (I / II / III)."""
+    return _gate_attribute("tier")
 
 
 class GateMixin:
@@ -388,6 +441,7 @@ def _enso_checks(column: str) -> tuple[GateCheck, ...]:
     amp_lo, amp_hi = get_threshold("tier1.enso.amplitude_range")
     ratio_min = get_threshold("tier1.enso.band_power_ratio_min")
     requirement = gate_requirement("tier1.enso")
+    tier = gate_tier("tier1.enso")
     return (
         GateCheck(
             check_id="enso_amplitude",
@@ -396,6 +450,7 @@ def _enso_checks(column: str) -> tuple[GateCheck, ...]:
             lower=amp_lo,
             upper=amp_hi,
             requirement=requirement,
+            tier=tier,
         ),
         GateCheck(
             check_id="enso_spectral_ratio",
@@ -403,6 +458,7 @@ def _enso_checks(column: str) -> tuple[GateCheck, ...]:
             statistic=band_power_ratio,
             lower=ratio_min,
             requirement=requirement,
+            tier=tier,
         ),
     )
 

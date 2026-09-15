@@ -41,7 +41,7 @@ from climateeval.data import GPCP, ERA5Monthly, HadISST
 
 from climatebench2 import physics, windows
 from climatebench2._thresholds import get_threshold
-from climatebench2.diags.pass_fail import GateCheck, gate_requirement
+from climatebench2.diags.pass_fail import GateCheck, gate_requirement, gate_tier
 from climatebench2.diags.tier1_physics import (
     CB2ComplexDiagnostic,
     _cube_years_months,
@@ -85,6 +85,7 @@ class GeostrophicBalanceGate(CB2ComplexDiagnostic):
             column="geostrophic_corr",
             lower=get_threshold("tier1.geostrophic_balance.spatial_corr_min"),
             requirement=gate_requirement("tier1.geostrophic_balance"),
+            tier=gate_tier("tier1.geostrophic_balance"),
         ),
     )
 
@@ -141,6 +142,7 @@ class GFMIPPatchGate(CB2ComplexDiagnostic):
             column="delta_lambda",
             lower=get_threshold("tier1.gfmip_patch.delta_lambda_min"),
             requirement=gate_requirement("tier1.gfmip_patch"),
+            tier=gate_tier("tier1.gfmip_patch"),
         ),
     )
 
@@ -191,6 +193,7 @@ class Amip4xCO2ERFGate(CB2ComplexDiagnostic):
             lower=get_threshold("tier1.amip_4xco2_erf.range")[0],
             upper=get_threshold("tier1.amip_4xco2_erf.range")[1],
             requirement=gate_requirement("tier1.amip_4xco2_erf"),
+            tier=gate_tier("tier1.amip_4xco2_erf"),
         ),
     )
 
@@ -271,12 +274,14 @@ class ENSOTeleconnectionsGate(CB2ComplexDiagnostic):
             column="teleconnection_corr_ts",
             lower=_corr_min,
             requirement=gate_requirement("tier1.enso"),
+            tier=gate_tier("tier1.enso"),
         ),
         GateCheck(
             check_id="enso_teleconnection_pr",
             column="teleconnection_corr_pr",
             lower=_corr_min,
             requirement=gate_requirement("tier1.enso"),
+            tier=gate_tier("tier1.enso"),
         ),
     )
 
@@ -498,6 +503,7 @@ class PrecipBuoyancyGate(CB2ComplexDiagnostic):
             column="precip_buoyancy_slope_rel_error",
             upper=get_threshold("tier1.precip_buoyancy.rel_tolerance_vs_obs"),
             requirement=gate_requirement("tier1.precip_buoyancy"),
+            tier=gate_tier("tier1.precip_buoyancy"),
         ),
     )
 
@@ -654,6 +660,7 @@ class MJOGate(CB2ComplexDiagnostic):
             column="mjo_east_west_ratio",
             lower=get_threshold("tier1.mjo.east_west_power_ratio_min"),
             requirement=gate_requirement("tier1.mjo"),
+            tier=gate_tier("tier1.mjo"),
         ),
     )
 

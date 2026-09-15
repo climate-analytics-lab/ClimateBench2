@@ -16,7 +16,8 @@ Modules (docs/climateeval_delineation_plan.md §4):
 - ``tier2_reference``— reference records outside the test window: the 1985-2014
                        baseline series and the fixed pre-2015 EOF basis (regime b)
 - ``baselines``      — climatology persistence / EBM pattern scaling / MME (Phase 4)
-- ``tier3_paleo``    — proxy-aware scoring + mid-Holocene monsoon check (Phase 5)
+- ``tier3_paleo``    — the Tier III fair CRPS against the pipeline's proxy
+                       NetCDFs + the mid-Holocene monsoon check (WP7)
 
 Every diagnostic subclasses ``climateeval.diags._base.Diagnostic`` (usually via
 ``SimpleDiagnostic`` or ``ComplexDiagnostic``) and takes its thresholds from
@@ -32,6 +33,8 @@ from climatebench2.diags.pass_fail import (
     SupersetExperimentMixin,
     gate_requirement,
     gate_requirements,
+    gate_tier,
+    gate_tiers,
 )
 from climatebench2.diags.tier1_physics import (
     AerosolForcingGate,
@@ -72,7 +75,7 @@ from climatebench2.diags.tier2_diagnostics import (
 )
 from climatebench2.diags.tier3_paleo import (
     MidHoloceneMonsoonGate,
-    PaleoProxyConsistencyGate,
+    PaleoProxyScore,
 )
 from climatebench2.diags.tier2_reference import (
     ReferenceBaselineRecord,
@@ -114,7 +117,7 @@ __all__ = [
     "MeridionalHeatTransportGate",
     "MidHoloceneMonsoonGate",
     "ObservedScalarMixin",
-    "PaleoProxyConsistencyGate",
+    "PaleoProxyScore",
     "PerkinsSkillScore",
     "PinatuboResponseGate",
     "PrecipBuoyancyGate",
@@ -131,4 +134,6 @@ __all__ = [
     "TrendConsistency",
     "gate_requirement",
     "gate_requirements",
+    "gate_tier",
+    "gate_tiers",
 ]

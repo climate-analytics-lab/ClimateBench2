@@ -391,6 +391,10 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
         if spec.shape == "experiments" and not_applicable:
             declared_seen |= set(diagnostics) & set(not_applicable)
             extra_kwargs["not_applicable"] = not_applicable
+        if spec.shape == "experiments" and args.paleo_data_root is not None:
+            # Only the Tier III diagnostics read it; every other complex
+            # diagnostic swallows unknown kwargs (`ComplexDiagnostic._kwargs`).
+            extra_kwargs["paleo_data_root"] = str(args.paleo_data_root)
         suite = build_suite(resolved, extra_kwargs, timerange)
 
         # (data, information) pairs to run, in order; the first writes the
@@ -552,7 +556,13 @@ def _cmd_leaderboard(args: argparse.Namespace) -> None:
     scores = build_scores(db_paths)
     if all(
         frame.empty
-        for frame in (scores.gates, scores.crps, scores.consistency, scores.tier3)
+        for frame in (
+            scores.gates,
+            scores.crps,
+            scores.consistency,
+            scores.tier3,
+            scores.tier3_scores,
+        )
     ):
         msg = "No ClimateBench2 scores found in the given database(s)."
         raise SystemExit(msg)
@@ -685,6 +695,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DIR",
         help="Directory with staged reference datasets.",
+    )
+    score.add_argument(
+        "--paleo-data-root",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Where the processed Tier III proxy NetCDFs live — the "
+            "<period>/<dataset>.nc tree written by "
+            "paleo_scripts/process_paleo_observations.py. Defaults to "
+            "tier3.paleo_data_root in thresholds.yml, resolved against the "
+            "working directory."
+        ),
     )
     score.add_argument(
         "--download",

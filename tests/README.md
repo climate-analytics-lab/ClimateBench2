@@ -1,6 +1,6 @@
 # Running the tests
 
-**314 tests, all passing (2026-09-14).** They need ClimateEval
+**333 tests, all passing (2026-09-20).** They need ClimateEval
 importable. The simplest way is the ClimateEval pixi environment with this repo
 on `PYTHONPATH`:
 
@@ -21,8 +21,13 @@ Pure-function tests (scoring, physics, gate machinery, the leaderboard) skip
 nothing; suite integration tests `importorskip("climateeval")`. No test touches
 the network or reads real model output — every fixture is a synthetic cube, a
 synthetic DuckDB or a numpy array, which is also the honest limit of what the
-suite proves (see "What is left to run against CMIP6" in
-[`../docs/metrics_reference.md`](../docs/metrics_reference.md)).
+suite proves. Several of the newer tests are **regressions from the first real
+runs** (a masked pressure level read as its 1e20 fill value, daily and monthly
+fields paired by position rather than by date, a per-member duplicate row, an
+EOF basis built on a masked reference): the bug is reproduced on synthetic
+cubes, but it was found on CMIP6 output. See "What has run on real data" in
+[`../docs/metrics_reference.md`](../docs/metrics_reference.md) for what the
+real runs cover and what they do not.
 
 `tests/test_suites.py` is the one that guards packaging: it builds every
 diagnostic of **every** suite in `_cli.SUITE_REGISTRY` (not just the CLI

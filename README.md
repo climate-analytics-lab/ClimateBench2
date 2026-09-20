@@ -169,13 +169,17 @@ Phases 0–7 of the [migration plan](docs/climateeval_delineation_plan.md#6-migr
 are implemented: tier suites, the probabilistic scoring engine, the Tier I
 physics gates, baselines, Tier III paleo protocol, and the leaderboard, then
 (Phase 7) the 2026-09-14 re-alignment of all of it against the paper draft.
-**314 tests pass** — and every one of them runs on synthetic data:
-nothing here has yet been exercised against real model or observational output.
-The concrete blockers are listed under "What is left to run against CMIP6" in
-[docs/metrics_reference.md](docs/metrics_reference.md), and every provisional
-constant under "Decisions needed from Duncan" in the same file.
+**333 tests pass**, every one of them on synthetic fixtures — but the code has
+now met real data: Tier I has run end to end on **CNRM-CM6-1** and Tier II on
+**MPI-ESM1-2-LR** against a staged 42-model / 160-member CMIP6 comparison
+ensemble, with the 64-model Tier I ensemble in flight. What that cost is the
+"Real-data fix" commits of 2026-09-20 and the regression tests beside them; the
+numbers, and the protocol questions the runs raised, are under "What has run on
+real data" in [docs/metrics_reference.md](docs/metrics_reference.md), and every
+provisional constant under "Decisions needed from Duncan" in the same file.
 The implementation was re-audited against the 2026-09 paper draft on
-2026-09-14: see the status tables and the prioritized gap list in
+2026-09-19 (spec) and 2026-09-20 (code): see the status tables and the
+prioritized gap list in
 [docs/metrics_reference.md](docs/metrics_reference.md). The scoring-engine core is now on the
 2026-09 spec (gap item 3 and its second half, work package 3b): fair CRPS with
 the M = 1 rule, stacked ensemble members, observational-uncertainty draws with
@@ -198,13 +202,16 @@ decks), the **diurnal** first harmonic in local solar time with the phase
 scored as (cos, sin), and the **pattern-scaling baseline** — a two-layer EBM
 driven by a packaged annual ERF table, one parameter calibrated to the
 observed GMST through 2014, given pseudo-members so fair CRPS is defined for
-it. Headline open items are a post-2015 multi-member CMIP6 reference in
-ClimateEval (without which `E_ref` has nothing to average and the Tier II
-cells fall back to the raw CRPS), a **daily observational product** — no
-ClimateEval DataSource supplies `tasmax`/`tasmin`, so the extremes are
-reported model-only and unscored until HadEX3 lands upstream — the CMIP6
-multi-model-mean warming pattern for the *spatial* half of pattern scaling
-(ClimateEval PR #44), and data for Tier III's perfect-model half. Every σ_obs
+it. The post-2015 multi-member CMIP6 reference `E_ref` needs is no longer an
+open item: `climatebench2.data.StagedCMIP6HistoricalSSP245` enumerates a staged
+historical+SSP2-4.5 pool (i1p1, any forcing index, the first ten realizations
+per model) and yields data sources with the same ids as upstream's generator,
+so `E_ref` is a real median of per-model fair CRPS. Headline open items are a
+**daily observational product** — no ClimateEval DataSource supplies
+`tasmax`/`tasmin`, so the extremes are reported model-only and unscored until
+HadEX3 lands upstream — the CMIP6 multi-model-mean warming pattern for the
+*spatial* half of pattern scaling, and data for Tier III's perfect-model half.
+Every σ_obs
 value in `thresholds.yml`, the GSAT blending factor and
 the packaged ERF table are provisional and need Duncan's ruling.
 Required/Extended/extra tagging of the Tier I gates, declared N/A and the
@@ -215,11 +222,15 @@ exists at last, and I.7 uses the decadal window centred on 2015 with
 parallel-piControl-segment drift removal — so Tier I has a diagnostic for every
 row of the paper's Table 1. Two of them fetch observations (over 1979–2014,
 never the reserved test window); without network access they report the model's
-own statistic and write no gate row, and I.3c's stored reference slope still
-needs pinning. ClimateEval is pinned at `b0e941c`, which provides the
+own statistic and write no gate row. I.3c's stored reference slope is now
+deliberately left null: the reference column has to be integrated over the
+*model's* level set, so no single stored constant can be right for every
+submission (52d2e50). ClimateEval is pinned at `b0e941c`, which provides the
 land–ocean, Arctic and meridional-heat-transport diagnostics upstream; CB2's
 copies have been replaced by thin gate wrappers that add only the protocol's
-thresholds.
+thresholds. The twelve CB2 upstream PRs (#44–#55) are **merged locally** on the
+ClimateEval branch `cb2-integration` (`f8c925b`), which is what the real runs
+use, and are **still open upstream**, so the pin is unchanged.
 
 **Work package 7** then finished **Tier III**. The paleo diagnostics read the
 `paleo_scripts/` pipeline's own per-dataset NetCDFs — one suite stanza per

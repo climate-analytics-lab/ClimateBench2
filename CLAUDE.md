@@ -14,7 +14,10 @@ Two documents govern all work here:
 - [docs/climateeval_delineation_plan.md](docs/climateeval_delineation_plan.md) —
   the architecture, the CB2⟷ClimateEval ownership boundary, and the phased
   migration (**Phases 0–7 done**; Phase 7 is the 2026-09-14 protocol
-  re-alignment). §7 lists the twelve open upstream PRs (#44–#55, none merged).
+  re-alignment). §7 lists the twelve upstream PRs (#44–#55): all twelve are
+  **merged locally** on the ClimateEval branch `cb2-integration` (`f8c925b` =
+  `main` `b0e941c` + the twelve), and all twelve are **still open upstream**, so
+  the pin in `pyproject.toml` stays at `b0e941c`.
   Read its §9 "definition of done" before claiming anything is finished.
 - [docs/metrics_reference.md](docs/metrics_reference.md) — the authoritative
   spec (inputs, formula, threshold) for every Tier I/II/III check. **The paper
@@ -22,9 +25,14 @@ Two documents govern all work here:
   "Decisions needed from Duncan" section is where every ⚠ / `TODO(Duncan)`
   lives — add to it rather than inventing a value.
 
-**Current state (2026-09-14): 314 tests pass, and nothing has been
-run on real model or observational data.** Every test fixture is synthetic. Do
-not describe a diagnostic as "working" on that evidence.
+**Current state (2026-09-20): 333 tests pass.** Every test fixture is still
+synthetic, so the test suite alone never licenses "working" — but the code is
+no longer untried on real data. Tier I has run end to end on **CNRM-CM6-1**
+(every Required gate produces a row) and Tier II on **MPI-ESM1-2-LR** against a
+42-model / 160-member staged comparison ensemble; the 64-model Tier I ensemble
+and the full Tier II comparison run are in flight. What that first contact cost
+is the "Real-data fix" commits on this branch — see "What has run on real data"
+in `docs/metrics_reference.md` for the numbers and the caveats.
 
 **Ownership test:** code that loads/regrids data or is a generic physical
 diagnostic belongs in ClimateEval (upstream PR); code that encodes a threshold,
@@ -110,6 +118,12 @@ climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --mem
 #   takes the post-2015 test window (tier2.test_window_start) once per ensemble
 #   member, and TierII_daily takes the FULL record (its extremes/PDF/diurnal
 #   climatologies are defined over it, so every entry there is in-sample)
+climatebench2 score MODEL --name MyModel -o /work/run/MyModel --data-root /work/staged
+#   -o/--out is the run's output directory (default <name>_climatebench2/); --data-root
+#   is the staged reference tree AND, unless $CLIMATEBENCH2_STAGED_CMIP6_ROOT overrides
+#   it, the root the Tier II comparison ensemble is enumerated in
+#   (climatebench2.data.StagedCMIP6HistoricalSSP245). Point the env var at a subset to
+#   shrink that ensemble for a smoke run without restaging anything.
 climatebench2 score MODEL --experiment lgm=DIR --experiment picontrol=DIR \
     --paleo-data-root paleo_scripts/paleo_data_cache/processed/observations
 #   Tier III: the paleo slices vs the pipeline's processed proxy NetCDFs

@@ -6,10 +6,11 @@ Tier II's ``E_ref`` is the median fair CRPS over the **CMIP6 comparison
 models** (metrics_reference.md §II.0, paper §5.6), so every core variable's
 ``other_data`` has to resolve to a multi-member historical+SSP2-4.5 ensemble
 over the reserved post-2015 test window. Upstream ClimateEval has exactly that
-generator — :class:`climateeval.data.CMIP6HistoricalSSP245` (PR #44) — and it
-remains the **documented alternative**: the data source ids this module
-produces are byte-identical to its, so a database written either way scores the
-same and the two can be mixed.
+generator — :class:`climateeval.data.CMIP6HistoricalSSP245` (PR #44, merged on
+the ``cb2-integration`` branch, still open upstream, so it is *not* in the
+``b0e941c`` that ``pyproject.toml`` pins) — and it remains the **documented
+alternative**: the data source ids this module produces are byte-identical to
+its, so a database written either way scores the same and the two can be mixed.
 
 What differs is only *discovery*:
 

@@ -36,11 +36,18 @@ and reported *alongside* it:
       historical scatter is its uncertainty" reading used for the
       climatology. Flagged for Duncan in docs/metrics_reference.md.
 
-      The **spatial** half (a normalized CMIP6 MMM warming pattern) needs
-      CMIP6 baseline-window maps that the databases only carry once
-      ClimateEval PR #44 lands; :func:`pattern_scaling_forecast` is the maths
-      and :func:`scoring_pass.pattern_scaling_rows` emits a ``reason`` row
-      until the data are there.
+      The **spatial** half (a normalized CMIP6 MMM warming pattern) needs the
+      comparison models' **baseline-window (1985-2014) maps**, which no
+      diagnostic writes: ``ReferenceEOFProjection`` projects only each
+      source's *test-window* anomaly, and the reference's pre-2015 record is
+      the one pre-2015 field anything loads past the test-window cut. The
+      post-2015 half is no longer the problem -- the staged comparison
+      ensemble supplies it -- so this is a CB2 gap, not the upstream
+      ClimateEval PR #44 that ``_eof_pattern_scaling_row``'s ``reason`` text
+      still names (that string is written into result databases, so it has
+      not been reworded). :func:`pattern_scaling_forecast` is the maths; the
+      missing piece is a diagnostic that does for the comparison sources what
+      ``ReferenceBaselineRecord`` does for the reference.
 
 Everything here is pure numpy/scipy plus one packaged CSV of protocol data;
 the wiring lives in :mod:`climatebench2.scoring_pass` and the leaderboard.

@@ -238,17 +238,20 @@ class ETCCDIExtremes(ScalarTableDiagnostic):
     Columns are ``<index>_<region>_clim`` and ``<index>_<region>_trend``,
     e.g. ``txx_global_land_clim``, ``cdd_tropical_land_trend``.
 
-    ⚠ **Unscored today.** No ClimateEval DataSource provides daily
-    observational extremes (see the module docstring: ERA5 has no
-    ``tasmax``/``tasmin``, HadEX3 has an ESMValTool CMORizer but no
-    DataSource), so the suite gives these variables no ``reference_data:``
-    and the scoring pass, finding no observed value, leaves them as reported
-    model numbers. Everything else about them is already in the scored shape.
+    ⚠ **Unscored today.** No *staged* daily observational product supplies
+    extremes: ERA5 has no ``tasmax``/``tasmin`` in ``VARIABLE_MAPPING``, and
+    HadEX3 (upstream PR #53) and ``ERA5Daily`` (#54) are merged on the
+    ``cb2-integration`` branch but have no data staged. So the suite gives
+    these variables no ``reference_data:`` and the scoring pass, finding no
+    observed value, leaves them as reported model numbers. Everything else
+    about them is already in the scored shape — the day a daily product is
+    staged, this entry needs one ``reference_data:`` line and nothing else.
 
     ❗ Memory: the whole daily record is realised as one ``(time, lat, lon)``
     array on the 1° grid. That is fine for a few decades and heavy for a
-    full historical run; like the other daily diagnostics (I.3b, I.5d) this
-    has only ever been exercised on synthetic cubes.
+    full historical run. Unlike I.3b — which has now run on a real ``day``
+    DRS tree (CNRM-CM6-1) — this has only ever been exercised on synthetic
+    cubes, so the footprint of a real daily submission is still unknown.
     """
 
     _final_coordinates = (Coordinate("time"), Coordinate("lat"), Coordinate("lon"))

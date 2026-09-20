@@ -27,7 +27,8 @@ invent data between cells.
 Reading that file is the one place Tier III touches data directly: there is
 no ClimateEval DataSource for the paleo proxy compilations, and writing one
 (a ``PMIP4Proxies`` CMORizer, alongside the ``lgm``/``midHolocene``/
-``lig127k`` model generators of **upstream PR #45**) is the obvious upstream
+``lig127k`` model generators of **upstream PR #45**, which is merged on the
+``cb2-integration`` branch and still open upstream) is the obvious upstream
 home for it. Until then this stays a thin, documented adapter — it loads a
 file and reads two arrays, it does not regrid or derive anything.
 
@@ -135,6 +136,13 @@ DA_REASON = (
 
 #: No post-2015 analogue exists for a paleo time slice, so there is no
 #: comparison ensemble to form E_ref from.
+#:
+#: ⚠ The text names upstream ClimateEval PR #45, which since 2026-09-20 is
+#: merged on the ``cb2-integration`` branch — so the generator now exists and
+#: the real reason is that **no PMIP4 model pool is staged** for it to find.
+#: The string is written into result databases and asserted on by
+#: ``tests/test_tier3_proxies.py``, so it is left alone; read it as a staging
+#: statement until a PMIP4 pool is staged and the rows stop being emitted.
 NO_REFERENCE_ENSEMBLE = "no PMIP4 comparison ensemble (ClimateEval PR #45)"
 
 
@@ -425,7 +433,9 @@ class PaleoProxyScore(_ScoreRowMixin, CB2ComplexDiagnostic):
        pseudo-member spread in the denominator alongside σ_proxy.
 
     ``skill`` and ``e_ref`` stay NaN: scoring them needs a PMIP4 comparison
-    ensemble, which arrives with upstream ClimateEval PR #45.
+    ensemble. Upstream ClimateEval PR #45 adds the generator and is merged on
+    the ``cb2-integration`` branch, but no PMIP4 model pool is staged for it
+    to find — see :data:`NO_REFERENCE_ENSEMBLE`.
 
     Diagnostic kwargs (per suite entry):
 

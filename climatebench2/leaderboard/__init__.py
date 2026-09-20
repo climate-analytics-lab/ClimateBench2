@@ -857,6 +857,13 @@ def _tier3_scores_html(tier3_scores: pd.DataFrame) -> str:
     σ as the observational uncertainty and an equal-weight mean over sites.
     There is no ``E_ref`` behind it — that needs a PMIP4 comparison ensemble
     — so the table shows the raw score, never a skill.
+
+    ⚠ The rendered note below says the ensemble "does not exist yet (upstream
+    ClimateEval PR #45)". Since 2026-09-20 #45 is merged on the
+    ``cb2-integration`` branch, so the generator exists and the real reason is
+    that **no PMIP4 model pool is staged** for it to find. The wording is page
+    text a reader sees, so changing it changes output; update it when a pool
+    is staged and the note stops applying.
     """
     import numpy as np
 

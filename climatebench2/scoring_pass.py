@@ -124,8 +124,12 @@ CLIMATOLOGY_DATA_ID = "Climatology"
 #: through 2014, given pseudo-members so fair CRPS is defined
 #: (:func:`_pattern_scaling_row`). For a **spatial field** it is still a
 #: ``reason`` row: the normalized CMIP6 multi-model-mean warming pattern needs
-#: baseline-window maps that arrive with upstream ClimateEval PR #44
-#: (:func:`_eof_pattern_scaling_row`).
+#: the comparison models' **baseline-window maps**, which nothing writes --
+#: ``ReferenceEOFProjection`` projects only each source's test-window anomaly
+#: (:func:`_eof_pattern_scaling_row`). The ``reason`` text names upstream
+#: ClimateEval PR #44, which was the blocker until the staged comparison
+#: ensemble landed (2026-09-20); it is left alone because it is written into
+#: result databases, but the remaining work is CB2's, not upstream's.
 PATTERN_SCALING_DATA_ID = "PatternScaling"
 
 #: ``data_id`` of the III.2 large-ensemble spread rows. Not a model: the test
@@ -1795,9 +1799,19 @@ def _eof_pattern_scaling_row(var_frame: pd.DataFrame, var_id: str) -> dict[str, 
     ``baselines.pattern_scaling_forecast`` is that arithmetic. What is
     missing is the pattern itself — the mean over comparison models of
     ``(test-window map − baseline-window map) / ΔGMST`` — because the EOF
-    diagnostic projects only the *test-window* anomaly of each source, and
-    the CMIP6 comparison ensemble has no post-2015 member at all until
-    **upstream ClimateEval PR #44** lands.
+    diagnostic projects only the *test-window* anomaly of each source, so
+    nothing in the database carries a comparison model's **baseline-window**
+    map.
+
+    ⚠ The ``reason`` string below names **upstream ClimateEval PR #44**, and
+    that is now out of date: #44 was the blocker while the comparison
+    ensemble had no post-2015 member at all, and since 2026-09-20
+    ``climatebench2.data.StagedCMIP6HistoricalSSP245`` supplies those. The
+    remaining gap is CB2's — a diagnostic that reaches back past the
+    test-window cut for the *comparison* sources, the way
+    ``ReferenceBaselineRecord`` does for the reference. The text is left
+    unchanged because it is written into result databases; fix it when the
+    pattern itself is implemented and the row stops being emitted.
 
     So the row records why there is no number, exactly as a single-member
     model does, rather than the baseline silently disappearing from the

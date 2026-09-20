@@ -267,16 +267,33 @@ def zero_crossing_nearest_equator(
 def itcz_efe_regression(
     itcz_lats: np.ndarray,
     cross_equatorial_transport_pw: np.ndarray,
+    *,
+    lag_months: int = 0,
 ) -> tuple[float, float]:
     """(slope °/PW, r) of ITCZ latitude on cross-equatorial AMET (I.8b).
 
     Inputs are the 12-month climatological cycles (paper: 12 monthly means,
-    not all timesteps).
+    not all timesteps), ordered by calendar month.
+
+    ``lag_months`` circularly shifts ``itcz_lats`` so that ``itcz_lats[m]`` is
+    compared with ``cross_equatorial_transport_pw[m - lag_months]`` (wrapping
+    around the 12-month cycle). Donohoe et al. (2013) find the ITCZ latitude
+    *lags* the cross-equatorial energy transport by about two months in the
+    observed/reanalysis seasonal cycle — the ocean/land mixed layer's thermal
+    inertia delays the precipitation response to the energy-transport forcing
+    — and CB2's own retired benchmark script encoded exactly this lag
+    (``itcz_v[2:]`` vs ``fxeq_v[:-2]``, git history ``b552b1c``) before it was
+    dropped as "ad-hoc" during the ClimateEval migration. Regressing the two
+    series in phase (``lag_months=0``) mixes points from opposite sides of
+    the physical lag and depresses both the slope and the correlation — see
+    ``ITCZEFEGate``, which passes the protocol's ``itcz_lag_months``
+    (``thresholds.yml``, default 2).
     """
-    reg = stats.linregress(
-        np.asarray(cross_equatorial_transport_pw, float),
-        np.asarray(itcz_lats, float),
-    )
+    itcz = np.asarray(itcz_lats, dtype=float)
+    f_xeq = np.asarray(cross_equatorial_transport_pw, dtype=float)
+    if lag_months:
+        itcz = np.roll(itcz, -int(lag_months))
+    reg = stats.linregress(f_xeq, itcz)
     return float(reg.slope), float(reg.rvalue)
 
 

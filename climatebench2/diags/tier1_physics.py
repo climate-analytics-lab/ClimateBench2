@@ -805,6 +805,7 @@ class ITCZEFEGate(CB2ComplexDiagnostic):
 
     _slope_ref = float(get_threshold("tier1.itcz_efe.slope_reference"))
     _slope_tol = float(get_threshold("tier1.itcz_efe.slope_rel_tolerance"))
+    _lag_months = int(get_threshold("tier1.itcz_efe.itcz_lag_months"))
     _gate_checks = (
         GateCheck(
             check_id="itcz_efe_slope",
@@ -866,7 +867,11 @@ class ITCZEFEGate(CB2ComplexDiagnostic):
             pr_band = pr_clim[month][tropics]
             itcz_lats[month] = float(pr_lats[tropics][np.argmax(pr_band)])
 
-        slope, r = physics.itcz_efe_regression(itcz_lats, f_xeq_pw)
+        slope, r = physics.itcz_efe_regression(
+            itcz_lats,
+            f_xeq_pw,
+            lag_months=self._lag_months,
+        )
         return self._scalar_outputs(
             {
                 "itcz_efe_slope_abs": abs(slope),

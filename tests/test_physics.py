@@ -203,6 +203,47 @@ def test_itcz_efe_regression_recovers_slope() -> None:
     assert abs(r) > 0.99
 
 
+def test_itcz_efe_regression_lag_recovers_slope_and_r() -> None:
+    """Real-data fix: the ITCZ lags F_xeq by ~2 months (Donohoe et al. 2013).
+
+    A synthetic seasonal cycle where the ITCZ latitude is a *lagged* copy of
+    a −3°/PW response to F_xeq: regressing in phase (``lag_months=0``) must
+    badly understate both the slope and the correlation, and passing the
+    true lag must recover slope ≈ −3 and r ≈ −1, exactly as an in-phase
+    cycle would (the synthetic case metrics_reference.md asks for).
+    """
+    n = 12
+    month = np.arange(n)
+    f_xeq = np.sin(2 * np.pi * month / n)  # PW
+    lag = 2
+    # itcz(month) = -3 * f_xeq(month - lag): the ITCZ follows F_xeq, delayed.
+    itcz = -3.0 * np.sin(2 * np.pi * (month - lag) / n)
+
+    slope_inphase, r_inphase = physics.itcz_efe_regression(itcz, f_xeq)
+    assert abs(slope_inphase) < 3.0
+    assert abs(r_inphase) < 0.9
+
+    slope_lagged, r_lagged = physics.itcz_efe_regression(
+        itcz,
+        f_xeq,
+        lag_months=lag,
+    )
+    assert slope_lagged == pytest.approx(-3.0, abs=1e-6)
+    assert r_lagged == pytest.approx(-1.0, abs=1e-6)
+
+
+def test_itcz_efe_regression_lag_wraps_across_the_year() -> None:
+    """The lag is circular: it must wrap December into January, not truncate."""
+    n = 12
+    month = np.arange(n)
+    f_xeq = np.cos(2 * np.pi * month / n)
+    lag = 3
+    itcz = 2.0 * np.cos(2 * np.pi * (month - lag) / n)
+    slope, r = physics.itcz_efe_regression(itcz, f_xeq, lag_months=lag)
+    assert slope == pytest.approx(2.0, abs=1e-6)
+    assert r == pytest.approx(1.0, abs=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # Bjerknes & C-C
 # ---------------------------------------------------------------------------

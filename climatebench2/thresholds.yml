@@ -180,6 +180,11 @@ tier1:
     slope_reference: 3.0               # ° / PW
     slope_rel_tolerance: 0.50          # ±50%
     corr_min: 0.9
+    # Months the ITCZ latitude lags the cross-equatorial AMET (Donohoe et al.
+    # 2013's seasonal-cycle lag; real-data fix, see physics.itcz_efe_regression).
+    # Regressing the two series in phase (0) mixes points from opposite sides
+    # of this lag and was the reason itcz_efe_correlation passed 0/58 models.
+    itcz_lag_months: 2
 
   # (extra, code-only — not in the paper's Tier I list as specced, so both are
   # tagged `extra` and excluded from the entry ticket. See the two "(extra,

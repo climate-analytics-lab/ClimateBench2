@@ -1,11 +1,14 @@
-"""Tests for the two Tier I gates that need observations (I.3c and I.5c).
+"""Tests for the extended Tier I gates (I.3b, I.3c and I.5c).
 
-Both are run end-to-end on synthetic cubes with the observational fetch
-monkeypatched — no network, no CDS credentials, no real climate data (see
-tests/README.md).
+I.3c and I.5c are run end-to-end on synthetic cubes with the observational
+fetch monkeypatched — no network, no CDS credentials, no real climate data
+(see tests/README.md). I.3b needs no observations, so its synthetic daily
+fields go straight through the gate.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -278,3 +281,121 @@ def test_precip_buoyancy_without_a_reference_emits_the_model_slope(monkeypatch) 
     assert "precip_buoyancy_slope_rel_error" not in raw.index
     if output.metrics is not None:
         assert output.metrics.to_pandas().empty
+
+
+# ---------------------------------------------------------------------------
+# I.3b geostrophic balance — through the gate, on a masked pressure level
+# ---------------------------------------------------------------------------
+
+#: The common 2°×2° grid every CB2 gate regrids to (``DEFAULT_GRID``), so the
+#: gate's own regrid is the identity and the test measures only its physics.
+_GEO_LATS = np.arange(-89.0, 90.0, 2.0)
+_GEO_LONS = np.arange(1.0, 360.0, 2.0)
+_GEO_PLEV = np.array([100000.0, 85000.0, 70000.0])
+_GEO_N_DAYS = 8
+
+
+def _balanced_zg_and_ua() -> tuple[np.ndarray, np.ndarray]:
+    """A geostrophically balanced ``(zg, ua)`` pair, analytically exact.
+
+    ``Z = ½(A + a₁s₁) cos²φ + B s₂ cos λ cos²φ`` has, through
+    ``u_g = −(g/f) ∂Z/∂y`` with ``f = 2Ω sin φ``,
+
+        ``u_g = g(A + a₁s₁) cos φ / (2Ω a) + g B s₂ cos λ cos φ / (Ω a)``
+
+    — no finite differences on either side, so a gate that recovers the
+    balance must return ρ ≈ 1.
+    """
+    phi = np.deg2rad(_GEO_LATS)[None, :, None]
+    lam = np.deg2rad(_GEO_LONS)[None, None, :]
+    day = np.arange(_GEO_N_DAYS, dtype=float)[:, None, None]
+    s_1 = np.sin(2.0 * np.pi * day / _GEO_N_DAYS)
+    s_2 = np.cos(2.0 * np.pi * day / _GEO_N_DAYS)
+    amp, amp_1, amp_wave = 500.0, 150.0, 80.0
+    c = amp + amp_1 * s_1
+    d = amp_wave * s_2
+    zg = 0.5 * c * np.cos(phi) ** 2 + d * np.cos(lam) * np.cos(phi) ** 2
+    scale = physics.GRAVITY / (2.0 * physics.OMEGA_EARTH * physics.EARTH_RADIUS_M)
+    ua = scale * c * np.cos(phi) + 2.0 * scale * d * np.cos(lam) * np.cos(phi)
+    return (
+        np.broadcast_to(zg, (_GEO_N_DAYS,) + zg.shape[1:]).copy(),
+        np.broadcast_to(ua, (_GEO_N_DAYS,) + ua.shape[1:]).copy(),
+    )
+
+
+def _daily_level_cube(var_name: str, units: str, field: np.ndarray) -> Cube:
+    """``(time, plev, lat, lon)`` daily cube carrying ``field`` at every level.
+
+    ``field`` is a ``(time, lat, lon)`` masked array; the mask is kept, which
+    is the point of the fixture — CMIP6 publishes 850 hPa ``ua``/``zg`` as a
+    masked array wherever the level is below ground.
+    """
+    time = DimCoord(
+        np.arange(field.shape[0], dtype=float) + 0.5,
+        standard_name="time",
+        units=Unit("days since 2000-01-01", calendar="360_day"),
+    )
+    plev = DimCoord(
+        _GEO_PLEV,
+        standard_name="air_pressure",
+        units="Pa",
+        attributes={"positive": "down"},
+    )
+    lat = DimCoord(_GEO_LATS, standard_name="latitude", units="degrees")
+    lon = DimCoord(_GEO_LONS, standard_name="longitude", units="degrees", circular=True)
+    for coord in (lat, lon, time):
+        coord.guess_bounds()
+    data = np.ma.stack([field] * _GEO_PLEV.size, axis=1)
+    return Cube(
+        data,
+        var_name=var_name,
+        units=units,
+        dim_coords_and_dims=[(time, 0), (plev, 1), (lat, 2), (lon, 3)],
+    )
+
+
+def _sub_surface_mask() -> np.ndarray:
+    """A plateau: 30–60°N, 90–150°E, where 850 hPa is below ground."""
+    lat_hit = (_GEO_LATS >= 30.0) & (_GEO_LATS <= 60.0)
+    lon_hit = (_GEO_LONS >= 90.0) & (_GEO_LONS <= 150.0)
+    return (lat_hit[:, None] & lon_hit[None, :])[None, :, :] & np.ones(
+        (_GEO_N_DAYS, 1, 1),
+        dtype=bool,
+    )
+
+
+def _geostrophic_correlation(*, masked: bool) -> float:
+    from climatebench2.diags import GeostrophicBalanceGate
+
+    zg, ua = _balanced_zg_and_ua()
+    if masked:
+        # ...exactly as iris hands a CMIP6 file over: values *under* the mask
+        # are the file's 1e20 fill value, not anything physical.
+        mask = _sub_surface_mask()
+        zg = np.ma.masked_array(np.where(mask, 1.0e20, zg), mask=mask)
+        ua = np.ma.masked_array(np.where(mask, 1.0e20, ua), mask=mask)
+    data = CubeList(
+        [
+            _daily_level_cube("zg", "m", zg),
+            _daily_level_cube("ua", "m s-1", ua),
+        ],
+    )
+    gate = GeostrophicBalanceGate("geostrophic_balance")
+    output = gate._calculate_raw_output(SimpleNamespace(data={"day": data}))  # noqa: SLF001
+    (cube,) = (c for v, c in output.items() if v.var_name == "geostrophic_corr")
+    return float(cube.data)
+
+
+def test_geostrophic_gate_recovers_a_balanced_wind() -> None:
+    """An exactly balanced zg/ua pair must correlate at ρ > 0.99."""
+    assert _geostrophic_correlation(masked=False) > 0.99
+
+
+def test_geostrophic_gate_ignores_sub_surface_fill_values() -> None:
+    """A masked 850 hPa plateau must not enter the correlation.
+
+    Regression test: reading the cube with ``np.asarray`` instead of
+    ``_filled`` exposed the 1e20 under the mask and drove ρ on real
+    CNRM-CM6-1 daily data from 0.99 to 0.09.
+    """
+    assert _geostrophic_correlation(masked=True) > 0.99

@@ -146,20 +146,29 @@ class GeostrophicBalanceGate(CB2ComplexDiagnostic):
         ua, zg = align_on_common_days(ua, zg)
         lats = ua.coord("latitude").points.astype(float)
 
-        ua_data = np.squeeze(np.asarray(ua.data, dtype=float))
-        zg_data = np.squeeze(np.asarray(zg.data, dtype=float))
+        # `_filled`, never `np.asarray`: CMIP6 publishes `ua`/`zg` on a
+        # pressure level that intersects orography as a **masked** array, and
+        # `np.asarray` exposes the 1e20 fill value under the mask instead of
+        # dropping the point. On CNRM-CM6-1 (6% of the 850 hPa field is
+        # sub-surface) that alone drove ρ from 0.99 to 0.09.
+        ua_data = np.squeeze(_filled(ua.data))
+        zg_data = np.squeeze(_filled(zg.data))
 
         try:  # optional orography masking via daily surface pressure
             ps = self._cube(daily, _day("ps"))
             ua_ps, zg_ps, ps = align_on_common_days(ua, zg, ps)
-            ps_data = np.squeeze(np.asarray(ps.data, dtype=float))
-            ua_data = np.squeeze(np.asarray(ua_ps.data, dtype=float)).copy()
-            zg_data = np.squeeze(np.asarray(zg_ps.data, dtype=float)).copy()
+            ps_data = np.squeeze(_filled(ps.data))
+            ua_data = np.squeeze(_filled(ua_ps.data)).copy()
+            zg_data = np.squeeze(_filled(zg_ps.data)).copy()
             mask = ps_data < self._ps_mask_pa
             ua_data[mask] = np.nan
             zg_data[mask] = np.nan
-        except Exception:  # noqa: BLE001 - ps genuinely optional
-            pass
+        except Exception as exc:  # noqa: BLE001 - ps genuinely optional
+            logger.warning(
+                f"Diagnostic '{self.name}': no daily 'ps' to mask sub-surface "
+                f"850 hPa points with ({type(exc).__name__}: {exc}); the "
+                f"correlation uses whatever the model published there",
+            )
 
         ug = physics.geostrophic_wind_u(zg_data, lats)
         rho = physics.midlatitude_pattern_correlation(ua_data, ug, lats)

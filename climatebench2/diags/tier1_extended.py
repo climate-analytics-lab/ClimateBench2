@@ -61,6 +61,45 @@ def _day(name: str) -> Variable:
     return Variable(name, name, "day")
 
 
+def _time_keys(cube: Cube) -> np.ndarray:
+    """One hashable key per time step, comparable across calendars."""
+    coord = cube.coord("time")
+    dates = coord.units.num2date(coord.points)
+    return np.array(
+        [d.year * 10000 + d.month * 100 + d.day for d in dates],
+        dtype=np.int64,
+    )
+
+
+def align_on_common_days(*cubes: Cube) -> list[Cube]:
+    """Cut every cube to the calendar days all of them have.
+
+    CMIP6 does not publish a model's daily variables over the same period:
+    CNRM-CM6-1 has ``day ua`` for 1990-2014 but ``day zg`` only for 2000-2014,
+    which made the geostrophic-balance gate try to correlate a 25-year field
+    with a 15-year one. Aligning on the leading axis by length would silently
+    pair 1990 winds with 2000 heights, so the alignment is by **date**.
+    """
+    keys = [_time_keys(cube) for cube in cubes]
+    common = keys[0]
+    for other in keys[1:]:
+        common = np.intersect1d(common, other)
+    if common.size == 0:
+        msg = "The daily variables share no calendar day"
+        raise ValueError(msg)
+    aligned: list[Cube] = []
+    for cube, key in zip(cubes, keys, strict=True):
+        if key.size == common.size and np.array_equal(key, common):
+            aligned.append(cube)
+            continue
+        index = np.flatnonzero(np.isin(key, common))
+        time_axis = cube.coord_dims("time")[0]
+        slicer: list[slice | np.ndarray] = [slice(None)] * cube.ndim
+        slicer[time_axis] = index
+        aligned.append(cube[tuple(slicer)])
+    return aligned
+
+
 # ---------------------------------------------------------------------------
 # I.3b — Midlatitude geostrophic balance (daily 850 hPa)
 # ---------------------------------------------------------------------------
@@ -102,6 +141,9 @@ class GeostrophicBalanceGate(CB2ComplexDiagnostic):
         daily = complex_data_source.data["day"]
         ua = self._level_cube(daily, "ua")
         zg = self._level_cube(daily, "zg")
+        # The two are rarely published over the same period, so pair them by
+        # date rather than by position (see `align_on_common_days`).
+        ua, zg = align_on_common_days(ua, zg)
         lats = ua.coord("latitude").points.astype(float)
 
         ua_data = np.squeeze(np.asarray(ua.data, dtype=float))
@@ -109,10 +151,11 @@ class GeostrophicBalanceGate(CB2ComplexDiagnostic):
 
         try:  # optional orography masking via daily surface pressure
             ps = self._cube(daily, _day("ps"))
+            ua_ps, zg_ps, ps = align_on_common_days(ua, zg, ps)
             ps_data = np.squeeze(np.asarray(ps.data, dtype=float))
-            n = min(ua_data.shape[0], ps_data.shape[0])
-            mask = ps_data[:n] < self._ps_mask_pa
-            ua_data, zg_data = ua_data[:n].copy(), zg_data[:n].copy()
+            ua_data = np.squeeze(np.asarray(ua_ps.data, dtype=float)).copy()
+            zg_data = np.squeeze(np.asarray(zg_ps.data, dtype=float)).copy()
+            mask = ps_data < self._ps_mask_pa
             ua_data[mask] = np.nan
             zg_data[mask] = np.nan
         except Exception:  # noqa: BLE001 - ps genuinely optional
@@ -566,15 +609,24 @@ class PrecipBuoyancyGate(CB2ComplexDiagnostic):
     # -- the observational reference ----------------------------------------
 
     def _observation_cube(self, source: type[DataSource], var_name: str) -> Cube:
+        from climatebench2 import reference_windows
+
         first, last = get_threshold("tier1.precip_buoyancy.obs_window")
-        variable = Variable(
-            var_name,
-            var_name,
+        product = source()
+        # The protocol's observation window is 1979-2014, but GPCP starts in
+        # 1983 and ClimateEval refuses a range its record does not cover
+        # (MissingDataError), which sends the whole reference slope down the
+        # fallback path. Ask for the overlap instead.
+        timerange = reference_windows.clip_to_source(
+            windows.timerange(int(first), int(last)),
+            self.data_root_dir,
+            product.id,
             "mon",
-            timerange=windows.timerange(int(first), int(last)),
+            var_name,
         )
+        variable = Variable(var_name, var_name, "mon", timerange=timerange)
         return self._regridded(
-            source().get_cube(
+            product.get_cube(
                 self.data_root_dir,
                 variable,
                 download_missing_data=self._download_missing_data,

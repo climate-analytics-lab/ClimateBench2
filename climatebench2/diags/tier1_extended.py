@@ -473,15 +473,28 @@ class ENSOTeleconnectionsGate(CB2ComplexDiagnostic):
         return float(np.nanstd(_filled(cube.data), ddof=1))
 
     def _observation_cube(self, source: type[DataSource], var_name: str) -> Cube:
-        """One observational field over the protocol's satellite-era window."""
+        """One observational field over the protocol's satellite-era window.
+
+        The window is clipped to what the staged product actually holds:
+        the protocol asks for 1979-2014, but GPCP starts in 1983 and
+        ClimateEval refuses a range its record does not cover
+        (``MissingDataError``), which on the first real run silently removed
+        both I.5c gate rows for every model. The two products need not share
+        a span — :meth:`_pattern` aligns them on their common months.
+        """
+        from climatebench2 import reference_windows
+
         first, last = get_threshold("tier1.enso.teleconnection_obs_window")
-        variable = Variable(
-            var_name,
-            var_name,
+        product = source()
+        timerange = reference_windows.clip_to_source(
+            windows.timerange(int(first), int(last)),
+            self.data_root_dir,
+            product.id,
             "mon",
-            timerange=windows.timerange(int(first), int(last)),
+            var_name,
         )
-        return source().get_cube(
+        variable = Variable(var_name, var_name, "mon", timerange=timerange)
+        return product.get_cube(
             self.data_root_dir,
             variable,
             download_missing_data=self._download_missing_data,

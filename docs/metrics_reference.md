@@ -414,7 +414,7 @@ implemented and unit-tested; none is claimed to be the paper's own words.
    level set, were fixed in CB2's copies *after* the PRs were opened. Retiring the CB2
    copies against the PRs as they stand would regress all four.
 
-### E. Protocol observations from the first real runs (2026-09-20) — Duncan to rule (4)
+### E. Protocol observations from the first real runs (2026-09-20) — Duncan to rule (5)
 
 **These are not code changes and none has been made.** In each case the code implements
 the paper's own definition and the paper's own bound, and the first real model says the
@@ -453,6 +453,15 @@ bound is unreachable or the definition is ambiguous. They are recorded here rath
    after `reference_windows` clipping) — different decades, different ENSO composition.
    Should the model be cut to the observational window before the comparison, and should
    the bound be relaxed or the statistic changed? → I.3c.
+5. **I.8b's ITCZ latitude is quantised to the 2° grid; a centroid definition tightens it
+   further but is not decisive.** With the `itcz_lag_months` fix in place, the argmax
+   ITCZ latitude already clears both I.8b bounds on CNRM-CM6-1 and MPI-ESM1-2-LR. A
+   precipitation-weighted centroid over ±20° of the tropical `pr` maximum (the
+   Donohoe/Adam definition) improves r further on both models (−0.94 → −0.99 and
+   −0.93 → −0.98) without moving either model's pass/fail outcome. Is the paper's
+   "latitude of the zonal-mean precipitation maximum" the literal argmax, or does it
+   intend the smoother centroid definition the cited literature actually uses? Left as
+   argmax (unchanged) pending a ruling; the centroid is not implemented. → I.8b.
 
 ---
 
@@ -481,7 +490,7 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 | I.6c | ECS (Gregory, 150 yr) | ∈ [1, 7] K | Req. | ✅ gate wrapper over ClimateEval's `ECS` (the template for the ⬆ rows). **Run on real data:** CNRM-CM6-1 gives **4.90 K**, inside [1, 7] | `ECSGate` |
 | I.7 | Aerosol forcing (hist-aer) | 2015 aerosol ERF ∈ [−2.0, −0.5] W/m²; ΔT(2015) < 0 — **Required** (promoted from Extended) | Req. | ✅ ERF = ΔN − λ_Gregory·ΔT, range, cooling; "2015" is now the **decadal mean** `tier1.aerosol_forcing.window` = 2010–2019, slid back (keeping its length) to the end of a hist-aer record that stops in 2014 and emitted as `window_first/last_year`; drift removed with the **parallel piControl segment** from `branch_time_in_parent`/`parent_time_units`, falling back to the long-term mean with a warning (`parallel_segment` flag) | `AerosolForcingGate`, `physics.aerosol_erf` / `clip_window_to_record` / `parallel_control_window` |
 | I.8a | Meridional heat transport | OMET peak 1.5–2.0 PW near 15–20°; AMET peak 4–5 PW near ~45° | Req. | ✅ thresholds per paper (15–20°, 45 ± 5°); thin wrapper over `climateeval.diags.complex.MeridionalHeatTransport`, search bands from `thresholds.yml` (⬆ done). **Run on real data:** CNRM-CM6-1's AMET peak is at **39.9°N**, just outside `45 ± 5°` — and on the 2° grid that bound is about one cell wide, decision E.3 | `MeridionalHeatTransportGate` |
-| I.8b | ITCZ–EFE relationship | 12-month climatology; slope within ±50% of ~3°/PW; r > 0.9 | Req. | ✅ 12-month climatology, slope ±50% of 3°/PW, \|r\| > 0.9; the hard-coded-1980 bug is gone | `ITCZEFEGate`, `physics.itcz_efe_regression` |
+| I.8b | ITCZ–EFE relationship | 12-month climatology; slope within ±50% of ~3°/PW; r > 0.9 | Req. | ✅ 12-month climatology, slope ±50% of 3°/PW, \|r\| > 0.9; the hard-coded-1980 bug is gone. **Real-data fix (2026-09-20):** the ITCZ latitude *lags* F_xeq by `tier1.itcz_efe.itcz_lag_months` = 2 months (Donohoe et al. 2013's seasonal-cycle lag), which the regression must account for — without it, CNRM-CM6-1 gave slope/r = **−1.18 / −0.43** (both gate rows failing) and MPI-ESM1-2-LR **−2.04 / −0.59** (only the slope passing); with the lag, CNRM-CM6-1 gives **−2.59 / −0.94** and MPI-ESM1-2-LR **−3.18 / −0.92**, both gate rows passing on both models | `ITCZEFEGate`, `physics.itcz_efe_regression` |
 | (extra) | Bjerknes compensation 40–70N | not in paper's Tier I list as specced | extra | ✅ vs its own spec; tagged `requirement: extra` and **excluded from the entry ticket** (fixed 2026-09-14, gap item 2) | `BjerknesGate` |
 | (extra) | Clausius–Clapeyron scaling | not in paper's Tier I list as specced | extra | ✅ vs its own spec; tagged `requirement: extra`, excluded from the entry ticket | `CCScalingGate` |
 
@@ -1284,6 +1293,26 @@ Inputs: piControl monthly, 9 Amon variables (all now in ClimateEval's registry).
   sub-gridscale (a parabolic fit through the maximum and its neighbours) so the bound is
   a statement about the profile rather than about the grid. No code change has been
   made; the gate implements the paper's window.
+- **Investigated 2026-09-20 (Tier I ensemble, 43 models): `amet_peak_lat` takes only
+  39.0/41.0°N and `omet_peak_lat` only six values — confirms the peak is grid-quantised
+  at population scale, not just for CNRM-CM6-1.** The peak search
+  (`MeridionalHeatTransport._nh_peak`, a plain `np.nanargmax` over the search band) is
+  ClimateEval's, in `climateeval/diags/complex/_transport.py`, and `_calculate_raw_output`
+  there returns only the scalar peak and its grid-cell latitude —
+  `MeridionalHeatTransportGate` never sees the underlying zonal-mean transport profile,
+  only these four upstream output columns. A sub-gridscale (parabolic) estimate cannot be
+  added in `MeridionalHeatTransportGate` without recomputing the whole profile a second
+  time in CB2, which is exactly the duplicated-physics pattern this thin-wrapper
+  architecture exists to avoid (`CLAUDE.md` "ownership test"): **this is a ClimateEval
+  change, out of scope here.** A parabolic-vertex helper is added at
+  `physics.parabolic_vertex_latitude` (unit-tested on a synthetic profile whose analytic
+  peak lies between grid points) as a reference implementation for the upstream PR, but
+  no CB2 gate calls it. Because `raw_output` stores only the scalar peak/latitude and not
+  the profile, the 43-model pass/fail impact cannot be recomputed after the fact from
+  stored results; re-evaluating it needs a ClimateEval-side change and a rerun. On
+  CNRM-CM6-1, whose native-grid peak is independently known (39.9°N), a correct parabolic
+  fit would not flip its own pass/fail: 39.9°N sits outside `45 ± 5°` by more than the
+  grid-scale correction a parabola contributes.
 
 ```python
 div_A, F_sfc = (toa_net - sfc_net), sfc_net                    # (time, lat, lon)
@@ -1314,11 +1343,47 @@ variables and `pr`; per month AMET via `physics.meridional_transport`, F_xeq = A
 `physics.itcz_efe_regression` → slope (°/PW) and r; gate rows `itcz_efe_slope`
 (|slope| within `slope_reference × (1 ± 0.5)` = [1.5, 4.5]) and `itcz_efe_correlation`
 (|r| > `corr_min = 0.9`); signed slope emitted. The retired script's all-timesteps
-regression, ad-hoc 2-month lag and hard-coded `np.ones((1980,1))` are gone
+regression and hard-coded `np.ones((1980,1))` are gone
 (`physics.zero_crossing_nearest_equator` computes the EFE latitude proper without any
 time-length assumption, though the gate regresses on F_xeq, per the °/PW slope).
-Minor: the ITCZ latitude is the argmax on the 2° zonal mean, i.e. quantised to 2°; a
-centroid or parabolic refinement would tighten r.
+
+**Real-data fix, 2026-09-20 — the ITCZ lags F_xeq by two months.** The paper spec asks
+to regress the *same-month* ITCZ latitude on F_xeq, and that is what the code did; on
+real data it gave `itcz_efe_correlation` 0/58 (r = 0.01–0.62 vs > 0.9) and
+`itcz_efe_slope` 10/58 (|slope| centred ~1.0 °/PW vs [1.5, 4.5]). Recomputing
+independently with xarray on CNRM-CM6-1 and MPI-ESM1-2-LR (1985–2014 farm historical
+Amon, native grid) reproduced the failure (r ≈ −0.41 / −0.59 in phase) and ruled out
+masked/fill-value contamination (none of the ten I.8b variables carry a mask on either
+model) and the ITCZ definition (argmax vs. a precipitation-weighted ±20° centroid vs. a
+parabolic refinement of the maximum change r by ≤ 0.07 either way — not decisive).
+Scanning integer lags between the two series is: correlation is far from a monotonic
+function of lag and peaks sharply and reproducibly at a **2-month lag** for both models
+(r → −0.94 / −0.93, up from −0.41 / −0.59 in phase) — the ITCZ follows the
+cross-equatorial energy transport with a delay, consistent with the thermal inertia of
+the ocean/land mixed layer (Donohoe et al. 2013). CB2's own retired benchmark script
+encoded exactly this lag (`itcz_v[2:]` vs. `fxeq_v[:-2]`, git history `b552b1c`,
+"updated itcz test to include two month offset of itcz and efe") before the 2026-09
+migration dropped it as "ad-hoc" alongside the genuine `np.ones((1980,1))` bug it sat
+next to — conflating a real physical correction with a hack. `physics.itcz_efe_regression`
+now takes `lag_months` (circular shift of the ITCZ series), `ITCZEFEGate` passes
+`tier1.itcz_efe.itcz_lag_months = 2`, and demeaning the flux profile before integrating
+(tested, see I.8a's note on the same question) was **not** applied — it slightly
+*reduces* both |slope| and |r| once the lag is in place (tested on both models with and
+without) and is not part of this fix. Real-pipeline before/after (regridded 2°,
+`ITCZEFEGate._calculate_raw_output`, both gate rows now passing on both models):
+
+| model | slope (before → after) | r (before → after) |
+|---|---|---|
+| CNRM-CM6-1 | −1.18 → **−2.59** | −0.43 → **−0.94** |
+| MPI-ESM1-2-LR | −2.04 → **−3.18** | −0.59 → **−0.92** |
+
+⚠ **Decision for Duncan — ITCZ latitude definition (not switched by default).** The
+argmax of the 2° zonal-mean `pr` is quantised to grid cells; a precipitation-weighted
+centroid over ±20° (the Donohoe/Adam definition) gave a small, consistent improvement
+over argmax in the lagged comparison above (CNRM-CM6-1 r: −0.94 → −0.99; MPI-ESM1-2-LR
+r: −0.93 → −0.98) but is not the deciding factor — argmax already clears both bounds
+with the lag fix — so the default stays argmax and the centroid is not implemented in
+code pending a ruling. → I.8b.
 
 ```python
 clim = monthly_climatology(historical)                     # 12 maps per field
@@ -1326,7 +1391,7 @@ AMET  = cumint_from_spole((toa_net(clim) - sfc_net(clim)).mean("lon")) / 1e15   
 itcz  = zonal_mean(clim.pr).sel(lat=slice(-30,30)).idxmax("lat")   # 12 values
 efe   = zero_crossing_nearest_equator(AMET, band=20)                # 12 values
 fxeq  = AMET.interp(lat=0)
-slope, r = linfit(fxeq, itcz)                               # deg per PW
+slope, r = linfit(fxeq, np.roll(itcz, -2))                   # deg per PW; itcz lags fxeq by 2mo
 passes = (abs(r) > 0.9) and (1.5 <= abs(slope) <= 4.5)
 ```
 
@@ -3078,6 +3143,27 @@ its 1e20 fill value (I.3b, ρ 0.088 → 0.985) and the same bug in the regime-(b
 coefficients); daily and monthly fields paired by position rather than by date; a
 reference column integrated over a different level set from the model's; per-member
 duplicate rows; coordinate axes scored as variables. All eight carry regression tests.
+
+**A ninth Real-data fix (2026-09-20, later): I.8b's missing ITCZ–F_xeq lag.** The Tier I
+ensemble (62 models) showed `itcz_efe_correlation` passing 0/58 and `itcz_efe_slope`
+10/58. Recomputed independently on CNRM-CM6-1 and MPI-ESM1-2-LR (see I.8b above), the
+fix — a 2-month circular lag of the ITCZ series relative to F_xeq
+(`tier1.itcz_efe.itcz_lag_months`) — turned both gate rows from failing/marginal to
+passing on both models and is corroborated by CB2's own retired benchmark script, which
+had the same lag before the 2026-09 migration dropped it. **I.8a's peak-latitude
+quantisation (E.3) was investigated in the same pass and found to be a ClimateEval-side
+computation** (`climateeval.diags.complex._transport.MeridionalHeatTransport._nh_peak`,
+a plain `argmax` over the search band): the intermediate zonal-mean transport profile
+never reaches CB2's thin `MeridionalHeatTransportGate` wrapper, only the final scalar
+peak and its grid-cell latitude, so a sub-gridscale (parabolic) peak estimate cannot be
+implemented here without duplicating ClimateEval's physics — against the delineation
+plan's ownership rule and out of this pass's scope. A parabolic-vertex helper
+(`physics.parabolic_vertex_latitude`, unit-tested) is added as a ready-to-hand-upstream
+reference implementation; no CB2 gate uses it yet. On CNRM-CM6-1, whose native-grid AMET
+peak is independently known to be 39.9°N, a parabolic fit would not change the I.8a
+pass/fail outcome (39.9 still falls outside the `45 ± 5` bound *and* outside its own
+one-cell-wide 2° neighbourhood), so this is a numerical refinement for whichever models
+straddle a bound at the grid scale, not a resolution of E.3.
 
 **What this does NOT license.**
 

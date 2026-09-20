@@ -35,10 +35,6 @@ from esmvalcore.preprocessor import (
 )
 from loguru import logger
 
-from climateeval import Variable
-from climateeval._config import setup_esmvaltool_config_and_logging
-from climateeval.data import GPCP, ERA5Monthly, HadISST
-
 from climatebench2 import physics, windows
 from climatebench2._thresholds import get_threshold
 from climatebench2.diags.pass_fail import GateCheck, gate_requirement, gate_tier
@@ -48,6 +44,9 @@ from climatebench2.diags.tier1_physics import (
     _filled,
     _mon,
 )
+from climateeval import Variable
+from climateeval._config import setup_esmvaltool_config_and_logging
+from climateeval.data import GPCP, ERA5Monthly, HadISST
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -815,7 +814,8 @@ class PrecipBuoyancyGate(CB2ComplexDiagnostic):
 
 class MJOGate(CB2ComplexDiagnostic):
     """I.5d: eastward/westward power (k = 1–3, 30–90 d) of near-equatorial
-    daily precipitation > 1.5."""
+    daily precipitation > 1.5.
+    """
 
     _required_data_keys = ("day",)
     _gate_checks = (

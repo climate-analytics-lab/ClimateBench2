@@ -114,7 +114,9 @@ def test_window_is_untouched_without_a_data_root_or_a_reference(tmp_path) -> Non
 
 def test_a_reference_that_never_reaches_the_window_keeps_it(tmp_path) -> None:  # noqa: ANN001
     """No overlap at all -> leave the nominal window and let the usual warning fire."""
-    _write(tmp_path / "observation_HadCRUT5" / "mon" / "tas" / "a.nc", 1850, 1, 2000, 12)
+    _write(
+        tmp_path / "observation_HadCRUT5" / "mon" / "tas" / "a.nc", 1850, 1, 2000, 12
+    )
     variable = {
         "id": "tas",
         "var_name": "tas",

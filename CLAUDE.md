@@ -42,9 +42,14 @@ climatebench2/
 ├── scoring.py           # pure fair-CRPS / bootstrap / consistency / EOF engine (numpy only)
 ├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
 ├── windows.py           # the protocol's time windows (test / 1985-2014 baseline / 1950-)
+├── reference_windows.py # the window each variable is REALLY scored over: the
+│                        #   protocol window clipped to the staged reference's
+│                        #   complete years (HadCRUT5 ends 2023-09, ...)
 ├── physics.py           # pure Tier I physics + the ETCCDI indices (numpy only)
 ├── baselines.py         # climatology pseudo-members, the calibrated two-layer EBM
 ├── data/                # packaged protocol tables (the ERF series behind the EBM)
+│   └── cmip6_staged.py  #   + StagedCMIP6HistoricalSSP245: the CMIP6 comparison
+│                        #     ensemble behind E_ref, found in a staged root
 ├── leaderboard/         # .ddb results → scores table → static HTML page
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 ```

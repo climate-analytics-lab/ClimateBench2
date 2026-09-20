@@ -92,6 +92,23 @@ def _monthly_cube(
     )
 
 
+def _mask_southern_rows(cube: Cube, n_rows: int) -> None:
+    """Mask the ``n_rows`` southernmost latitudes, in place, as iris does it.
+
+    A gridded observational product (HadCRUT5 ``tas``, EN4 ``tos``) is a
+    **masked** array whose values *under* the mask are the file's 1e20
+    ``_FillValue``, so the fixture puts them there too: a reader that drops
+    the mask sees 1e20, not the field. The row just north of the permanently
+    missing ones is masked in every other month only — observational
+    coverage changes from month to month, which is what turns the fill value
+    into *variance* and so into the leading EOF.
+    """
+    mask = np.zeros(cube.shape, dtype=bool)
+    mask[:, :n_rows, :] = True
+    mask[::2, n_rows, :] = True
+    cube.data = np.ma.masked_array(np.where(mask, 1.0e20, cube.data), mask=mask)
+
+
 class _FakeReference:
     """A DataSource that serves a fixed record, clipped to the asked window."""
 
@@ -102,6 +119,8 @@ class _FakeReference:
     patterns: ClassVar[dict[tuple[int, int], np.ndarray]] = {}
     #: Every variable the diagnostic asked for, in order.
     asked: ClassVar[list[Variable]] = []
+    #: Number of southern latitude rows this "observation" never covers.
+    masked_rows: ClassVar[int] = 0
 
     @property
     def id(self) -> str:
@@ -127,7 +146,10 @@ class _FakeReference:
         pattern = self.patterns.get((first, last))
         if pattern is None:
             pattern = self.patterns.get("any")  # type: ignore[call-overload]
-        return _monthly_cube(first, last, pattern=pattern)
+        cube = _monthly_cube(first, last, pattern=pattern)
+        if self.masked_rows:
+            _mask_southern_rows(cube, self.masked_rows)
+        return cube
 
 
 def _variable(timerange: str = "20150101/20251231") -> Variable:
@@ -157,6 +179,7 @@ def _reset_fake():  # noqa: ANN202
     _FakeReference.asked = []
     _FakeReference.patterns = {}
     _FakeReference.record = (1980, 2025)
+    _FakeReference.masked_rows = 0
     yield
     _FakeReference.asked = []
 
@@ -304,6 +327,38 @@ def test_eof_projection_separates_a_biased_model_from_the_reference() -> None:
     far, obs_again = coefficients(biased)
     np.testing.assert_allclose(obs, obs_again)
     assert np.abs(far - obs).sum() > np.abs(near - obs).sum()
+
+
+def test_eof_projection_ignores_the_fill_value_of_a_masked_reference() -> None:
+    """A masked reference must not put its 1e20 fill value into the basis.
+
+    Regression test for the smoke run's regime-(b) rows: HadCRUT5 ``tas``
+    and EN4 ``tos`` are masked products, the basis was built with
+    ``np.ma.filled(np.asarray(cube.data), nan)`` — which is a no-op, because
+    ``np.asarray`` has already dropped the mask — and the 1e20 under the
+    mask took over both the EOFs (σ ≈ 3e18 for ``tas``) and every
+    projection, so *every* source got the reference's own coefficients and
+    the fair CRPS came out as exactly 0 with E_ref = 0.
+    """
+    _FakeReference.patterns = {"any": None}
+    _FakeReference.masked_rows = 2
+    diag = _diagnostic(ReferenceEOFProjection, _variable())
+    model = CubeList([_monthly_cube(2015, 2025, pattern=_hemispheric_pattern(4.0), seed=3)])
+    raw = diag.get_output(model, _information()).raw_output.to_pandas()
+
+    # The basis is in the field's own units (K), not in fill values
+    assert raw["sigma_pre2015"].max() < 100.0
+    # ...so the model stays distinguishable from the reference. The test is
+    # on the *relative* separation: with the fill value in the basis both
+    # projections are dominated by the same enormous common term, which
+    # cancels in the difference but leaves every source with effectively the
+    # reference's own standardised coefficients.
+    ordered = raw.sort_values("mode")
+    model_coefficients = ordered[ordered["data_type"] == "to_benchmark"]["coefficient"]
+    obs_coefficients = ordered[ordered["data_type"] == "reference"]["coefficient"]
+    separation = np.abs(model_coefficients.to_numpy() - obs_coefficients.to_numpy()).sum()
+    assert separation > 1.0
+    assert separation / np.abs(obs_coefficients.to_numpy()).sum() > 0.1
 
 
 def test_eof_projection_skips_a_variable_without_a_pre2015_reference() -> None:

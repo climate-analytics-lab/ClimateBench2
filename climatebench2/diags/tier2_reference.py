@@ -54,6 +54,7 @@ from climateeval.diags.simple._base import SimpleDiagnostic
 
 from climatebench2 import scoring, windows
 from climatebench2._thresholds import get_threshold
+from climatebench2.diags.tier1_physics import _filled
 from climatebench2.scoring_pass import (
     BASELINE_ANNUAL_DATA_TYPE,
     BASELINE_MONTHLY_DATA_TYPE,
@@ -319,8 +320,11 @@ class ReferenceEOFProjection(_ReferenceWindowDiagnostic):
         with setup_esmvaltool_config_and_logging():
             anomaly_cube = anomalies(field_cube, period="month")
 
-        fields = np.asarray(anomaly_cube.data, dtype=float)
-        fields = np.ma.filled(fields, np.nan).reshape(fields.shape[0], -1)
+        # `np.ma.filled` has to see the *masked* array: calling it on the
+        # output of `np.asarray` is a no-op, because `np.asarray` has already
+        # thrown the mask away and exposed the file's 1e20 fill value.
+        fields = _filled(anomaly_cube.data)
+        fields = fields.reshape(fields.shape[0], -1)
         valid = np.isfinite(fields).all(axis=0)
         if valid.sum() < 2:  # noqa: PLR2004 - an EOF needs more than a point
             logger.warning(
@@ -353,8 +357,7 @@ class ReferenceEOFProjection(_ReferenceWindowDiagnostic):
         """Flattened time-mean field of a (time, lat, lon) cube."""
         with setup_esmvaltool_config_and_logging():
             mean_cube = climate_statistics(cube, "mean", "full")
-        data = np.ma.filled(np.asarray(mean_cube.data, dtype=float), np.nan)
-        return data.reshape(-1)
+        return _filled(mean_cube.data).reshape(-1)
 
     # -- projection -------------------------------------------------------
 

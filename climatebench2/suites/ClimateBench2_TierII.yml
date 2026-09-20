@@ -1,6 +1,6 @@
 # ClimateBench v2 — Tier II: scoring against observations.
-# Core protocol variables (metrics_reference.md Tier II): tas, pr, TOA fluxes,
-# SST, sea ice, OHC, prw, clouds — evaluated with ClimateEval diagnostics
+# Core protocol variables (metrics_reference.md Tier II): tas, ts, pr, TOA
+# fluxes, SST, sea ice, OHC, prw, clouds — evaluated with ClimateEval diagnostics
 # against the protocol's observational references, with the CMIP6
 # historical+SSP2-4.5 ensemble carried along as comparison (the MME baseline of
 # the protocol, and the E_ref median of every score here). That ensemble is
@@ -26,6 +26,12 @@
 # The regime-(c) trend consistency is no longer a diagnostic: the pass takes
 # the trends from `annual_mean_timeseries` and combines the ensemble spread
 # with the piControl sigma_int (Tier I suite) and sigma_obs.
+#
+# The paper's figure set is the nine variables tas, ts, pr, rsut, rlut, rsutcs,
+# rlutcs, tos, siconc (Duncan, 2026-09). The cloud entries below (clt, clwvi,
+# clivi) stay in the suite but are OUT of that set: their only reference,
+# ESACCI-CLOUD, ends in 2016, so their scored window is two years of the test
+# window and the fair CRPS falls below the scoring pass's minimum overlap.
 
 - name: annual_mean_timeseries
   diagnostic: climatebench2.diags.ScoredAnnualMeanTimeSeries
@@ -41,6 +47,18 @@
         # climatebench2/data/cmip6_staged.py for why this and not upstream's
         # pool-globbing climateeval.data.CMIP6HistoricalSSP245 (identical ids).
         - climatebench2.data.StagedCMIP6HistoricalSSP245
+    # Surface (skin) temperature, the second of the paper's two temperature
+    # variables. Reference: MERRA2, not ERA5 -- ClimateEval's ERA5 source can
+    # serve `ts` (upstream PR #48) but only by downloading it from the CDS,
+    # and the staged ERA5 has no `ts`, whereas MERRA2 `ts` is staged monthly
+    # for 1980-01..2021-12. That end date is what bounds the scored window:
+    # `ts` is scored over 2015-2021, not the full test window
+    # (climatebench2.reference_windows resolves and reports it).
+    - id: ts
+      var_name: ts
+      frequency: mon
+      reference_data: climateeval.data.MERRA2
+      other_data: *comparison_ensemble
     - id: pr
       var_name: pr
       frequency: mon
@@ -90,7 +108,8 @@
       other_data: *comparison_ensemble
     # Condensed-water paths (paper Tier II extended: "cloud properties —
     # LWP, fraction"). ESACCI-CLOUD CMORizes clwvi/clivi/lwp alongside clt.
-    # Cloud-top temperature/pressure remain missing (no DataSource).
+    # Cloud-top temperature/pressure remain missing (no DataSource). Like
+    # `clt`, these are outside the paper's figure set: ESACCI-CLOUD ends 2016.
     - id: clwvi
       var_name: clwvi
       frequency: mon

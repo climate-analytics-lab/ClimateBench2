@@ -722,9 +722,9 @@ class LandAnnualTemperatureRange(_SeasonalCycleDiagnostic):
     against each other and be several times smaller.
 
     Emits ``land_annual_temperature_range`` (K). Reference: **ERA5Monthly**
-    ``tas`` (``VARIABLE_MAPPING`` has ``2m_temperature``). ⚠ Once upstream
-    PR #49 lands, **CRU TS** is the better land-only reference and should
-    replace or join ERA5 here.
+    ``tas`` (``VARIABLE_MAPPING`` has ``2m_temperature``). ⚠ ``climateeval.data
+    .CRU`` (upstream PR #49, merged) is the better land-only reference and
+    should replace or join ERA5 here once CRU TS is staged.
     """
 
     _observation_source: ClassVar[type[DataSource]] = ERA5Monthly

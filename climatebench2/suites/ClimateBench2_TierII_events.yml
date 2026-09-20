@@ -41,7 +41,8 @@
 # Properties of the 12-month climatology over the protocol's fixed
 # 1985-2014 window, so they are **in-sample** — and, unlike the scalars
 # above, their observed counterparts come from several products at once:
-# ERA5 (or CRU once upstream PR #49 lands) for the land temperature range,
+# ERA5 (or `climateeval.data.CRU`, merged upstream but not staged here) for
+# the land temperature range,
 # ESACCI-CLOUD + ESACCI-SST for the low-cloud covariance, CERES-EBAF +
 # ESACCI-SST for the seasonal cloud-radiative feedback. `ObservedScalarMixin`
 # writes the `reference` row under the primary product and registers every

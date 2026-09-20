@@ -67,8 +67,10 @@ DEFAULT_SUITES = [
     "ClimateBench2_TierII",
 ]
 #: In-sample historical window: the default for cube suites that are not the
-#: post-2015 test window (and the range ClimateEval's CMIP6 comparison
-#: generator is hard-wired to).
+#: post-2015 test window. It is also the window upstream's single-member
+#: `climateeval.data.CMIP6HistoricalR1I1P1F1` carries; the Tier II comparison
+#: ensemble is `climatebench2.data.StagedCMIP6HistoricalSSP245` and runs to the
+#: end of each member's SSP2-4.5 record instead.
 DEFAULT_TIMERANGE = "19790101/20141231"
 
 

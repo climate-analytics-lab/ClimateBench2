@@ -242,7 +242,7 @@ def _run_precip_buoyancy(
     monkeypatch: pytest.MonkeyPatch,
     reference: float | None,
 ):  # noqa: ANN201
-    def fake_observed_slope(_self) -> float:
+    def fake_observed_slope(_self, _levels=None) -> float:  # noqa: ANN001
         if reference is None:
             msg = "no network in the test environment"
             raise RuntimeError(msg)
@@ -272,6 +272,42 @@ def test_precip_buoyancy_fails_a_slope_outside_the_tolerance(monkeypatch) -> Non
     metrics = output.metrics.to_pandas().set_index("var_id")
     assert metrics.loc["precip_buoyancy", "value"] == pytest.approx(1.0, abs=0.05)
     assert metrics.loc["precip_buoyancy", "passes"] == 0.0
+
+
+def test_precip_buoyancy_integrates_the_reference_over_the_model_levels() -> None:
+    """The reference column must use the *submission's* pressure levels.
+
+    Regression test: the observed slope was integrated over ERA5's 37
+    levels while the model's used CMIP6 ``plev19``, and the pooled slope
+    depends strongly on that discretisation — the same ERA5 record gives
+    0.146 mm/day per MJ/m2 on 37 levels and 0.034 on ``plev19``, which by
+    itself accounted for the model/obs mismatch left after the date-pairing
+    fix.
+    """
+    recorded: list[list[float] | None] = []
+    gate = PrecipBuoyancyGate("precip_buoyancy", fail_on_missing_data=False)
+    original = PrecipBuoyancyGate._slope  # noqa: SLF001
+
+    def record(self, pr, ta, zg, hus, levels=None):  # noqa: ANN001, ANN202
+        recorded.append(levels)
+        return original(self, pr, ta, zg, hus, levels)
+
+    reference_levels: list[float] = []
+
+    def fake_observed_slope(_self, levels=None):  # noqa: ANN001, ANN202
+        reference_levels.extend(levels or [])
+        return 1.0
+
+    PrecipBuoyancyGate._slope = record  # noqa: SLF001
+    try:
+        gate._observed_slope = fake_observed_slope.__get__(gate)  # noqa: SLF001
+        gate.get_output({"historical": _buoyancy_cubes()}, _info())
+    finally:
+        PrecipBuoyancyGate._slope = original  # noqa: SLF001
+
+    # The model's own levels reached both the model slope and the reference
+    assert recorded == [sorted(PLEV)]
+    assert reference_levels == sorted(PLEV)
 
 
 def test_precip_buoyancy_pairs_pr_and_the_column_by_calendar_month() -> None:

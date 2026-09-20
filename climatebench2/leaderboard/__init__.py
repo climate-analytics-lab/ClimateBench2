@@ -236,10 +236,18 @@ def build_scores(db_paths: list[Path]) -> Scores:
                 tier3.append(tagged)
 
     def cat(frames: list[pd.DataFrame]) -> pd.DataFrame:
-        return (
-            pd.concat(frames, ignore_index=True, sort=False)
-            if frames
-            else pd.DataFrame()
+        # `drop_duplicates`: the per-member Tier II suites are run once per
+        # ensemble member and appended into one database, so a diagnostic's
+        # own `reference` and `other` metrics rows (its weighted_rmse and
+        # friends for the observations and the comparison ensemble) arrive
+        # once per member. The scoring pass strips the same duplication from
+        # `raw_output` (`scoring_pass.deduplicate_raw_output`); this is the
+        # display side of it. A fully identical row can only be a
+        # re-ingestion, so nothing else is affected.
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True, sort=False).drop_duplicates(
+            ignore_index=True,
         )
 
     return Scores(

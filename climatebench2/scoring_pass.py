@@ -146,8 +146,37 @@ OBSERVATIONAL_CATEGORIES = frozenset({"observation", "reanalysis"})
 #: DuckDB schemas that are not diagnostics.
 _SKIP_SCHEMAS = {"main", "memory", "information_schema", "temp", "system", "pg_catalog"}
 
-#: raw_output columns that are not variables.
-_META_COLUMNS = {"data_id", "data_type", "time"}
+def _coordinate_column_names() -> frozenset[str]:
+    """Every column name a ClimateEval coordinate can appear under.
+
+    A diagnostic's ``raw_output`` carries its final coordinates as columns
+    beside the variables — ``month_number`` for an annual cycle, ``latitude``
+    and ``longitude`` for a map, ``latitude`` for a zonal line. Those are the
+    table's **axes**, never quantities to score, so they are excluded from the
+    variable columns and they disqualify a table from the aggregated-scalar
+    regime. Read from ClimateEval's coordinate registry rather than hard-coded
+    so a new coordinate cannot silently start being scored.
+    """
+    names = {"data_id", "data_type", "time"}
+    try:
+        from climateeval._variable import COORDINATES  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 - fall back to the built-in list
+        return frozenset(names | {"month_number", "latitude", "longitude"})
+    for key, info in COORDINATES.items():
+        names.add(str(key))
+        for attribute in ("standard_name", "long_name"):
+            value = info.get(attribute) if isinstance(info, dict) else None
+            if value:
+                names.add(str(value))
+    return frozenset(names)
+
+
+#: raw_output columns that are not variables: the identity columns plus every
+#: coordinate axis (:func:`_coordinate_column_names`).
+_META_COLUMNS = _coordinate_column_names()
+
+#: Just the coordinate axes, without the identity columns.
+_AXIS_COLUMNS = _META_COLUMNS - {"data_id", "data_type"}
 
 #: ``Diagnostic._get_raw_output_table`` builds its frame with
 #: ``as_data_frame(cube).reset_index()``, so a *scalar* cube (no coordinates)
@@ -1077,6 +1106,37 @@ def reference_for_variable(
     return None
 
 
+def deduplicate_raw_output(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows a per-member run re-ingested verbatim.
+
+    The Tier II suites are ``per_member`` (``_cli.SuiteSpec``): the CLI runs
+    them once per ensemble member and **appends** into one database. A
+    diagnostic writes its ``reference`` rows and its ``other`` rows (the
+    observational products and the whole CMIP6 comparison ensemble) on *every*
+    one of those runs, because it re-reads them each time — so with M members
+    each of those rows appears M times, while the ``to_benchmark`` rows are
+    genuinely one per member.
+
+    That is not a cosmetic duplication:
+
+    * :func:`observational_sigma` indexes sigma by the reference's times, and a
+      duplicated index makes the later ``reindex`` raise
+      ``cannot reindex on an axis with duplicate labels`` — which is how this
+      surfaced, as a hard failure of the whole scoring pass on the first
+      3-member real-data run;
+    * :func:`stack_members` inner-joins each member on ``time``, so M copies of
+      one comparison member would multiply into M**2 rows and silently corrupt
+      its fair CRPS.
+
+    A fully identical row can only be a re-ingestion: two data sources differ
+    in ``data_id`` and two time steps differ in ``time``. So exact-duplicate
+    rows are dropped and nothing else is touched.
+    """
+    if raw_df.empty:
+        return raw_df
+    return raw_df.drop_duplicates(ignore_index=True)
+
+
 def score_raw_output(  # noqa: C901, PLR0912, PLR0915
     raw_df: pd.DataFrame,
     data_sources: pd.DataFrame | None,
@@ -1366,7 +1426,12 @@ def is_scalar_output(raw_df: pd.DataFrame) -> bool:
     """
     if not {"data_id", "data_type"} <= set(raw_df.columns):
         return False
-    if "time" in raw_df.columns or is_eof_output(raw_df):
+    # Any coordinate axis means the table is a series, a climatology or a
+    # field, not a set of scalars. Without this an annual cycle was scored on
+    # its `month_number` axis and a map on `latitude`/`longitude`, each as if
+    # the axis were a variable, and the map's variables were collapsed to
+    # whatever happened to be in the first grid cell.
+    if _AXIS_COLUMNS & set(raw_df.columns) or is_eof_output(raw_df):
         return False
     return bool((raw_df["data_type"] == "reference").any())
 
@@ -1842,7 +1907,9 @@ def _database_context(
     for schema, tables in schemas.items():
         if "raw_output" not in tables:
             continue
-        raw_df = con.execute(f'SELECT * FROM "{schema}"."raw_output"').df()
+        raw_df = deduplicate_raw_output(
+            con.execute(f'SELECT * FROM "{schema}"."raw_output"').df(),
+        )
         context.update(baseline_records(raw_df))
     return context
 
@@ -1867,7 +1934,9 @@ def collect_internal_variability(db_paths: list[Path] | list[str]) -> SigmaInter
                 tables = _schema_tables(con, schema)
                 if "raw_output" not in tables:
                     continue
-                raw_df = con.execute(f'SELECT * FROM "{schema}"."raw_output"').df()
+                raw_df = deduplicate_raw_output(
+                con.execute(f'SELECT * FROM "{schema}"."raw_output"').df(),
+            )
                 for key, entries in internal_variability_from_raw(raw_df).items():
                     table.setdefault(key, []).extend(entries)
         finally:
@@ -1926,7 +1995,9 @@ def score_database(
         for schema, tables in schemas.items():
             if "raw_output" not in tables:
                 continue
-            raw_df = con.execute(f'SELECT * FROM "{schema}"."raw_output"').df()
+            raw_df = deduplicate_raw_output(
+                con.execute(f'SELECT * FROM "{schema}"."raw_output"').df(),
+            )
             sources = (
                 con.execute(f'SELECT * FROM "{schema}"."data_sources"').df()
                 if "data_sources" in tables
@@ -1956,6 +2027,12 @@ def score_database(
                     diagnostic=schema,
                 )
             if not rows:
+                # Still clear this diagnostic's OWN earlier rows: a schema
+                # that has stopped being scorable (a map, once the axis
+                # columns were excluded from the scalar regime) would
+                # otherwise keep the scores of a previous `--rescore`
+                # for ever, and the pass would not be idempotent.
+                _clear_rows(con, schema, has_metrics="metrics" in tables)
                 continue
             frame = pd.DataFrame(rows)[list(_SCORE_COLUMNS)]
             _write_rows(con, schema, frame, has_metrics="metrics" in tables)
@@ -1974,6 +2051,18 @@ def score_database(
     finally:
         con.close()
     return report
+
+
+def _clear_rows(con: Any, schema: str, *, has_metrics: bool) -> None:  # noqa: ANN401
+    """Delete this pass's own rows from ``schema.metrics``, if any."""
+    if not has_metrics:
+        return
+    if "scorer" not in _table_columns(con, schema, "metrics"):
+        return
+    con.execute(
+        f'DELETE FROM "{schema}"."metrics" WHERE scorer = ?',  # noqa: S608
+        [SCORER],
+    )
 
 
 def _write_rows(

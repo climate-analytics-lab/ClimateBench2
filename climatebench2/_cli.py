@@ -263,6 +263,39 @@ def substitute_reference(node: Any, reference: str, others: list[str]) -> Any:  
     return out
 
 
+def materialise_windowed_suite(
+    resolved: str,
+    out_dir: Path,
+    nominal: str,
+    data_root: Path | None,
+) -> tuple[str, dict[str, str]]:
+    """Write a copy of a suite YAML with a per-variable scored window.
+
+    The protocol's test window runs to the last complete year, but no
+    observational product is that current, and ClimateEval *drops* a reference
+    whose record stops short of the requested range rather than clipping it
+    (:mod:`climatebench2.reference_windows`) — which silently deletes the
+    variable's entire row from the scorecard. Writing the clipped window into
+    each variable stanza, and building the suite with no global
+    ``variable_kwargs['timerange']``, is what keeps those rows.
+    """
+    import yaml
+
+    from climatebench2 import reference_windows
+
+    definition = yaml.safe_load(Path(resolved).read_text(encoding="utf-8"))
+    windows_used: dict[str, str] = {}
+    windowed = reference_windows.apply_reference_windows(
+        definition,
+        nominal,
+        data_root,
+        resolved=windows_used,
+    )
+    target = out_dir / f"{Path(resolved).stem}.yml"
+    target.write_text(yaml.safe_dump(windowed, sort_keys=False), encoding="utf-8")
+    return str(target), windows_used
+
+
 def materialise_truth_suite(
     resolved: str,
     out_dir: Path,
@@ -513,7 +546,37 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
             # Only the Tier III diagnostics read it; every other complex
             # diagnostic swallows unknown kwargs (`ComplexDiagnostic._kwargs`).
             extra_kwargs["paleo_data_root"] = str(args.paleo_data_root)
-        suite = build_suite(resolved, extra_kwargs, timerange)
+
+        # Per-variable scored window. A reference that stops short of the
+        # requested range is DROPPED by ClimateEval, not clipped, so a window
+        # running to the last complete year would delete `tas` (HadCRUT5 ends
+        # 2023-09), `siconc` (HadISST 2021-12) and the clouds (ESACCI-CLOUD
+        # 2016) from the scorecard entirely. Resolve each variable's window
+        # against what is staged and carry it in the suite itself.
+        suite_timerange_kwarg: str | None = timerange
+        if timerange is not None and args.data_root is not None:
+            windowed_dir = out_dir / "_windowed_suites"
+            windowed_dir.mkdir(parents=True, exist_ok=True)
+            resolved, windows_used = materialise_windowed_suite(
+                resolved,
+                windowed_dir,
+                timerange,
+                args.data_root,
+            )
+            suite_timerange_kwarg = None
+            from climatebench2 import reference_windows
+
+            clipped = list(reference_windows.summarise(windows_used, timerange))
+            if clipped:
+                print(
+                    f"Suite '{stem}': the scored window is clipped to the "
+                    f"reference record for {len(clipped)} variable(s) —",
+                    file=sys.stderr,
+                )
+                for line in clipped:
+                    print(line, file=sys.stderr)
+
+        suite = build_suite(resolved, extra_kwargs, suite_timerange_kwarg)
 
         # (data, information) pairs to run, in order; the first writes the
         # database and the rest append into it.

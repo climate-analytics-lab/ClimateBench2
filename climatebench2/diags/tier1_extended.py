@@ -50,6 +50,8 @@ from climatebench2.diags.tier1_physics import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from iris.cube import Cube, CubeList
     from xarray import Dataset
 
@@ -71,21 +73,25 @@ def _time_keys(cube: Cube) -> np.ndarray:
     )
 
 
-def align_on_common_days(*cubes: Cube) -> list[Cube]:
-    """Cut every cube to the calendar days all of them have.
+def _month_keys(cube: Cube) -> np.ndarray:
+    """One key per time step identifying its calendar month."""
+    coord = cube.coord("time")
+    dates = coord.units.num2date(coord.points)
+    return np.array([d.year * 100 + d.month for d in dates], dtype=np.int64)
 
-    CMIP6 does not publish a model's daily variables over the same period:
-    CNRM-CM6-1 has ``day ua`` for 1990-2014 but ``day zg`` only for 2000-2014,
-    which made the geostrophic-balance gate try to correlate a 25-year field
-    with a 15-year one. Aligning on the leading axis by length would silently
-    pair 1990 winds with 2000 heights, so the alignment is by **date**.
-    """
-    keys = [_time_keys(cube) for cube in cubes]
+
+def _align_on_common_times(
+    cubes: tuple[Cube, ...],
+    key_of: Callable[[Cube], np.ndarray],
+    what: str,
+) -> list[Cube]:
+    """Cut every cube to the time steps all of them have."""
+    keys = [key_of(cube) for cube in cubes]
     common = keys[0]
     for other in keys[1:]:
         common = np.intersect1d(common, other)
     if common.size == 0:
-        msg = "The daily variables share no calendar day"
+        msg = f"The inputs share no {what}"
         raise ValueError(msg)
     aligned: list[Cube] = []
     for cube, key in zip(cubes, keys, strict=True):
@@ -98,6 +104,33 @@ def align_on_common_days(*cubes: Cube) -> list[Cube]:
         slicer[time_axis] = index
         aligned.append(cube[tuple(slicer)])
     return aligned
+
+
+def align_on_common_days(*cubes: Cube) -> list[Cube]:
+    """Cut every cube to the calendar days all of them have.
+
+    CMIP6 does not publish a model's daily variables over the same period:
+    CNRM-CM6-1 has ``day ua`` for 1990-2014 but ``day zg`` only for 2000-2014,
+    which made the geostrophic-balance gate try to correlate a 25-year field
+    with a 15-year one. Aligning on the leading axis by length would silently
+    pair 1990 winds with 2000 heights, so the alignment is by **date**.
+    """
+    return _align_on_common_times(cubes, _time_keys, "calendar day")
+
+
+def align_on_common_months(*cubes: Cube) -> list[Cube]:
+    """Cut every cube to the calendar months all of them have.
+
+    The monthly counterpart of :func:`align_on_common_days`, and needed for
+    the same reason. I.3c pairs a *precipitation* product with a *reanalysis*
+    thermodynamic profile, and the two never cover the same years: GPCP
+    starts in 1983, ERA5 in 1979, so ``reference_windows.clip_to_source``
+    hands the gate a 1983-2014 ``pr`` and a 1979-2014 ``ta``/``hus``.
+    Truncating both to the shorter length regressed GPCP 1983-2014 on ERA5
+    1979-2010 — a four-year offset that turned the observed
+    precipitation-buoyancy slope negative.
+    """
+    return _align_on_common_times(cubes, _month_keys, "calendar month")
 
 
 # ---------------------------------------------------------------------------
@@ -604,7 +637,16 @@ class PrecipBuoyancyGate(CB2ComplexDiagnostic):
             )
 
     def _slope(self, pr: Cube, ta: Cube, zg: Cube, hus: Cube) -> float:
-        """Pooled slope of P′ (mm/day) on ⟨h⟩′ (MJ/m²) over 20S–20N."""
+        """Pooled slope of P′ (mm/day) on ⟨h⟩′ (MJ/m²) over 20S–20N.
+
+        The four inputs are paired **by calendar month** first. On the model
+        side they come from one experiment and already agree, but the
+        observational reference pairs GPCP with ERA5 over records that start
+        four years apart (see :func:`align_on_common_months`), and both the
+        anomaly climatology and the pooled regression need the same months
+        on both sides.
+        """
+        pr, ta, zg, hus = align_on_common_months(pr, ta, zg, hus)
         pr, ta, zg, hus = (self._tropical_band(c) for c in (pr, ta, zg, hus))
         column, level_cube = self._column_mse(ta, zg, hus)
         _years, months = _cube_years_months(level_cube)
@@ -612,8 +654,7 @@ class PrecipBuoyancyGate(CB2ComplexDiagnostic):
         with setup_esmvaltool_config_and_logging():
             pr = anomalies(pr, period="month")
         p_anom = _filled(pr.data) * physics.SECONDS_PER_DAY  # mm/day
-        n = min(p_anom.shape[0], h_anom.shape[0])
-        return physics.pooled_regression_slope(p_anom[:n], h_anom[:n])
+        return physics.pooled_regression_slope(p_anom, h_anom)
 
     # -- the observational reference ----------------------------------------
 

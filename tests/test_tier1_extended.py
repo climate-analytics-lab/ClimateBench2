@@ -176,11 +176,12 @@ def _level_cube(
     *,
     n_years: int,
     series: np.ndarray | None = None,
+    start_year: int = 1850,
 ) -> Cube:
     """A (time, plev, lat, lon) cube, constant in height and space."""
     n_time = n_years * 12
     time = DimCoord(
-        np.arange(n_time, dtype=float) * 30.0 + 15.0,
+        np.arange(n_time, dtype=float) * 30.0 + 15.0 + (start_year - 1850) * 360.0,
         standard_name="time",
         units=Unit("days since 1850-01-01", calendar="360_day"),
     )
@@ -271,6 +272,36 @@ def test_precip_buoyancy_fails_a_slope_outside_the_tolerance(monkeypatch) -> Non
     metrics = output.metrics.to_pandas().set_index("var_id")
     assert metrics.loc["precip_buoyancy", "value"] == pytest.approx(1.0, abs=0.05)
     assert metrics.loc["precip_buoyancy", "passes"] == 0.0
+
+
+def test_precip_buoyancy_pairs_pr_and_the_column_by_calendar_month() -> None:
+    """GPCP starts four years after ERA5; the slope must still be recovered.
+
+    Regression test: ``_slope`` used to truncate both sides to the shorter
+    record's *length*, which regressed 1983-2014 precipitation on 1979-2010
+    column MSE and turned the observed reference slope of I.3c negative
+    (model/obs relative error 6.01 against a bound of 0.30).
+    """
+    n_column_years, lag_years = 12, 4
+    rng = np.random.default_rng(11)
+    anomaly = rng.normal(0.0, 1.0, n_column_years * 12)
+    common = {"n_years": n_column_years, "start_year": 1979}
+    ta = _level_cube("ta", 250.0, "K", series=anomaly, **common)
+    zg = _level_cube("zg", 5000.0, "m", **common)
+    hus = _level_cube("hus", 0.005, "1", **common)
+    # ...and a precipitation record that starts four years later, responding
+    # to the *same* months of the column anomaly.
+    pr = _monthly_cube(
+        "pr",
+        3.0e-5,
+        "kg m-2 s-1",
+        n_years=n_column_years - lag_years,
+        start_year=1979 + lag_years,
+        series=PR_PER_UNIT_TA * anomaly[lag_years * 12 :],
+    )
+    gate = PrecipBuoyancyGate("precip_buoyancy", fail_on_missing_data=False)
+    slope = gate._slope(pr, ta, zg, hus)  # noqa: SLF001
+    assert slope == pytest.approx(_expected_slope(), rel=0.02)
 
 
 def test_precip_buoyancy_without_a_reference_emits_the_model_slope(monkeypatch) -> None:  # noqa: ANN001

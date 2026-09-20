@@ -155,18 +155,43 @@ def _facets_from_filename(files: list[Path]) -> dict[str, str]:
     return {}
 
 
+def _required_var_names(variable: Variable) -> list[str]:
+    """Variable names a member must carry for ``variable`` to be loadable.
+
+    A **derived** variable (``rtnt`` = ``rsdt − rsut − rlut``) is never staged
+    itself: :meth:`climateeval.data.DataSource.get_cube` derives it from the
+    variables ESMValCore says it requires, and returns nothing unless *all* of
+    them are present. Discovering on the variable's own directory would
+    therefore yield an empty comparison ensemble for every derived variable —
+    which is how ``rtnt`` silently lost its ``E_ref``.
+    """
+    if not variable.derived:
+        return [variable.var_name]
+    try:
+        return [v.var_name for v in variable.get_required_variables()]
+    except Exception:  # noqa: BLE001 - CMOR tables unavailable
+        return [variable.var_name]
+
+
 def _discover(root: Path, variable: Variable) -> list[tuple[str, str, list[Path]]]:
     """``[(model, member, files)]`` staged for one variable, cached per root."""
     key = (str(root), variable.frequency, variable.var_name)
     if key in _DISCOVERY_CACHE:
         return _DISCOVERY_CACHE[key]
+    var_names = _required_var_names(variable)
     found: list[tuple[str, str, list[Path]]] = []
     for source_dir in sorted(root.iterdir()):
         match = _SOURCE_DIR_RE.match(source_dir.name)
         if match is None or not source_dir.is_dir():
             continue
-        var_dir = source_dir / variable.frequency / variable.var_name
-        files = sorted(var_dir.glob("*.nc")) if var_dir.is_dir() else []
+        files: list[Path] = []
+        for var_name in var_names:
+            var_dir = source_dir / variable.frequency / var_name
+            var_files = sorted(var_dir.glob("*.nc")) if var_dir.is_dir() else []
+            if not var_files:
+                files = []
+                break
+            files.extend(var_files)
         if files:
             found.append((match["model"], match["member"], files))
     _DISCOVERY_CACHE[key] = found

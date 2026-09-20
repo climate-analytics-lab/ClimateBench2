@@ -1,10 +1,29 @@
-"""Packaged protocol data tables (not model or observational data).
+"""Packaged protocol data tables, and the staged CMIP6 comparison ensemble.
 
 Anything a CB2 *score* needs that is neither a threshold nor a computation:
-today only the annual effective-radiative-forcing series that drives the
-two-layer EBM behind the pattern-scaling baseline
-(``erf_ar6_ssp245.csv``, read by :func:`climatebench2.baselines.load_erf_series`).
+the annual effective-radiative-forcing series that drives the two-layer EBM
+behind the pattern-scaling baseline (``erf_ar6_ssp245.csv``, read by
+:func:`climatebench2.baselines.load_erf_series`).
 
 Model output and observations never live here — they come from ClimateEval
-DataSources (docs/climateeval_delineation_plan.md, the ownership test).
+DataSources (docs/climateeval_delineation_plan.md, the ownership test). The one
+thing that does live here is a *discovery policy*, not data:
+:class:`~climatebench2.data.cmip6_staged.StagedCMIP6HistoricalSSP245` finds the
+CMIP6 historical+SSP2-4.5 comparison ensemble in a pre-staged root instead of
+globbing the pool, with the protocol's member policy and member cap applied at
+staging time. It yields ClimateEval data sources with ids identical to
+:class:`climateeval.data.CMIP6HistoricalSSP245`, which stays the documented
+alternative.
 """
+
+from climatebench2.data.cmip6_staged import (
+    STAGED_ROOT_ENV,
+    StagedCMIP6HistoricalSSP245,
+    staged_root,
+)
+
+__all__ = [
+    "STAGED_ROOT_ENV",
+    "StagedCMIP6HistoricalSSP245",
+    "staged_root",
+]

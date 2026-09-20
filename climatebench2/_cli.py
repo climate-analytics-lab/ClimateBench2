@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -356,6 +357,7 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
     members = _resolve_members(args)
 
     print("Loading ClimateEval (this can take a few seconds)…", file=sys.stderr)
+    from climatebench2.data import STAGED_ROOT_ENV, staged_root
     from climateeval._loader import load_cmor_dir
     from climateeval.data import DataSourceInformation
     from climateeval.diags.complex._base import ComplexDiagnostic
@@ -405,6 +407,15 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
     }
     if args.data_root is not None:
         diagnostic_kwargs["data_root_dir"] = args.data_root
+
+    # ClimateEval builds an `other_data` generator with no arguments and calls
+    # `generate(variable)` inside `SimpleDiagnostic.__init__`, before the
+    # diagnostic's data root is set, so the staged comparison ensemble can only
+    # be told where to look through the environment. Default it to --data-root;
+    # an explicit $CLIMATEBENCH2_STAGED_CMIP6_ROOT (e.g. a small subset for a
+    # smoke run) always wins.
+    if args.data_root is not None and not os.environ.get(STAGED_ROOT_ENV):
+        os.environ[STAGED_ROOT_ENV] = str(args.data_root)
 
     out_dir = args.out or Path(f"{args.name}_climatebench2")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -561,11 +572,19 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
             runs = [(load(path, timerange), info_for(label)) for label, path in chosen]
 
         if spec.window == "tier2":
+            root = staged_root(args.data_root)
             print(
-                "Note: ClimateEval's CMIP6HistoricalR1I1P1F1 comparison generator "
-                "is hard-wired to 19790101/20141231 and r1i1p1f1, so the CMIP6 "
-                "comparison rows stay empty for the post-2015 test window until "
-                "an SSP2-4.5 generator lands upstream (metrics_reference.md #13). "
+                "Note: the CMIP6 comparison ensemble of the Tier II suites is "
+                "climatebench2.data.StagedCMIP6HistoricalSSP245 — the "
+                "historical+SSP2-4.5 members staged under "
+                + (str(root) if root else "(no staged root found)")
+                + " (override with $"
+                + STAGED_ROOT_ENV
+                + "). It covers the post-2015 test window and carries "
+                "every member staged by the protocol's policy, so E_ref is "
+                "formed from several members per comparison model. Upstream's "
+                "climateeval.data.CMIP6HistoricalSSP245 is the equivalent "
+                "pool-globbing generator (identical data ids, minutes per call). "
                 "Model variables that do not cover the window are skipped, not "
                 "fatal.",
                 file=sys.stderr,
@@ -831,7 +850,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="DIR",
-        help="Directory with staged reference datasets.",
+        help=(
+            "Directory with staged reference datasets, in ClimateEval's "
+            "<data-source-id>/<frequency>/<var>/*.nc layout. It also supplies "
+            "the Tier II CMIP6 comparison ensemble "
+            "(CMIP6_<model>_historical-ssp245_<member>/... , see "
+            "climatebench2.data.StagedCMIP6HistoricalSSP245); set "
+            "$CLIMATEBENCH2_STAGED_CMIP6_ROOT to discover that ensemble in a "
+            "different directory (e.g. a small subset for a smoke run) while "
+            "still loading everything from --data-root."
+        ),
     )
     score.add_argument(
         "--paleo-data-root",

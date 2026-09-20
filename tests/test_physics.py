@@ -163,6 +163,59 @@ def test_meridional_transport_realistic_shape() -> None:
 
 
 # ---------------------------------------------------------------------------
+# I.8a sub-gridscale peak (reference implementation, not yet wired to a gate)
+# ---------------------------------------------------------------------------
+
+
+def test_parabolic_vertex_peak_recovers_off_grid_analytic_peak() -> None:
+    """A profile that *is* a parabola: the 3-point fit must be exact.
+
+    Peak at 41.3°N, strictly between the 2° grid lines at 40 and 42 — the
+    quantisation I.8a's `amet_peak_lat`/`omet_peak_lat` gate columns show on
+    real data (only 39.0/41.0°N across 43 models).
+    """
+    lats = np.arange(0.0, 60.0, 2.0)
+    true_peak_lat = 41.3
+    true_peak_value = 4.62
+    profile = true_peak_value - 0.01 * (lats - true_peak_lat) ** 2
+    value, lat = physics.parabolic_vertex_peak(profile, lats, 25.0, 55.0)
+    assert lat == pytest.approx(true_peak_lat, abs=1e-9)
+    assert value == pytest.approx(true_peak_value, abs=1e-9)
+
+    # The un-refined grid-cell argmax would instead quantise to 42°N.
+    mask = (lats >= 25.0) & (lats <= 55.0)
+    band_lats, band_profile = lats[mask], profile[mask]
+    grid_lat = float(band_lats[np.argmax(band_profile)])
+    assert grid_lat == pytest.approx(42.0)
+
+
+def test_parabolic_vertex_peak_falls_back_at_band_edge() -> None:
+    """Peak on the boundary of the search band: no far neighbour, no vertex."""
+    lats = np.arange(0.0, 60.0, 2.0)
+    profile = lats.copy()  # monotonic within the band: maximum at its upper edge
+    value, lat = physics.parabolic_vertex_peak(profile, lats, 26.0, 54.0)
+    assert lat == pytest.approx(54.0)
+    assert value == pytest.approx(54.0)
+
+
+def test_parabolic_vertex_peak_falls_back_on_flat_top() -> None:
+    """Collinear/flat neighbours: no well-defined vertex, use the grid point."""
+    lats = np.arange(0.0, 60.0, 2.0)
+    profile = np.full_like(lats, 3.0)
+    value, lat = physics.parabolic_vertex_peak(profile, lats, 25.0, 55.0)
+    assert value == pytest.approx(3.0)
+    assert 25.0 <= lat <= 55.0
+
+
+def test_parabolic_vertex_peak_empty_band_is_nan() -> None:
+    lats = np.arange(0.0, 60.0, 2.0)
+    profile = np.zeros_like(lats)
+    value, lat = physics.parabolic_vertex_peak(profile, lats, 1000.0, 2000.0)
+    assert np.isnan(value)
+    assert np.isnan(lat)
+
+
+# ---------------------------------------------------------------------------
 # I.8b ITCZ-EFE
 # ---------------------------------------------------------------------------
 

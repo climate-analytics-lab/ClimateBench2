@@ -234,6 +234,68 @@ def meridional_transport(
     return out
 
 
+def parabolic_vertex_peak(
+    profile: np.ndarray,
+    lats: np.ndarray,
+    lat_min: float,
+    lat_max: float,
+) -> tuple[float, float]:
+    """Sub-gridscale (peak value, peak latitude) within a latitude band.
+
+    Same interface and band convention as ClimateEval's
+    ``MeridionalHeatTransport._nh_peak`` (``climateeval/diags/complex/_transport.py``),
+    which returns the grid-cell argmax verbatim — on the protocol's common 2°
+    grid that quantises the reported peak latitude to whichever grid line it
+    lands on (I.8a decision E.3: on the real Tier I ensemble, ``amet_peak_lat``
+    takes only 39.0/41.0°N across 43 models and ``omet_peak_lat`` six values,
+    all multiples of the grid spacing). This function fits a parabola through
+    the argmax and its two neighbours and returns the vertex instead, so two
+    models whose true peaks differ by a fraction of a grid cell are not
+    reported as identical (or on opposite sides of a bound that happens to
+    fall between two grid lines).
+
+    Falls back to the plain grid-cell (value, latitude) — never NaN — when the
+    argmax sits at an edge of the band (no far neighbour) or the three points
+    are collinear/flat (no well-defined vertex), exactly the cases
+    ``_nh_peak`` itself returns.
+
+    Not called by any CB2 gate: ``MeridionalHeatTransportGate`` is a thin
+    wrapper over ``MeridionalHeatTransport``, which computes this peak
+    internally and only returns the scalar (value, latitude) pair — CB2 never
+    sees the underlying zonal-mean transport profile, so refining the peak
+    here would mean recomputing that profile a second time in CB2, exactly
+    the duplicated-physics pattern the thin-wrapper architecture avoids
+    (``CLAUDE.md`` "ownership test"). Kept as a ready-to-hand-upstream
+    reference implementation for a ClimateEval PR that would replace
+    ``_nh_peak``'s body with this and expose the two extra columns.
+    """
+    profile = np.asarray(profile, dtype=float)
+    lats = np.asarray(lats, dtype=float)
+    mask = (lats >= lat_min) & (lats <= lat_max)
+    if not mask.any():
+        return float("nan"), float("nan")
+    band_lats = lats[mask]
+    band_profile = profile[mask]
+    i = int(np.nanargmax(band_profile))
+    peak_value, peak_lat = float(band_profile[i]), float(band_lats[i])
+    if i == 0 or i == band_profile.size - 1:
+        return peak_value, peak_lat  # no far neighbour: report the grid cell
+    y0, y1, y2 = band_profile[i - 1], band_profile[i], band_profile[i + 1]
+    x0, x2 = band_lats[i - 1], band_lats[i + 1]
+    denom = y0 - 2.0 * y1 + y2
+    if not np.isfinite(denom) or denom == 0.0:
+        return peak_value, peak_lat  # flat/collinear: no vertex to fit
+    # Standard 3-point parabolic interpolation (Jain's peak-refinement
+    # formula), in grid steps of the *local* spacing (band_lats need not be
+    # exactly uniform at the ends of a regridded profile).
+    h = 0.5 * (x2 - x0)
+    delta = 0.5 * (y0 - y2) / denom
+    return (
+        float(y1 - 0.25 * (y0 - y2) * delta),
+        float(peak_lat + delta * h),
+    )
+
+
 def zero_crossing_nearest_equator(
     profile: np.ndarray,
     lats: np.ndarray,

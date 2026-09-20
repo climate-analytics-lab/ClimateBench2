@@ -137,6 +137,13 @@
 # against an ERA5Monthly PLACEHOLDER reference of the wrong frequency; the
 # `extremes` entry above is its protocol-conforming successor and it stays
 # only as a familiar deterministic display.
+#
+# Note it is also the one live stanza in any CB2 suite still naming upstream's
+# single-member `CMIP6HistoricalR1I1P1F1` in other_data -- every Tier II core
+# variable uses `climatebench2.data.StagedCMIP6HistoricalSSP245` instead (see
+# ClimateBench2_TierII.yml). Harmless while this entry is a deterministic
+# display that the scoring pass does not score, but it is not the comparison
+# ensemble E_ref is taken over, so do not read a number here as a skill.
 - name: tas_annual_max
   diagnostic: climatebench2.diags.ScoredAnnualMaxTimeSeries
   variables:

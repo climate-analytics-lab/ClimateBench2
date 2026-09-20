@@ -50,7 +50,7 @@ tier1:
   atm_energy_budget:
     tier: I
     requirement: required
-    residual_abs_max: 2.0              # W m-2, |L·P − (Q_rad + SHF)|
+    residual_abs_max: 2.0              # W m-2, |Q_rad − (L·P + SHF)|
 
   # I.3a Clear-sky LW feedback (gridpoint ∂rlutcs/∂Ts, historical)
   clear_sky_lw_feedback:

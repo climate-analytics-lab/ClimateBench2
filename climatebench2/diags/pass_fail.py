@@ -34,20 +34,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import ibis
 import numpy as np
 import pandas as pd
-from esmvalcore.preprocessor import (
-    anomalies,
-    area_statistics,
-    extract_region,
-    regrid,
-    regrid_time,
-)
 from loguru import logger
 from scipy import signal
 
-from climateeval._config import setup_esmvaltool_config_and_logging
-from climateeval._variable import COORDINATES
 from climateeval.diags._base import DiagnosticOutput
-from climateeval.diags._utils import DEFAULT_GRID
 from climateeval.diags.simple import Nino34
 
 from climatebench2._thresholds import get_threshold
@@ -481,40 +471,13 @@ class ENSOGate(GateMixin, Nino34):
     """
 
     # No 3-month running mean: gate the raw monthly anomalies (paper I.5a/b).
+    # ClimateEval PR #46 made `_rolling_window_length = 1` a supported no-op in
+    # `Nino34._preprocess` (iris refuses a rolling window shorter than two
+    # points, so before that the unsmoothed index could not be expressed
+    # upstream and CB2 carried a copy of the chain). It is merged, so setting
+    # the ClassVar is the whole override.
     _rolling_window_length: ClassVar[int] = 1
 
     # The Nino34 suite entry uses variable id `tos_nino34` (kept for
     # compatibility with ClimateEval's Tier2_ocean_monthly stanza).
     _gate_checks = _enso_checks("tos_nino34")
-
-    def _preprocess(self, cube: Any, variable: Any) -> Any:
-        """Niño-3.4 index, running mean applied only if it has ≥ 2 points.
-
-        Mirrors ``Nino34._preprocess`` (same region, same deseasonalisation,
-        same output calendar) minus the smoothing step: iris refuses a
-        rolling window shorter than two points, so the upstream chain cannot
-        express the paper's *unsmoothed* monthly index. **ClimateEval PR #46**
-        (https://github.com/climate-federation/ClimateEval/pull/46) makes
-        ``window_length = 1`` a no-op upstream; once it merges this override
-        goes and only the ClassVar remains.
-        """
-        if self._rolling_window_length >= 2:
-            return super()._preprocess(cube, variable)  # type: ignore[misc]
-        with setup_esmvaltool_config_and_logging():
-            cube = regrid(cube, DEFAULT_GRID, "linear", cache_weights=True)
-            cube = extract_region(
-                cube,
-                start_longitude=self._start_longitude,
-                end_longitude=self._end_longitude,
-                start_latitude=self._start_latitude,
-                end_latitude=self._end_latitude,
-            )
-            cube = anomalies(cube, period="month")
-            cube = area_statistics(cube, "mean")
-            cube = regrid_time(
-                cube,
-                frequency="mon",
-                calendar="standard",
-                units=COORDINATES["time"]["units"],
-            )
-        return cube

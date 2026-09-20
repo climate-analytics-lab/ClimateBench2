@@ -1,10 +1,12 @@
 # ClimateBench2 ⟷ ClimateEval — Delineation Plan
 
-> **Status (2026-09-14):** Phases 0–7 implemented — Phases 0–6 one commit per
+> **Status (2026-09-20):** Phases 0–7 implemented — Phases 0–6 one commit per
 > phase (`git log --oneline --grep "Phase"`), **Phase 7 (protocol
 > re-alignment, §6 below)** in the ~20 commits of the metrics-reference gap
 > list (`git log --oneline 0998a87..d21be52`) plus the consistency pass that
-> followed it. **314 tests pass** in ClimateEval's pixi env. The §7 upstream
+> followed it — and then the sixteen commits of the **first real-data runs**
+> (`git log --oneline main..paper-figures-2026-09`). **333 tests pass** in
+> ClimateEval's pixi env. The §7 upstream
 > track has paid off:
 > ClimateEval `main` (`b0e941c`) merged CB2's PR #35
 > (`LandOceanWarmingRatio`, `ArcticAmplification`, `MeridionalHeatTransport`
@@ -27,9 +29,18 @@
 > the last bullet of §9 below. Tier III is wired to the paleo pipeline's own
 > NetCDFs and scores the paper's fair CRPS; the perfect-model half of Tier III
 > exists as a code path (`score --truth DIR`) with no data staged.
-> **Twelve ClimateEval PRs (#44–#55) are open and none is merged** (§7), so the
-> pin stays at `b0e941c`; nothing in CB2 has yet been run against real model or
-> observational data.
+> **The twelve ClimateEval PRs (#44–#55) are all merged LOCALLY** on the
+> ClimateEval branch `cb2-integration` (`f8c925b` = `main` `b0e941c` + the
+> twelve) **and all still open upstream** (§7), so **the pin in
+> `pyproject.toml` stays at `b0e941c`** — an installed CB2 gets `main`, the
+> real runs get the integration branch.
+> **CB2 has now been run against real data:** Tier I end to end on CNRM-CM6-1
+> (every Required gate produces a row) and Tier II on MPI-ESM1-2-LR against a
+> staged 42-model / 160-member CMIP6 comparison ensemble, with the 64-model
+> Tier I ensemble and the full Tier II comparison run in flight. Eight of the
+> sixteen commits on this branch are "Real-data fix"; see "What has run on real
+> data" in [`metrics_reference.md`](metrics_reference.md) for the numbers, the
+> caveats and the four protocol questions the runs raised.
 
 **Purpose.** Turn ClimateBench2 (CB2) into a *thin protocol layer* that runs on top of
 [ClimateEval](https://github.com/climate-federation/ClimateEval), so CB2 owns only the
@@ -145,7 +156,7 @@ the same environment. The wiring, all confirmed against ClimateEval `main`:
 
 ---
 
-## 4. CB2 repository layout (as built, 2026-09-14)
+## 4. CB2 repository layout (as built, 2026-09-20)
 
 `tree climatebench2 -I __pycache__`, annotated:
 
@@ -171,9 +182,13 @@ climatebench2/                 # the installable package
 ├── scoring.py                 # the engine (numpy only): fair CRPS, ESS, block bootstrap, EOF, proxy CRPS, Perkins
 ├── scoring_pass.py            # post-suite pass: stack members by name -> fair CRPS -> skill vs the CMIP6 median
 ├── windows.py                 # every window the protocol names, resolved in one place
+├── reference_windows.py       # the window each variable is REALLY scored over: the protocol
+│                              #   window clipped to the staged reference's complete years
 ├── physics.py                 # pure Tier I physics (numpy only)
 ├── baselines.py               # climatology pseudo-members; calibrated two-layer EBM + its pseudo-members
 ├── data/                      # packaged protocol tables (erf_ar6_ssp245.csv — the EBM's forcing)
+│   └── cmip6_staged.py        #   + StagedCMIP6HistoricalSSP245 — the CMIP6 comparison
+│                              #     ensemble behind E_ref, enumerated in a staged root
 ├── leaderboard/               # thin renderer: .ddb -> scores table -> static HTML page
 └── _cli.py                    # `climatebench2 score` / `climatebench2 leaderboard`; SUITE_REGISTRY
 pyproject.toml                 # pins climateeval by commit; entry point climatebench2 = climatebench2._cli:main
@@ -381,34 +396,46 @@ diagnostics). If accepted, CB2 drops the code and just references the class path
 
 Decouple this track from the migration: CB2 works whether or not any PR merges.
 
-**Open as of 2026-09-14 — twelve PRs, none merged**
-(`https://github.com/climate-federation/ClimateEval/pull/N`). The pin therefore stays
-at `b0e941c`. Merge order matters in one place: **#44 before #45** (they add generators
-to the same module — an additive conflict), and **#49 before #53**. GitHub Actions did
-not trigger on any of them, so each was validated only by local `pixi` tests plus
-`ruff`/pre-commit — worth saying explicitly when chasing review.
+**Status 2026-09-20 — twelve PRs, all merged on `cb2-integration`, all still open
+upstream** (`https://github.com/climate-federation/ClimateEval/pull/N`). The integration
+branch is `f8c925b` = `main` `b0e941c` + the twelve, plus two follow-up fixes
+(coordinate metadata reconciled before concatenating time-split files; a suppressed
+warning for two timeless fields sharing a name). That is what the real runs use. **The
+pin in `pyproject.toml` stays at `b0e941c`**, because a pin may only name a commit that
+exists upstream — so an installed CB2 gets `main` and CB2 must keep working against it.
+Merge order mattered in one place and was honoured locally: **#44 before #45** (they add
+generators to the same module — an additive conflict), and **#49 before #53**. GitHub
+Actions did not trigger on any of them, so each was validated only by local `pixi` tests
+plus `ruff`/pre-commit — worth saying explicitly when chasing review, though all twelve
+are now also exercised by the real runs.
 
-| PR | What it adds upstream | CB2 category |
-|---|---|---|
-| #44 | `CMIP6HistoricalSSP245` multi-member generator (+ `CMIP6HistoricalAllMembers`) | data source — **the blocking one** |
-| #45 | hist-aer / amip / amip-4xCO2 / lgm / midHolocene / lig127k generators | data source (merge after #44) |
-| #46 | `Nino34` accepting `window_length = 1` | diagnostic fix |
-| #47 | `SeaIceExtent*` diagnostics (15 % threshold) | generic diagnostic |
-| #48 | ERA5 `zg` / `ts` | data source |
-| #49 | GISTEMP / BerkeleyEarth / NOAAGlobalTemp / CRU sources (+ the `tasa` variable) | data source |
-| #50 | Tier I energy-budget/covariance diagnostics — `EnergyBalance`, `BudgetClosure`, `ClearSkyLongwaveFeedback`, `PrecipitationBuoyancy`, `ClausiusClapeyronScaling` | generic physics **out of CB2** |
-| #51 | dynamics/variability — `GeostrophicBalance`, `MJOEastWestPowerRatio`, `ITCZEnergyFluxEquator`, `BjerknesCompensation`, `ENSOTeleconnectionPatterns` | generic physics **out of CB2** |
-| #52 | forcing — `Amip4xCO2ERF`, `GFMIPPatchFeedback`, `AerosolERF` + a branch-time helper | generic physics **out of CB2** |
-| #53 | HadEX3 + ESACCISeaIceNH/SH (depends on #49) | data source |
-| #54 | `ERA5Daily` | data source |
-| #55 | `LocalCMORDataSource` | data source |
+**Merged is not staged.** Several of these add a DataSource whose data is not in the
+staged root, so the CB2-side gap they were opened to close is still open: ERA5 `zg`/`ts`
+(#48), the other GMST products and CRU TS (#49), HadEX3 and ESACCI sea ice (#53),
+`ERA5Daily` (#54) and the PMIP4 generators (#45) all have nothing to read yet.
+
+| PR | What it adds upstream | CB2 category | Taken up? |
+|---|---|---|---|
+| #44 | `CMIP6HistoricalSSP245` multi-member generator (+ `CMIP6HistoricalAllMembers`) | data source | **No, deliberately** — CB2 uses `climatebench2.data.StagedCMIP6HistoricalSSP245`, which enumerates a staged root instead of globbing the pool per (diagnostic, variable), keeps f2/f3 models, caps members and never reaches the network, and emits identical data-source ids |
+| #45 | hist-aer / amip / amip-4xCO2 / lgm / midHolocene / lig127k generators | data source | Merged, **no pool staged** |
+| #46 | `Nino34` accepting `window_length = 1` | diagnostic fix | **Yes** — `ENSOGate._preprocess` deleted (`224a133`) |
+| #47 | `SeaIceExtent*` diagnostics (15 % threshold) | generic diagnostic | **Yes** — the sea-ice stanzas score extent (`b9f4952`) |
+| #48 | ERA5 `zg` / `ts` | data source | Merged, **not staged** (CDS download); `ts` uses MERRA2, I.3c keeps its hydrostatic fallback |
+| #49 | GISTEMP / BerkeleyEarth / NOAAGlobalTemp / CRU sources (+ the `tasa` variable) | data source | Merged, **not staged** |
+| #50 | Tier I energy-budget/covariance diagnostics — `EnergyBalance`, `BudgetClosure`, `ClearSkyLongwaveFeedback`, `PrecipitationBuoyancy`, `ClausiusClapeyronScaling` | generic physics **out of CB2** | Merged; CB2 copies **not retired** (needs the pin, needs the upstream merge) |
+| #51 | dynamics/variability — `GeostrophicBalance`, `MJOEastWestPowerRatio`, `ITCZEnergyFluxEquator`, `BjerknesCompensation`, `ENSOTeleconnectionPatterns` | generic physics **out of CB2** | Same. ⚠ CB2's I.3b/I.3c were fixed on 2026-09-20 *after* this PR was opened; carry those fixes upstream first |
+| #52 | forcing — `Amip4xCO2ERF`, `GFMIPPatchFeedback`, `AerosolERF` + a branch-time helper | generic physics **out of CB2** | Same |
+| #53 | HadEX3 + ESACCISeaIceNH/SH (depends on #49) | data source | Merged, **not staged** — the ETCCDI extremes stay unscored |
+| #54 | `ERA5Daily` | data source | Merged, **not staged** |
+| #55 | `LocalCMORDataSource` | data source | Merged; `diags/truth_reference.py` **not retired** (same pin argument) |
 
 #50–#52 are the substance of this section: they are exactly the "generic physical
-diagnostics with no CB2-specific threshold" listed above, and when they merge CB2
-deletes its copies in `diags/tier1_physics.py` and `diags/tier1_extended.py` and keeps
-only `GateMixin` wrappers, as it already does for ECS. `metrics_reference.md`
-§"Implementation synchronisation" carries the per-PR table of what each one unblocks
-and what CB2 changes on merge.
+diagnostics with no CB2-specific threshold" listed above, and when they merge
+**upstream** CB2 deletes its copies in `diags/tier1_physics.py` and
+`diags/tier1_extended.py` and keeps only `GateMixin` wrappers, as it already does for
+ECS. Until then the copies stay, because the deletion needs a pin bump and the pin can
+only name an upstream commit. `metrics_reference.md` §"Implementation synchronisation"
+carries the per-PR table of what each one unblocks and what CB2 did with it.
 
 ---
 
@@ -426,36 +453,59 @@ and what CB2 changes on merge.
    (rmse/pearson/emd). CB2 scores add *score + p-value + pass-flag + baseline-relative +
    provenance*. Extend via extra columns in CB2 diagnostics' `metrics` table (no
    ClimateEval change) and teach the CB2 leaderboard to read them.
-3. **Daily / non-CMIP data paths.** Geostrophic balance, MJO, extremes, pr PDF need
-   `day`-table data; GFMIP/perfect-model need submission-provided non-archive output.
-   ClimateEval's subdaily suite + CMORizer DataSource are the templates; validate early.
+3. **Daily / non-CMIP data paths.** *Half resolved, 2026-09-20.* Geostrophic balance
+   (I.3b) has now run on a real `day`-table DRS tree — CNRM-CM6-1, ρ = 0.985 — and cost
+   two fixes on the way: daily variables are **not** published over the same period per
+   model (`ua` 1990–2014 vs `zg` 2000–2014, so cubes must be paired on calendar dates,
+   never by position) and a masked pressure level read with `np.asarray` exposes the
+   file's 1e20 fill value. Still unvalidated: the MJO gate (needs daily `pr`), the
+   extremes and pr PDF (no daily observational product staged), and the memory footprint
+   of many decades of daily 3-D fields. GFMIP and perfect-model still need
+   submission-provided non-archive output, and none is staged.
 4. **Version pinning.** Pin `climateeval` (it's `0.0.1`, pre-1.0, API may move). Track a
    known-good commit in `pyproject.toml`; CI runs CB2 suites against the pinned version.
-5. **`metrics_reference.md` unresolved specs** (energy-balance ≥100 vs ≥500 yr; Bjerknes
-   & C-C not in the paper's Tier I list) are paper decisions, not code — resolve in the
-   protocol, then encode in `thresholds.yml`.
+   *Live tension, 2026-09-20:* the pin is `b0e941c` (`main`) while the real runs use
+   `cb2-integration` (`f8c925b`), because the twelve PRs are merged locally and open
+   upstream. Everything CB2 does must therefore keep working against `main`: the Tier II
+   comparison ensemble is CB2's own `StagedCMIP6HistoricalSSP245` rather than upstream's
+   #44 generator, and the #50–#52 physics copies cannot be deleted yet.
+5. **`metrics_reference.md` unresolved specs** are paper decisions, not code — resolve in
+   the protocol, then encode in `thresholds.yml`. The 2026-09-20 runs added four
+   (metrics_reference "Decisions needed from Duncan", group E): I.3a's interannual
+   gridpoint slope cannot reach the paper's ±25 % window, I.1's 0.1 W m⁻² bound will fail
+   most CMIP6 models and the 2° regrid biases the global mean by +0.05, the AMET
+   peak-latitude window is about one grid cell wide, and I.3c's ±30 % is a tight bound on
+   a statistic with r ≈ 0.1 whose two sides are computed over different decades. Bjerknes
+   and C–C are still absent from the paper's Tier I list (tagged `extra` in the meantime).
 
 ---
 
 ## 9. Definition of done
 
-Each bullet marked against the tree at `d21be52` (2026-09-14).
+Each bullet marked against the tree at `52d2e50` (2026-09-20).
 
-- 🟡 **Partly met.** `pip install climatebench2` (with `climateeval`) →
+- ✅ **Met.** `pip install climatebench2` (with `climateeval`) →
   `climatebench2 score <model>` runs all three tiers and writes one `.ddb`;
   `climatebench2 leaderboard *.ddb` renders the page. *The CLI, the packaging and all
   six suites are verified (every suite YAML, `thresholds.yml` and `data/*.csv` resolve
   through `importlib.resources`; `tests/test_suites.py` builds every diagnostic of
-  every suite in `SUITE_REGISTRY`), but the end-to-end run has only ever been exercised
-  on synthetic cubes and databases — never on real CMIP6 or observational data.*
+  every suite in `SUITE_REGISTRY`), and since 2026-09-20 the end-to-end run has been
+  exercised on **real** CMIP6 and observational data: Tier I on CNRM-CM6-1 and Tier II
+  on MPI-ESM1-2-LR against a staged 42-model / 160-member comparison ensemble. The
+  test fixtures are still synthetic, so the suite alone still proves nothing about a
+  real run — but eight of them are now regressions from bugs the real runs found.*
 - 🟡 **Partly met.** No data-loading, regridding, or generic-diagnostic code remains in
   CB2 — only `diags/` (thresholds + scoring), `suites/`, `thresholds.yml`,
-  `leaderboard/`, docs. *No CB2 code loads or regrids data: everything enters through
-  `climateeval._loader.load_cmor_dir` and ClimateEval DataSources, and the one
-  exception is a declared upstream candidate (`diags/truth_reference.py`, PR #55).
-  Generic **physics** does still live here — the diagnostics of upstream PRs #50–#52 —
-  and leaves when those merge (§7). `paleo_scripts/` reads NetCDFs directly, but it is
-  data preparation, not protocol.*
+  `leaderboard/`, docs. *No CB2 code loads or regrids **model** data: everything enters
+  through `climateeval._loader.load_cmor_dir` and ClimateEval DataSources. Three
+  exceptions, each declared: `diags/truth_reference.py` (upstream candidate, PR #55 —
+  merged upstream-locally, not yet retired here because that needs the pin);
+  `data/cmip6_staged.py`, which enumerates a staged directory tree to build the Tier II
+  comparison ensemble and is deliberately CB2's rather than upstream's (§7, #44); and
+  `reference_windows.py`, which reads NetCDF **headers** — not data — to find out what
+  window a reference can actually support. Generic **physics** does still live here —
+  the diagnostics of upstream PRs #50–#52 — and leaves when those merge upstream (§7).
+  `paleo_scripts/` reads NetCDFs directly, but it is data preparation, not protocol.*
 - ✅ **Met.** `benchmark_scrips/`, `download_scripts/`, `constants.py`, `utils.py`,
   `esmvaltool/`, `_to_delete_git_litter/` are gone — the last four with **work
   package 7** (2026-09-14), together with `env.yml`, the legacy conda
@@ -469,11 +519,19 @@ Each bullet marked against the tree at `d21be52` (2026-09-14).
   diagnostic or an explicitly-tracked gap — nothing silently dropped. Tier I now has a
   diagnostic for all 16 Table-1 rows (18 sub-checks); every Tier II and Tier III row
   carries a status, and the unscoreable ones write a machine-readable `reason` rather
-  than going quiet. The audit trail is the discrepancy list (#1–#21) and the gap list
+  than going quiet. The audit trail is the discrepancy list (#1–#23) and the gap list
   (items 0–8), each entry carrying DONE + hash, PARTIAL, or OPEN + what blocks it.
-- ⚠ **Not met, and the honest headline:** nothing has been run on real data. Tier III's
-  perfect-model half (§III.2) has never had data to run on; the Tier II skill numbers
-  stay empty until a post-2015 multi-member CMIP6 reference exists upstream (PR #44);
-  a handful of protocol constants are still provisional or `null`. All of it is tracked
-  in the gap list rather than hidden — see "What is left to run against CMIP6" and
-  "Decisions needed from Duncan" in `metrics_reference.md`.
+- 🟡 **Partly met, and the honest headline:** the protocol has now met real data, but
+  only in part. **Run:** Tier I end to end on CNRM-CM6-1 (every Required gate produces
+  a row) and Tier II on MPI-ESM1-2-LR with a real `E_ref` over 42 staged models and 160
+  members; the 64-model Tier I ensemble and the full Tier II comparison run are in
+  flight. **Not run:** Tier III's perfect-model half (§III.2), which still has no
+  CESM2 / MPI-ESM / GISS-E2 / CESM-LE staged; Tier III's paleo stanzas against a real
+  PMIP4 experiment; the fixed-SST gates I.4a/b. **Scored against stand-ins:** `tos` vs
+  EN4 rather than ESACCI-SST, `ts` vs MERRA-2, `siconc` vs HadISST — each because the
+  protocol's own product is not staged. **Still provisional or `null`:** every
+  `tier2.obs_sigma` value, the GSAT blending factor, the packaged ERF table,
+  `tier3.block_years`/`spinup_years`, the LE variance-ratio bound. And the runs raised
+  four *protocol* questions (group E) that no code change can settle. All of it is
+  tracked rather than hidden — see "What has run on real data" and "Decisions needed
+  from Duncan" in `metrics_reference.md`.

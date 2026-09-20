@@ -119,6 +119,19 @@ class _ReferenceWindowDiagnostic(SimpleDiagnostic):
         timerange: str,
     ) -> Cube | None:
         """Load one reference over ``timerange``; ``None`` (logged) if absent."""
+        from climatebench2 import reference_windows
+
+        # A reference whose record stops inside the requested window is
+        # dropped by ClimateEval rather than clipped, so ask for the part that
+        # is staged; `_covers_window` still rejects a record that is too short
+        # to carry the statistic.
+        timerange = reference_windows.clip_to_source(
+            timerange,
+            self.data_root_dir,
+            source.id,
+            variable.frequency,
+            variable.var_name,
+        )
         try:
             return source.get_cube(
                 self.data_root_dir,

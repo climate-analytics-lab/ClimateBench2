@@ -145,6 +145,42 @@ def _source_id(class_path: str) -> str | None:
         return None
 
 
+def clip_to_coverage(nominal: str, coverage: tuple[int, int] | None) -> str:
+    """``nominal`` narrowed to ``coverage``; unchanged if that is impossible."""
+    if coverage is None:
+        return nominal
+    first = max(int(nominal.split("/")[0][:4]), coverage[0])
+    last = min(int(nominal.split("/")[1][:4]), coverage[1])
+    if first > last:
+        # The reference does not reach the window at all; leave the nominal
+        # window so the ordinary missing-data warning names the real problem.
+        return nominal
+    return windows.timerange(first, last)
+
+
+def clip_to_source(
+    nominal: str,
+    data_root: Path | str | None,
+    source_id: str,
+    frequency: str,
+    var_name: str,
+) -> str:
+    """``nominal`` narrowed to what one staged data source actually holds.
+
+    The diagnostics that fetch an observational record themselves (the Tier II
+    aggregated scalars, the reference-window diagnostics) ask for a window that
+    ends at the last complete year, which no product reaches; without this they
+    get a ``MissingDataError`` and fall back to "the model's own scalars, which
+    the scoring pass then cannot score".
+    """
+    if data_root is None:
+        return nominal
+    coverage = source_coverage(data_root, source_id, frequency, var_name)
+    if coverage is None:
+        coverage = _derived_coverage(data_root, source_id, frequency, var_name)
+    return clip_to_coverage(nominal, coverage)
+
+
 def resolve_variable_timerange(
     variable: dict[str, Any],
     nominal: str,
@@ -178,18 +214,7 @@ def resolve_variable_timerange(
             str(frequency),
             str(var_name),
         )
-    if coverage is None:
-        return nominal
-
-    first_nominal = int(nominal.split("/")[0][:4])
-    last_nominal = int(nominal.split("/")[1][:4])
-    first = max(first_nominal, coverage[0])
-    last = min(last_nominal, coverage[1])
-    if first > last:
-        # The reference does not reach the window at all; leave the nominal
-        # window so the ordinary missing-data warning names the real problem.
-        return nominal
-    return windows.timerange(first, last)
+    return clip_to_coverage(nominal, coverage)
 
 
 def apply_reference_windows(

@@ -165,9 +165,24 @@ class ObservedScalarMixin:
         every statistic below is an anomaly against the protocol's own
         baseline window and the two differ by a constant.
         """
+        from climatebench2 import reference_windows
+
+        data_root = self.data_root_dir  # type: ignore[attr-defined]
+        product = (source or self._observation_source)()
+        # The observational products lag: HadCRUT5 stops in 2023-09, so a
+        # window running to the last complete year raises MissingDataError and
+        # the whole scalar falls back to "model only, unscorable". Ask for what
+        # is actually staged instead (climatebench2.reference_windows).
+        timerange = reference_windows.clip_to_source(
+            timerange,
+            data_root,
+            product.id,
+            "mon",
+            var_name,
+        )
         variable = Variable(var_name, var_name, "mon", timerange=timerange)
-        return (source or self._observation_source)().get_cube(
-            self.data_root_dir,  # type: ignore[attr-defined]
+        return product.get_cube(
+            data_root,
             variable,
             download_missing_data=self._download_missing_data,  # type: ignore[attr-defined]
         )

@@ -34,11 +34,13 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import ibis
 import numpy as np
 import pandas as pd
+from iris.exceptions import ConstraintMismatchError
 from loguru import logger
 from scipy import signal
 
 from climateeval.diags._base import DiagnosticOutput
 from climateeval.diags.simple import Nino34
+from climateeval.exceptions import MissingDataError
 
 from climatebench2._thresholds import get_threshold
 
@@ -363,8 +365,17 @@ class SupersetExperimentMixin:
             )
             raise ValueError(msg)
 
+    def _empty_output(self) -> DiagnosticOutput:
+        """No rows at all — the Suite skips ``None`` tables."""
+        return DiagnosticOutput(
+            raw_output=None,
+            metrics=None,
+            variables=None,  # type: ignore[arg-type]
+            data_sources=None,  # type: ignore[arg-type]
+        )
+
     def get_output(self, data: Any, data_information: Any) -> DiagnosticOutput:
-        """Run the diagnostic; degrade to an empty output on missing keys."""
+        """Run the diagnostic; degrade to an empty output on missing data."""
         if self.declared_not_applicable:
             logger.info(
                 f"Gate '{self.name}' declared not applicable for "  # type: ignore[attr-defined]
@@ -377,13 +388,23 @@ class SupersetExperimentMixin:
             if self._fail_on_missing_data:  # type: ignore[attr-defined]
                 raise
             logger.warning(f"Skipping gate '{self.name}': {exc}")  # type: ignore[attr-defined]
-            return DiagnosticOutput(
-                raw_output=None,
-                metrics=None,
-                variables=None,  # type: ignore[arg-type] - Suite skips None tables
-                data_sources=None,  # type: ignore[arg-type]
+            return self._empty_output()
+        try:
+            return super().get_output(data, data_information)  # type: ignore[misc]
+        except (ConstraintMismatchError, MissingDataError) as exc:
+            # A VARIABLE the diagnostic wants is absent from an experiment
+            # that *was* supplied — e.g. the Tier II submission carries the
+            # nine core variables but not `rsds` (the Pinatubo dimming flag)
+            # or `clt` (the low-cloud covariance). Missing-key handling above
+            # covers a missing experiment; this covers a missing variable
+            # inside one, which otherwise aborts the whole suite mid-run.
+            if self._fail_on_missing_data:  # type: ignore[attr-defined]
+                raise
+            logger.warning(
+                f"Skipping gate '{self.name}': a required variable is absent "  # type: ignore[attr-defined]
+                f"from the data given ({exc})",
             )
-        return super().get_output(data, data_information)  # type: ignore[misc]
+            return self._empty_output()
 
 
 # ---------------------------------------------------------------------------

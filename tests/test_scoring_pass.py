@@ -1396,3 +1396,22 @@ def test_only_the_listed_suite_entries_are_scored_as_anomalies() -> None:
     assert not scoring_pass.windows.scores_anomalies("tas_annual_max")
     assert not scoring_pass.windows.scores_anomalies("enso_gate")
     assert not scoring_pass.windows.scores_anomalies("")
+
+
+def test_a_float32_raw_output_column_is_anomalised(tmp_path) -> None:  # noqa: ANN001, ARG001
+    """ClimateEval writes float32; pandas refuses a float64 anomaly into one.
+
+    Found on the real Tier II database (`tas` is float32 there), not by any
+    synthetic fixture: the assignment raised
+    ``TypeError: Invalid value '[...]' for dtype 'float32'`` and took the
+    whole scoring pass down.
+    """
+    raw, sources = _offset_tables(5.0, 108)
+    raw = raw.astype({"tas": "float32"})
+    rows = pd.DataFrame(
+        score_raw_output(raw, sources, settings=FAST, diagnostic=DIAGNOSTIC),
+    )
+    submission = _submission(rows)
+    assert submission["reason"] == ""
+    assert submission["crps"] < 0.1
+    assert submission["n_time"] == len(TEST_YEARS)

@@ -612,6 +612,11 @@ def anomalise_raw_output(
     for column in var_columns:
         if column not in frame.columns:
             continue
+        # ClimateEval writes its raw_output columns as float32, and pandas
+        # refuses (TypeError, not a silent downcast) to put a float64
+        # anomaly back into one. Widen once, per column, before anything is
+        # written — a real Tier II database is float32 throughout.
+        frame[column] = pd.to_numeric(frame[column], errors="coerce").astype(float)
         reference_offsets: dict[int, float] | None = None
         reference_monthly = False
         reference_index: pd.Index | None = None

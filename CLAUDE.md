@@ -25,7 +25,7 @@ Two documents govern all work here:
   "Decisions needed from Duncan" section is where every ⚠ / `TODO(Duncan)`
   lives — add to it rather than inventing a value.
 
-**Current state (2026-09-21): 350 tests pass.** Every test fixture is still
+**Current state (2026-09-21): 351 tests pass.** Every test fixture is still
 synthetic, so the test suite alone never licenses "working" — but the code is
 no longer untried on real data. Tier I has run end to end on **CNRM-CM6-1**
 (every Required gate produces a row) and Tier II on **MPI-ESM1-2-LR** against a

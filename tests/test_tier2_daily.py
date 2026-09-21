@@ -11,6 +11,7 @@ scoring pass needs.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 climateeval = pytest.importorskip("climateeval")
@@ -427,3 +428,226 @@ def test_perkins_requires_a_pre_registered_quantity() -> None:
     variable = Variable("pr_odd", "pr", "day", diagnostic_kwargs={"quantity": "wat"})
     with pytest.raises(ValueError, match="'quantity'"):
         _run(PerkinsSkillScore, [variable], [_pr_intensity_cube(3.0)])
+
+
+# ---------------------------------------------------------------------------
+# The held-out annual index series
+# ---------------------------------------------------------------------------
+
+#: A record long enough to carry BOTH halves of a regime-(a) score: at least
+#: `tier2.anomaly_baseline.min_years` (10) years inside the 1985-2014
+#: baseline window, and some years after `tier2.test_window_start` to score.
+SERIES_FIRST_YEAR = BASE_LAST - 9      # 2005
+SERIES_LAST_YEAR = 2018
+SERIES_YEARS = np.arange(SERIES_FIRST_YEAR, SERIES_LAST_YEAR + 1)
+
+
+def _series_cube(annual_spikes: dict[int, float], background: float = 2.0) -> Cube:
+    """Daily pr at ``background`` mm/day with one wet day in named years.
+
+    The field is spatially uniform, so every `tier2.extremes.regions` band
+    sees the same series and the expected Rx1day is simply the spike (or the
+    background, in a year with none).
+    """
+    n_days = SERIES_YEARS.size * DAYS_PER_YEAR
+    data = np.full((n_days, 6, 6), background)
+    for offset, year in enumerate(SERIES_YEARS):
+        if year in annual_spikes:
+            data[offset * DAYS_PER_YEAR + 100] = annual_spikes[year]
+    time = DimCoord(
+        np.arange(n_days, dtype=float) + 0.5 + (SERIES_FIRST_YEAR - 1850) * 360.0,
+        standard_name="time",
+        units=Unit("days since 1850-01-01", calendar="360_day"),
+    )
+    lat = DimCoord(
+        np.array([-75.0, -45.0, -15.0, 15.0, 45.0, 75.0]),
+        standard_name="latitude",
+        units="degrees",
+    )
+    lon = DimCoord(
+        np.linspace(0.0, 360.0, 6, endpoint=False),
+        standard_name="longitude",
+        units="degrees",
+        circular=True,
+    )
+    for coord in (time, lat, lon):
+        coord.guess_bounds()
+    return Cube(
+        data.astype(np.float32),
+        var_name="pr",
+        units="mm day-1",
+        dim_coords_and_dims=[(time, 0), (lat, 1), (lon, 2)],
+    )
+
+
+def _series_variable(index: str, region: str) -> Variable:
+    return Variable(
+        f"{index}_{region}",
+        "pr",
+        "day",
+        units="mm day-1",
+        diagnostic_kwargs={"index": index, "region": region},
+    )
+
+
+def test_the_index_series_is_annual_with_one_column_per_variable() -> None:
+    """Regime (a)'s shape: a `time` axis and one column per suite variable id."""
+    from climatebench2.diags import AnnualExtremeIndexSeries
+
+    spikes = {year: 20.0 + year - SERIES_FIRST_YEAR for year in SERIES_YEARS}
+    variables = [
+        _series_variable("rx1day", "global_land"),
+        _series_variable("rx1day", "tropical_land"),
+    ]
+    output = _run(
+        AnnualExtremeIndexSeries,
+        variables,
+        [_series_cube(spikes)],
+    )
+    frame = output.raw_output.to_pandas().sort_values("time").reset_index(drop=True)
+
+    assert "time" in frame.columns
+    assert set(frame.columns) >= {"rx1day_global_land", "rx1day_tropical_land"}
+    assert len(frame) == SERIES_YEARS.size
+    assert list(pd.to_datetime(frame["time"]).dt.year) == list(SERIES_YEARS)
+
+    # The field is uniform, so every band sees the year's own spike.
+    expected = [float(spikes[year]) for year in SERIES_YEARS]
+    assert frame["rx1day_global_land"].to_list() == pytest.approx(expected, abs=1e-3)
+    assert frame["rx1day_tropical_land"].to_list() == pytest.approx(expected, abs=1e-3)
+
+
+def test_rx5day_is_the_five_day_running_total() -> None:
+    """One 50 mm day inside a 2 mm/day background: 50 + 4 x 2 = 58 mm."""
+    from climatebench2.diags import AnnualExtremeIndexSeries
+
+    output = _run(
+        AnnualExtremeIndexSeries,
+        [_series_variable("rx5day", "global_land")],
+        [_series_cube({SERIES_FIRST_YEAR + 1: 50.0})],
+    )
+    frame = output.raw_output.to_pandas().sort_values("time").reset_index(drop=True)
+    values = frame["rx5day_global_land"].to_numpy(float)
+    # The spike year, and a plain 5 x 2 = 10 mm everywhere else
+    assert values[1] == pytest.approx(58.0, abs=1e-3)
+    assert values[0] == pytest.approx(10.0, abs=1e-3)
+    assert values[-1] == pytest.approx(10.0, abs=1e-3)
+
+
+def test_the_index_series_is_scored_held_out_over_the_test_window() -> None:
+    """End to end through the pass: anomalies, post-2015 steps, `held-out`.
+
+    Two members and a reference, all over 2005-2018 — 10 baseline years,
+    which is exactly `tier2.anomaly_baseline.min_years`, the situation IMERG
+    puts the real entry in (it has 14).
+    """
+    from climatebench2.diags import AnnualExtremeIndexSeries
+    from climatebench2.scoring_pass import (
+        deduplicate_raw_output,
+        score_raw_output,
+    )
+
+    def spikes(amplitude: float) -> dict[int, float]:
+        return {
+            year: 20.0 + amplitude * (year - SERIES_FIRST_YEAR)
+            for year in SERIES_YEARS
+        }
+
+    variable = _series_variable("rx1day", "global_land")
+    reference = {variable.id: _series_cube(spikes(1.0))}
+    frames = []
+    for i, variant in enumerate(("r1i1p1f1", "r2i1p1f1")):
+        output = _run(
+            AnnualExtremeIndexSeries,
+            [variable],
+            [_series_cube(spikes(1.2 + 0.1 * i))],
+            reference=reference,
+            variant=variant,
+        )
+        frames.append(output.raw_output.to_pandas())
+    # Each member's run emits its own copy of the reference row; the real
+    # path (`score_database`) deduplicates before scoring, so do the same.
+    frame = deduplicate_raw_output(pd.concat(frames, ignore_index=True))
+
+    sources = pd.DataFrame(
+        {
+            "id": [_info("r1i1p1f1").id, _info("r2i1p1f1").id, _StubSource().id],
+            "name": ["SynthModel", "SynthModel", "SynthObs"],
+            "category": ["model", "model", "observation"],
+        },
+    )
+    rows = score_raw_output(
+        frame,
+        sources,
+        settings={
+            "block_length_monthly": 12,
+            "block_length_annual": 3,
+            "n_boot": 40,
+            "alpha": 0.05,
+            "resample_members": True,
+            "seed": 1,
+        },
+        diagnostic="pr_extremes_series",
+    )
+    scored = [
+        r
+        for r in rows
+        if r["data_id"] == "SynthModel" and r["var_id"] == "rx1day_global_land"
+    ]
+    assert len(scored) == 1
+    row = scored[0]
+    assert row["n_members"] == 2.0
+    assert np.isfinite(row["crps"])
+    # The paper's SS 5.6 scorecard rule: this entry's observations postdate
+    # the reserved period, so it is the one held-out row in the daily suite.
+    assert row["window"] == "held-out"
+    # Only the post-2015 steps are scored (2015-2018), never the baseline.
+    assert row["n_time"] == 4.0
+
+
+def test_the_series_needs_a_pre_registered_index_and_region() -> None:
+    """The index and the band are protocol choices, not free text."""
+    from climatebench2.diags import AnnualExtremeIndexSeries
+
+    with pytest.raises(ValueError, match="diagnostic_kwargs\\['index'\\]"):
+        _run(
+            AnnualExtremeIndexSeries,
+            [_series_variable("r95ptot", "global_land")],
+            [_series_cube({})],
+        )
+    with pytest.raises(ValueError, match="diagnostic_kwargs\\['region'\\]"):
+        _run(
+            AnnualExtremeIndexSeries,
+            [_series_variable("rx1day", "antarctica")],
+            [_series_cube({})],
+        )
+
+
+def test_the_series_and_the_scalar_climatology_use_the_same_index() -> None:
+    """`extremes` and `pr_extremes_series` must not drift apart.
+
+    The climatology the scalar entry reports is the mean of the series this
+    entry emits, over the same years — same physics call, same cos-weighted
+    band. Asserting it here is what stops one of the two acquiring a fix the
+    other does not.
+    """
+    from climatebench2.diags import AnnualExtremeIndexSeries
+
+    spikes = {year: 20.0 + year - SERIES_FIRST_YEAR for year in SERIES_YEARS}
+    cube = _series_cube(spikes)
+
+    series = _run(
+        AnnualExtremeIndexSeries,
+        [_series_variable("rx1day", "global_land")],
+        [cube],
+    ).raw_output.to_pandas()
+    scalars = _run(
+        ETCCDIExtremes,
+        [Variable("pr", "pr", "day", units="mm day-1")],
+        [cube],
+    ).raw_output.to_pandas()
+
+    assert scalars["rx1day_global_land_clim"].iloc[0] == pytest.approx(
+        float(series["rx1day_global_land"].mean()),
+        abs=1e-3,
+    )

@@ -11,7 +11,8 @@ Modules (docs/climateeval_delineation_plan.md §4):
 - ``_scoring``       — CRPS-with-ESS + ensemble-consistency primitives (Phase 2)
 - ``tier1_physics``  — land-ocean, Arctic, aerosol ERF, MHT, ITCZ, ... (Phase 3)
 - ``tier2_scores``   — probabilistic scoring diagnostics, regimes (a)/(b) (Phase 2)
-- ``tier2_daily``    — the daily/sub-daily statistics: the ETCCDI extremes, the
+- ``tier2_daily``    — the daily/sub-daily statistics: the ETCCDI extremes (as
+                       in-sample scalars and as a held-out annual series), the
                        Perkins PDF skill and the diurnal first harmonic (WP6b)
 - ``tier2_reference``— reference records outside the test window: the 1985-2014
                        baseline series and the fixed pre-2015 EOF basis (regime b)
@@ -61,6 +62,7 @@ from climatebench2.diags.tier1_extended import (
     PrecipBuoyancyGate,
 )
 from climatebench2.diags.tier2_daily import (
+    AnnualExtremeIndexSeries,
     DiurnalHarmonic,
     ETCCDIExtremes,
     PerkinsSkillScore,
@@ -95,6 +97,7 @@ from climatebench2.diags.tier2_scores import (
 __all__ = [
     "AerosolForcingGate",
     "Amip4xCO2ERFGate",
+    "AnnualExtremeIndexSeries",
     "ArcticAmplificationGate",
     "BjerknesGate",
     "CB2ComplexDiagnostic",

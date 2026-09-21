@@ -59,16 +59,21 @@ Everything numerical is in :mod:`climatebench2.physics` /
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import cf_units
 import ibis
 import numpy as np
 import pandas as pd
 from esmvalcore.preprocessor import climate_statistics, local_solar_time, regrid
+from iris.coords import DimCoord
+from iris.cube import Cube
 from loguru import logger
 
 from climateeval import Coordinate
 from climateeval._config import setup_esmvaltool_config_and_logging
+from climateeval._variable import COORDINATES
 from climateeval.diags._utils import union
 from climateeval.diags.simple._base import SimpleDiagnostic
 
@@ -77,8 +82,6 @@ from climatebench2._thresholds import get_threshold
 from climatebench2.diags.tier1_physics import _cube_years_months, _filled
 
 if TYPE_CHECKING:
-    from iris.cube import Cube
-
     from climateeval import Variable
 
 logger = logger.opt(colors=True)
@@ -385,6 +388,161 @@ class ETCCDIExtremes(ScalarTableDiagnostic):
                 out[f"{index}_{region}_clim"] = climatology
                 out[f"{index}_{region}_trend"] = trend
         return out
+
+
+# ---------------------------------------------------------------------------
+# The same indices as a HELD-OUT annual series
+# ---------------------------------------------------------------------------
+
+
+def _annual_series_cube(
+    years: np.ndarray,
+    values: np.ndarray,
+    *,
+    var_name: str,
+    units: Any,  # noqa: ANN401
+) -> Cube:
+    """A 1-D annual cube, stamped mid-year on ClimateEval's time units.
+
+    The scoring pass reads a regime-(a) table by the calendar **year** of
+    each ``time`` value, so the day of the year is cosmetic; 1 July is the
+    conventional mid-year stamp and keeps a year from rounding into its
+    neighbour in any timezone the database is read in.
+    """
+    time_units = cf_units.Unit(
+        str(COORDINATES["time"]["units"]),
+        calendar="standard",
+    )
+    points = [
+        time_units.date2num(dt.datetime(int(year), 7, 1))  # noqa: DTZ001
+        for year in years
+    ]
+    time = DimCoord(
+        np.array(points, dtype=float),
+        standard_name="time",
+        units=time_units,
+    )
+    return Cube(
+        np.asarray(values, dtype=np.float32),
+        var_name=var_name,
+        units=units,
+        dim_coords_and_dims=[(time, 0)],
+    )
+
+
+class AnnualExtremeIndexSeries(SimpleDiagnostic):
+    """One ETCCDI index as an annual regional-mean **series** (held out).
+
+    :class:`ETCCDIExtremes` reduces each index to a climatology and a trend
+    over the in-sample record. This diagnostic keeps the *series* instead —
+    one value per year, cos(lat)-weighted over one
+    ``tier2.extremes.regions`` band — which is the shape the scoring pass
+    already understands as **regime (a)**: a ``time`` axis and one column
+    per suite variable id. So the same index the paper reports as an
+    in-sample climatology also earns a **held-out fair CRPS over the
+    reserved post-2015 window**, scored against IMERG's own series with the
+    anomaly machinery of ``tier2.anomaly_baseline`` (entry
+    ``pr_extremes_series``, decisions B.27–B.29).
+
+    Why this is worth a separate entry rather than a wider ``extremes``:
+
+    * the in-sample climatology and the held-out trajectory answer different
+      questions, and the protocol's §5.6 scorecard has to state which is
+      which per entry — a single entry cannot carry two window labels;
+    * the in-sample statistics have to be computed over the model/reference
+      **overlap** (2001–2014 for IMERG), while a scored series needs the
+      1985–2014 baseline *and* the post-2015 steps. Those are incompatible
+      load windows for the same cube.
+
+    Per suite variable, ``diagnostic_kwargs`` names the ``index`` (one of
+    :data:`SERIES_INDICES`) and the ``region`` (a key of
+    ``tier2.extremes.regions``); the variable id is the output column, e.g.
+    ``rx1day_global_land``. The index itself comes from the *same*
+    :mod:`climatebench2.physics` call and the same
+    :func:`_regional_series` weighting as :class:`ETCCDIExtremes`, on the
+    same conservative ~1° grid, so a model's series here and its climatology
+    there cannot drift apart.
+
+    ⚠ **Only the block maxima.** Rx1day and Rx5day are annual maxima of a
+    running total: they are defined year by year with no reference to a base
+    period, so a series of them is meaningful on its own. TX90p, WSDI and
+    R95pTOT are all defined *against a base-period percentile*, which the
+    reserved window's values would then be scored through; CDD is a count
+    that is far from Gaussian at the annual scale. Those four stay in-sample
+    only, which is what the paper asks for anyway.
+
+    Deterministic metrics are off: ClimateEval would compare the
+    submission's series to the reference's element by element, and the two
+    do not share a time axis here (the model's record is the full one, the
+    reference's starts in 2000). The protocol score is the pass's fair CRPS
+    on the years they share.
+    """
+
+    _final_coordinates = (Coordinate("time"),)
+    _output_metrics_table: ClassVar[bool] = False
+
+    #: ``index -> running-window length in days``. See the ⚠ above for why
+    #: this is not all eight ETCCDI indices.
+    SERIES_INDICES: ClassVar[dict[str, int]] = {"rx1day": 1, "rx5day": 5}
+
+    def _check_variables(self) -> None:
+        """Every variable must name a registered index and region, at build time.
+
+        ``SimpleDiagnostic.__init__`` calls this, so a suite that misspells
+        an index fails when the suite is *built* — which is what
+        ``tests/test_suites.py`` exercises for every CB2 suite — rather than
+        hours later when the daily cubes have been loaded. (A failure inside
+        ``_preprocess`` would also be swallowed into the "missing data"
+        path and reported as an absent variable, which is not what happened.)
+        """
+        regions = get_threshold("tier2.extremes.regions")
+        for variable in self._variables:
+            index = str(variable.diagnostic_kwargs.get("index", ""))
+            region = str(variable.diagnostic_kwargs.get("region", ""))
+            if index not in self.SERIES_INDICES:
+                msg = (
+                    f"Diagnostic '{self.name}': variable '{variable.id}' must "
+                    f"name a pre-registered index in diagnostic_kwargs['index'] "
+                    f"(one of {sorted(self.SERIES_INDICES)}), got '{index}'"
+                )
+                raise ValueError(msg)
+            if region not in regions:
+                msg = (
+                    f"Diagnostic '{self.name}': variable '{variable.id}' must "
+                    f"name a tier2.extremes.regions band in "
+                    f"diagnostic_kwargs['region'] (one of {sorted(regions)}), "
+                    f"got '{region}'"
+                )
+                raise ValueError(msg)
+
+    def _preprocess(self, cube: Cube, variable: Variable) -> Cube:
+        """Regrid, take the index per year per point, then the region mean."""
+        index = str(variable.diagnostic_kwargs["index"])
+        region = str(variable.diagnostic_kwargs["region"])
+        regions = get_threshold("tier2.extremes.regions")
+
+        with setup_esmvaltool_config_and_logging():
+            cube = regrid(
+                cube,
+                str(get_threshold("tier2.extremes.grid")),
+                str(get_threshold("tier2.extremes.regrid_scheme")),
+                cache_weights=True,
+            )
+        values = _filled(cube.data)
+        years, _months = _cube_years_months(cube)
+        index_years, field = physics.annual_max_running_sum(
+            values,
+            years,
+            window=self.SERIES_INDICES[index],
+        )
+        latitudes = cube.coord("latitude").points.astype(float)
+        series = _regional_series(field, latitudes, tuple(regions[region]))
+        return _annual_series_cube(
+            index_years,
+            series,
+            var_name=index,
+            units=cube.units,
+        )
 
 
 # ---------------------------------------------------------------------------

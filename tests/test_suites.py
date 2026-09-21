@@ -213,12 +213,19 @@ def test_unregistered_suites_are_classified_by_probing() -> None:
     assert (spec.shape, spec.window) == ("cubes", "historical")
 
 
+#: The one held-out entry of the daily suite: the annual Rx1day/Rx5day
+#: series scored over the reserved test window against IMERG. Everything
+#: else there is a climatology of the historical record.
+DAILY_HELD_OUT_ENTRIES = {"pr_extremes_series"}
+
+
 def test_the_daily_suite_runs_over_the_full_record_per_member() -> None:
     """The extremes/PDF/diurnal statistics are in-sample, not test-window.
 
     The paper computes them "over the full historical record", so the daily
-    suite is the one cube suite the CLI does not cut — and every entry in it
-    is labelled in-sample in `tier2.window_labels`.
+    suite is the one cube suite the CLI does not cut to a protocol window —
+    and every entry in it is labelled in-sample in `tier2.window_labels`,
+    except the annual index series, which is scored post-2015.
     """
     from climatebench2._cli import SUITE_REGISTRY, suite_timerange
     from climatebench2._thresholds import get_threshold
@@ -228,33 +235,57 @@ def test_the_daily_suite_runs_over_the_full_record_per_member() -> None:
     # ... and not even an explicit --timerange re-cuts it
     assert suite_timerange(spec) is None
     assert suite_timerange(spec, "19790101/20141231") is None
+    # A staged reference still narrows a variable of it, though: an
+    # in-sample climatology has to be the same statistic for the model and
+    # the observations (IMERG -> 2001-2014).
+    assert spec.reference_overlap
 
     labels = get_threshold("tier2.window_labels")["diagnostics"]
     suite = Suite(_resolve_suite("ClimateBench2_TierII_daily"))._get_diagnostics()
+    assert DAILY_HELD_OUT_ENTRIES <= set(suite)
     for name in suite:
-        assert labels.get(name, "held-out") == "in-sample", name
+        expected = (
+            "held-out" if name in DAILY_HELD_OUT_ENTRIES else "in-sample"
+        )
+        assert labels.get(name, "held-out") == expected, name
 
 
-def test_the_daily_extremes_are_model_only_but_scorable_in_shape() -> None:
-    """No daily obs product exists upstream, so the extremes carry no reference.
+def test_the_daily_extremes_score_pr_against_imerg_and_tas_not_at_all() -> None:
+    """Precipitation has a daily observational product now; temperature does not.
 
-    The shape is still the scored one (aggregated scalars), so the day a
-    HadEX3 DataSource lands the suite only needs a `reference_data:` line.
+    IMERG (paper Table 2) references the four precipitation indices. No
+    ClimateEval DataSource serves daily `tasmax`/`tasmin`, so those stay
+    model-only — in the scored shape, so the day HadEX3 is staged the suite
+    needs one `reference_data:` line.
     """
+    from climatebench2.data import IMERG
     from climatebench2.diags import ETCCDIExtremes, ScalarTableDiagnostic
 
     suite = Suite(_resolve_suite("ClimateBench2_TierII_daily"))._get_diagnostics()
     extremes = suite["extremes"]
     assert isinstance(extremes, ETCCDIExtremes)
     assert isinstance(extremes, ScalarTableDiagnostic)
-    assert not extremes._reference_data, "extremes must stay unscored for now"
     assert {v.var_name for v in extremes._variables} == {"tasmax", "tasmin", "pr"}
+    referenced = {
+        v.var_name: type(source)
+        for v, source in extremes._reference_data.items()
+    }
+    assert referenced == {"pr": IMERG}
     # ETCCDI indices are land indices: the mask is ClimateEval's, per variable
     assert all(v.landsea_mask == "land_only" for v in extremes._variables)
 
-    # ... whereas the diurnal harmonic and the Perkins score do have one
+    # ... and the daily intensity PDF is IMERG's too (paper Table 2), while
+    # the Perkins temperature entries stay on ERA5.
+    perkins = {
+        v.id: type(source).__name__
+        for v, source in suite["perkins"]._reference_data.items()
+    }
+    assert perkins["pr_intensity_land"] == "IMERG"
+    assert perkins["pr_intensity_tropics"] == "IMERG"
+    assert perkins["tas_anomaly_land"] == "ERA5Hourly"
+
+    # ... whereas the diurnal harmonic keeps its hourly ERA5 reference
     assert suite["diurnal_harmonic"]._reference_data
-    assert suite["perkins"]._reference_data
 
 
 def test_the_seasonal_metrics_read_their_boxes_from_thresholds() -> None:

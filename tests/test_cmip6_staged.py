@@ -116,3 +116,45 @@ def test_the_environment_wins_over_an_explicit_root(staged, tmp_path) -> None:  
     other = tmp_path / "elsewhere"
     other.mkdir()
     assert staged_root(other) == staged
+
+
+def test_the_generator_enumerates_daily_directories_too(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """`frequency: day` needs no special case: the walk uses the variable's own.
+
+    The daily suite's held-out Rx1day/Rx5day series takes its `E_ref` from
+    the same comparison ensemble as every monthly entry, so the generator
+    has to find `<member>/day/pr/` — a member staged only at `mon` must not
+    be yielded for a `day` variable, and vice versa.
+    """
+    from climateeval import Variable
+
+    layout = {
+        "CMIP6_MPI-ESM1-2-LR_historical-ssp245_r1i1p1f1": {
+            "day": ["pr_day_MPI-ESM1-2-LR_historical_r1i1p1f1_gn_19790101-19791231.nc"],
+            "mon": ["pr_Amon_MPI-ESM1-2-LR_historical_r1i1p1f1_gn_185001-186912.nc"],
+        },
+        # Monthly only: present for the `mon` ensemble, absent from the daily one
+        "CMIP6_UKESM1-0-LL_historical-ssp245_r1i1p1f2": {
+            "mon": ["pr_Amon_UKESM1-0-LL_historical_r1i1p1f2_gn_185001-194912.nc"],
+        },
+    }
+    for source_id, by_frequency in layout.items():
+        for frequency, files in by_frequency.items():
+            var_dir = tmp_path / source_id / frequency / "pr"
+            var_dir.mkdir(parents=True)
+            for name in files:
+                (var_dir / name).touch()
+    monkeypatch.setenv(STAGED_ROOT_ENV, str(tmp_path))
+    clear_discovery_cache()
+
+    daily = list(StagedCMIP6HistoricalSSP245().generate(Variable("pr", "pr", "day")))
+    assert [s.id for s in daily] == [
+        "CMIP6_MPI-ESM1-2-LR_historical-ssp245_r1i1p1f1",
+    ]
+    # ... and the facets carry the daily table, not Amon
+    assert daily[0].esmvaltool_dataset_facets["frequency"] == "day"
+    assert daily[0].esmvaltool_dataset_facets["mip"] == "day"
+
+    monthly = list(StagedCMIP6HistoricalSSP245().generate(Variable("pr", "pr", "mon")))
+    assert len(monthly) == 2  # noqa: PLR2004
+    clear_discovery_cache()

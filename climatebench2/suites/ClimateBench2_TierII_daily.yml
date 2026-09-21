@@ -3,31 +3,60 @@
 # diurnal cycle and a TXx-style block maximum (metrics_reference.md §II.1
 # "Daily tas extremes / pr intensity PDF" and "Diurnal cycle").
 #
-# WINDOW. Unlike the monthly Tier II suite this one runs over the model's
-# FULL record, not the reserved post-2015 test window: the paper computes
-# the extremes and the PDF statistics "over the full historical record", and
-# a diurnal or seasonal climatology of ten years would be noise. Every entry
-# here is therefore labelled **in-sample** (thresholds.yml
-# `tier2.window_labels`), and `_cli.SUITE_REGISTRY` gives the suite
-# `window: full`. It still runs once per ensemble member, so the scoring
-# pass can form a fair CRPS across them.
+# WINDOW. Unlike the monthly Tier II suite this one has no protocol window
+# of its own: `_cli.SUITE_REGISTRY` gives it `window: full`, because the
+# paper computes the extremes and the PDF statistics "over the full
+# historical record" and a diurnal or seasonal climatology of ten years
+# would be noise. It runs once per ensemble member, so the scoring pass can
+# form a fair CRPS across them.
+#
+# Two things narrow that in practice, both resolved at run time by
+# `climatebench2.reference_windows` and written into the copy of this file
+# under `<out>/_windowed_suites/` (the run prints every window it moved):
+#
+# * a variable with a **staged reference** is cut to that reference's own
+#   COMPLETE years, clipped to end at `tier2.test_window_start - 1`
+#   (`SuiteSpec.reference_overlap`). For IMERG, whose record starts
+#   2000-06-01, that is **2001–2014**. Both halves matter: a model's Rx1day
+#   climatology over 1850–2100 and IMERG's over 2001–2025 are not the same
+#   statistic, and an in-sample statistic must not reach into the reserved
+#   post-2015 window. A variable whose reference is NOT staged keeps the
+#   full record and is dropped by ClimateEval as before, so the `perkins`
+#   tas entries are unaffected until a daily ERA5 is staged;
+# * `pr_extremes_series` is exempt: it is the one HELD-OUT entry here, a
+#   regime-(a) anomaly series listed in `tier2.anomaly_baseline`, so it
+#   needs the 1985–2014 baseline AND the post-2015 steps — i.e. the whole
+#   record. See its own comment block below.
+#
+# Every other entry is labelled **in-sample** (thresholds.yml
+# `tier2.window_labels`).
 #
 # REFERENCES — read this before adding one.
+# * **pr is now referenced against IMERG** (`climatebench2.data.IMERG`,
+#   2026-09-21), the product the paper's Table 2 names for the daily
+#   precipitation intensity PDF and the precipitation extremes. It is a CB2
+#   class only because ClimateEval is pinned; it is a plain `DataSource`
+#   over files staged as
+#   `<data_root>/observation_IMERG/day/pr/pr_day_IMERG-V07B_1deg_YYYY0101-YYYY1231.nc`
+#   and belongs upstream (see its docstring).
 # * `ERA5.VARIABLE_MAPPING` has **no `tasmax`/`tasmin`**, and `ERA5Hourly`'s
-#   CDS request is hard-wired to a single year, so there is no daily
-#   observational product for the ETCCDI indices anywhere in ClimateEval.
-#   The `extremes` entry therefore carries NO `reference_data:` and its
-#   scalars are reported model-only and unscored — deliberately, not by
-#   accident (the scoring pass skips a scalar with no observed value, and
-#   says so). The natural reference is **HadEX3**, which already has an
-#   ESMValTool CMORizer and needs only an upstream DataSource; Berkeley
-#   daily, HadGHCND, IMERG and MSWEP have none.
-# * `pr` and `tas` DO exist in ERA5, so the diurnal harmonic and the Perkins
-#   score are scored against `ERA5Hourly` — with the caveat that a
-#   `frequency: day` variable looks in `<data_root>/ERA5/day/<var>`, which a
-#   staged daily ERA5 must fill (the hourly downloader would not).
+#   CDS request is hard-wired to a single year, so there is still no daily
+#   observational product for the TEMPERATURE extremes anywhere in the
+#   stack. The `extremes` entry's `tasmax`/`tasmin` variables therefore
+#   carry NO `reference_data:` and their scalars are reported model-only and
+#   unscored — deliberately, not by accident (the scoring pass skips a
+#   scalar with no observed value, and says so). The natural reference is
+#   **HadEX3**, merged upstream with an ESMValTool CMORizer but not staged;
+#   Berkeley daily, HadGHCND and MSWEP have no DataSource at all.
+# * `tas` DOES exist in ERA5, so the Perkins temperature entries and the
+#   diurnal harmonic are scored against `ERA5Hourly` — with the caveat that
+#   a `frequency: day` variable looks in `<data_root>/ERA5/day/<var>`, which
+#   a staged daily ERA5 must fill (the hourly downloader would not).
+# * IMERG is DAILY, so it cannot serve the two `frequency: 1hr` displays at
+#   the bottom of this file (`pr_intensity_pdf`, `pr_diurnal_cycle`); those
+#   keep `ERA5Hourly`.
 
-# --- ETCCDI extremes (in-sample, model-only until HadEX3 lands upstream) ---
+# --- ETCCDI extremes (in-sample; pr scored vs IMERG, tas still model-only) -
 #
 # One scalar per (index, region, statistic): the climatological mean and the
 # OLS trend per decade of each index's annual, region-mean series. Regions
@@ -52,14 +81,111 @@
       frequency: day
       units: mm day-1
       landsea_mask: land_only
-      # Once an upstream daily-pr DataSource exists (or a staged daily ERA5
-      # under <data_root>/ERA5/day/pr), the precipitation indices become
-      # scorable by adding:
-      #   reference_data: climateeval.data.ERA5Hourly
-      #   additional_preprocessors:
-      #     esmvalcore.preprocessor.daily_statistics: {operator: mean}
-      # Left out against the pinned `main` rather than scoring a model
-      # against ERA5Hourly's single hard-wired year.
+      # SCORED since 2026-09-21 against IMERG, the product the paper's
+      # Table 2 names for the precipitation extremes. `units: mm day-1`
+      # converts IMERG's kg m-2 s-1 through the same `get_prepared_cube`
+      # line that converts the model's.
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
+
+# --- Annual Rx1day / Rx5day series (HELD-OUT, regime (a)) ------------------
+#
+# The one held-out entry in this suite. `extremes` above reduces each index
+# to an in-sample climatology and trend over 2001-2014; this keeps the
+# SERIES — one value per year, cos(lat)-weighted over one
+# `tier2.extremes.regions` band — which is regime (a)'s shape (a `time` axis
+# plus one column per variable id), so `scoring_pass` scores it as a fair
+# CRPS over the reserved post-2015 window against IMERG's own series, with
+# the CMIP6 comparison ensemble giving E_ref.
+#
+# WINDOW. No `timerange`, deliberately, and it must stay that way: this
+# entry is listed in `tier2.anomaly_baseline`, so every source (the
+# submission's members, IMERG, every comparison member) is reduced to an
+# anomaly about ITS OWN 1985-2014 climatology before the post-2015 steps are
+# scored. IMERG contributes 2001-2014 = 14 baseline years, above the
+# `tier2.anomaly_baseline.min_years` = 10 floor — the thinnest baseline of
+# any scored entry, and the reason B.29 matters. That same listing is what
+# exempts it from the pre-test cap `reference_windows` puts on the entries
+# above.
+#
+# Only the two BLOCK MAXIMA. Rx1day/Rx5day are defined year by year with no
+# reference to a base period, so a series of them stands on its own; TX90p,
+# WSDI and R95pTOT are defined against a base-period percentile (the
+# held-out years would be scored through an in-sample threshold) and CDD is
+# a far-from-Gaussian annual count. Those four stay in-sample only.
+#
+# COST. Eight variables x (submission members + IMERG + the comparison
+# ensemble), each realising a daily record on the 1 degree grid. The
+# comparison ensemble only appears for members that actually have
+# `day/pr` staged (`StagedCMIP6HistoricalSSP245` enumerates directories), so
+# this is free until that data exists and expensive the day it does.
+- name: pr_extremes_series
+  diagnostic: climatebench2.diags.AnnualExtremeIndexSeries
+  variables:
+    - id: rx1day_global_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs: {index: rx1day, region: global_land}
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
+    - id: rx1day_tropical_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs: {index: rx1day, region: tropical_land}
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
+    - id: rx1day_nh_extratropical_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs: {index: rx1day, region: nh_extratropical_land}
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
+    - id: rx1day_sh_extratropical_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs: {index: rx1day, region: sh_extratropical_land}
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
+    - id: rx5day_global_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs: {index: rx5day, region: global_land}
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
+    - id: rx5day_tropical_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs: {index: rx5day, region: tropical_land}
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
+    - id: rx5day_nh_extratropical_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs: {index: rx5day, region: nh_extratropical_land}
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
+    - id: rx5day_sh_extratropical_land
+      var_name: pr
+      frequency: day
+      units: mm day-1
+      landsea_mask: land_only
+      diagnostic_kwargs: {index: rx5day, region: sh_extratropical_land}
+      reference_data: climatebench2.data.IMERG
+      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
 
 # --- Perkins skill score on daily PDFs (in-sample) -------------------------
 #
@@ -86,6 +212,9 @@
       diagnostic_kwargs:
         quantity: tas_anomaly
       reference_data: climateeval.data.ERA5Hourly
+    # The two pr entries ARE the paper's "daily precipitation intensity
+    # PDF", and Table 2 names IMERG for it — so they reference IMERG, not
+    # ERA5Hourly (whose CDS request is one hard-wired year).
     - id: pr_intensity_land
       var_name: pr
       frequency: day
@@ -93,7 +222,7 @@
       landsea_mask: land_only
       diagnostic_kwargs:
         quantity: pr_intensity
-      reference_data: climateeval.data.ERA5Hourly
+      reference_data: climatebench2.data.IMERG
     - id: pr_intensity_tropics
       var_name: pr
       frequency: day
@@ -102,7 +231,7 @@
       max_lat: 30.0
       diagnostic_kwargs:
         quantity: pr_intensity
-      reference_data: climateeval.data.ERA5Hourly
+      reference_data: climatebench2.data.IMERG
 
 # --- Diurnal cycle: first harmonic in local solar time (in-sample) ---------
 #

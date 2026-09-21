@@ -25,7 +25,7 @@ Two documents govern all work here:
   "Decisions needed from Duncan" section is where every ⚠ / `TODO(Duncan)`
   lives — add to it rather than inventing a value.
 
-**Current state (2026-09-21): 381 tests pass.** Every test fixture is still
+**Current state (2026-09-21): 383 tests pass.** Every test fixture is still
 synthetic, so the test suite alone never licenses "working" — but the code is
 no longer untried on real data. Tier I has run end to end on **CNRM-CM6-1**
 (every Required gate produces a row) and Tier II on **MPI-ESM1-2-LR** against a
@@ -124,7 +124,8 @@ climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --mem
 #   maps/annual cycles/EOF basis keep the test window -- and TierII_daily takes the
 #   FULL record (its extremes/PDF/diurnal climatologies are defined over it, so
 #   every entry there is in-sample EXCEPT `pr_extremes_series`, the held-out annual
-#   Rx1day/Rx5day series). A variable of that suite with a STAGED reference is cut
+#   Rx1day/Rx5day series -- ONE suite variable emitting 8 columns, because
+#   ClimateEval re-loads a reference/other_data source once per VARIABLE). A variable of that suite with a STAGED reference is cut
 #   to the reference's own record clipped before 2015 (IMERG: 2001-2014), so the
 #   model and the observations give the same in-sample statistic
 climatebench2 score MODEL --name MyModel -o /work/run/MyModel --data-root /work/staged

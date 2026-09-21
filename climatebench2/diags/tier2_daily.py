@@ -62,18 +62,15 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import cf_units
 import ibis
 import numpy as np
 import pandas as pd
 from esmvalcore.preprocessor import climate_statistics, local_solar_time, regrid
-from iris.coords import DimCoord
 from iris.cube import Cube
 from loguru import logger
 
 from climateeval import Coordinate
 from climateeval._config import setup_esmvaltool_config_and_logging
-from climateeval._variable import COORDINATES
 from climateeval.diags._utils import union
 from climateeval.diags.simple._base import SimpleDiagnostic
 
@@ -395,50 +392,15 @@ class ETCCDIExtremes(ScalarTableDiagnostic):
 # ---------------------------------------------------------------------------
 
 
-def _annual_series_cube(
-    years: np.ndarray,
-    values: np.ndarray,
-    *,
-    var_name: str,
-    units: Any,  # noqa: ANN401
-) -> Cube:
-    """A 1-D annual cube, stamped mid-year on ClimateEval's time units.
-
-    The scoring pass reads a regime-(a) table by the calendar **year** of
-    each ``time`` value, so the day of the year is cosmetic; 1 July is the
-    conventional mid-year stamp and keeps a year from rounding into its
-    neighbour in any timezone the database is read in.
-    """
-    time_units = cf_units.Unit(
-        str(COORDINATES["time"]["units"]),
-        calendar="standard",
-    )
-    points = [
-        time_units.date2num(dt.datetime(int(year), 7, 1))  # noqa: DTZ001
-        for year in years
-    ]
-    time = DimCoord(
-        np.array(points, dtype=float),
-        standard_name="time",
-        units=time_units,
-    )
-    return Cube(
-        np.asarray(values, dtype=np.float32),
-        var_name=var_name,
-        units=units,
-        dim_coords_and_dims=[(time, 0)],
-    )
-
-
 class AnnualExtremeIndexSeries(SimpleDiagnostic):
-    """One ETCCDI index as an annual regional-mean **series** (held out).
+    """The ETCCDI block maxima as annual regional-mean **series** (held out).
 
     :class:`ETCCDIExtremes` reduces each index to a climatology and a trend
     over the in-sample record. This diagnostic keeps the *series* instead —
-    one value per year, cos(lat)-weighted over one
+    one value per year, cos(lat)-weighted over each
     ``tier2.extremes.regions`` band — which is the shape the scoring pass
     already understands as **regime (a)**: a ``time`` axis and one column
-    per suite variable id. So the same index the paper reports as an
+    per scored quantity. So the same index the paper reports as an
     in-sample climatology also earns a **held-out fair CRPS over the
     reserved post-2015 window**, scored against IMERG's own series with the
     anomaly machinery of ``tier2.anomaly_baseline`` (entry
@@ -454,14 +416,29 @@ class AnnualExtremeIndexSeries(SimpleDiagnostic):
       1985–2014 baseline *and* the post-2015 steps. Those are incompatible
       load windows for the same cube.
 
-    Per suite variable, ``diagnostic_kwargs`` names the ``index`` (one of
-    :data:`SERIES_INDICES`) and the ``region`` (a key of
-    ``tier2.extremes.regions``); the variable id is the output column, e.g.
-    ``rx1day_global_land``. The index itself comes from the *same*
-    :mod:`climatebench2.physics` call and the same
+    **One suite variable, many columns — and why it must stay that way.**
+    The entry takes a *single* ``pr`` variable and emits one column per
+    ``(index, region)``: ``rx1day_global_land``, ``rx5day_tropical_land``,
+    … eight in all. That is the :class:`ScalarTableDiagnostic` pattern
+    applied to a time series, and it is not cosmetic. ClimateEval loads
+    ``reference_data`` and every ``other_data`` source **once per suite
+    variable** (``SimpleDiagnostic._get_reference_cubes`` and
+    ``_get_output_of_other_data`` both loop over ``self._variables`` and
+    call ``get_cube`` inside the loop; nothing is cached across variables).
+    Eight variables would therefore have re-read ~40 years of daily ``pr``
+    eight times for IMERG *and* for every comparison member — terabytes of
+    reads for numbers that all come off the same array. With one variable
+    the record is read once and the eight series are eight reductions of
+    it.
+
+    :meth:`_check_variables` enforces the single variable, because a second
+    one would silently collide in the column names.
+
+    Per-column values come from the *same*
+    :func:`climatebench2.physics.annual_max_running_sum` call and the same
     :func:`_regional_series` weighting as :class:`ETCCDIExtremes`, on the
-    same conservative ~1° grid, so a model's series here and its climatology
-    there cannot drift apart.
+    same conservative ~1° grid, so a model's series here and its
+    climatology there cannot drift apart.
 
     ⚠ **Only the block maxima.** Rx1day and Rx5day are annual maxima of a
     running total: they are defined year by year with no reference to a base
@@ -478,7 +455,10 @@ class AnnualExtremeIndexSeries(SimpleDiagnostic):
     on the years they share.
     """
 
-    _final_coordinates = (Coordinate("time"),)
+    #: The cube reaching :meth:`_get_raw_output_table` is still the regridded
+    #: daily field; the annual reduction happens there, because that is where
+    #: one cube becomes many columns.
+    _final_coordinates = (Coordinate("time"), Coordinate("lat"), Coordinate("lon"))
     _output_metrics_table: ClassVar[bool] = False
 
     #: ``index -> running-window length in days``. See the ⚠ above for why
@@ -486,41 +466,40 @@ class AnnualExtremeIndexSeries(SimpleDiagnostic):
     SERIES_INDICES: ClassVar[dict[str, int]] = {"rx1day": 1, "rx5day": 5}
 
     def _check_variables(self) -> None:
-        """Every variable must name a registered index and region, at build time.
+        """Exactly one variable, and it must be one the indices are defined for.
 
-        ``SimpleDiagnostic.__init__`` calls this, so a suite that misspells
-        an index fails when the suite is *built* — which is what
-        ``tests/test_suites.py`` exercises for every CB2 suite — rather than
-        hours later when the daily cubes have been loaded. (A failure inside
-        ``_preprocess`` would also be swallowed into the "missing data"
-        path and reported as an absent variable, which is not what happened.)
+        ``SimpleDiagnostic.__init__`` calls this, so a mis-built suite fails
+        when the suite is *built* — which ``tests/test_suites.py`` exercises
+        for every CB2 suite — rather than hours later with the daily cubes
+        loaded.
         """
-        regions = get_threshold("tier2.extremes.regions")
-        for variable in self._variables:
-            index = str(variable.diagnostic_kwargs.get("index", ""))
-            region = str(variable.diagnostic_kwargs.get("region", ""))
-            if index not in self.SERIES_INDICES:
-                msg = (
-                    f"Diagnostic '{self.name}': variable '{variable.id}' must "
-                    f"name a pre-registered index in diagnostic_kwargs['index'] "
-                    f"(one of {sorted(self.SERIES_INDICES)}), got '{index}'"
-                )
-                raise ValueError(msg)
-            if region not in regions:
-                msg = (
-                    f"Diagnostic '{self.name}': variable '{variable.id}' must "
-                    f"name a tier2.extremes.regions band in "
-                    f"diagnostic_kwargs['region'] (one of {sorted(regions)}), "
-                    f"got '{region}'"
-                )
-                raise ValueError(msg)
+        if len(self._variables) != 1:
+            ids = ", ".join(v.id for v in self._variables)
+            msg = (
+                f"Diagnostic '{self.name}': takes exactly ONE suite variable "
+                f"and emits one column per (index, region) from it, got "
+                f"{len(self._variables)} ({ids}). ClimateEval re-loads the "
+                f"reference and every comparison member once per variable, so "
+                f"a variable per region would re-read the whole daily record "
+                f"once per region; a second variable would also collide in the "
+                f"column names."
+            )
+            raise ValueError(msg)
+        (variable,) = self._variables
+        if variable.var_name != "pr":
+            msg = (
+                f"Diagnostic '{self.name}': the block-maximum indices "
+                f"{sorted(self.SERIES_INDICES)} are precipitation indices, so "
+                f"the variable must be 'pr', got '{variable.var_name}'"
+            )
+            raise ValueError(msg)
 
-    def _preprocess(self, cube: Cube, variable: Variable) -> Cube:
-        """Regrid, take the index per year per point, then the region mean."""
-        index = str(variable.diagnostic_kwargs["index"])
-        region = str(variable.diagnostic_kwargs["region"])
-        regions = get_threshold("tier2.extremes.regions")
+    def _preprocess(self, cube: Cube, _variable: Variable) -> Cube:
+        """Conservative regrid to the protocol's ~1° extremes grid.
 
+        Identical to :meth:`ETCCDIExtremes._preprocess`: the two entries must
+        see the same field, or their numbers are not two views of one thing.
+        """
         with setup_esmvaltool_config_and_logging():
             cube = regrid(
                 cube,
@@ -528,20 +507,95 @@ class AnnualExtremeIndexSeries(SimpleDiagnostic):
                 str(get_threshold("tier2.extremes.regrid_scheme")),
                 cache_weights=True,
             )
+        return cube  # noqa: RET504
+
+    def _series(self, cube: Cube) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        """``(years, {column: annual series})`` for one preprocessed cube."""
         values = _filled(cube.data)
         years, _months = _cube_years_months(cube)
-        index_years, field = physics.annual_max_running_sum(
-            values,
-            years,
-            window=self.SERIES_INDICES[index],
-        )
         latitudes = cube.coord("latitude").points.astype(float)
-        series = _regional_series(field, latitudes, tuple(regions[region]))
-        return _annual_series_cube(
-            index_years,
-            series,
-            var_name=index,
-            units=cube.units,
+        regions = get_threshold("tier2.extremes.regions")
+
+        index_years: np.ndarray | None = None
+        columns: dict[str, np.ndarray] = {}
+        for index, window in self.SERIES_INDICES.items():
+            this_years, field = physics.annual_max_running_sum(
+                values,
+                years,
+                window=window,
+            )
+            index_years = this_years if index_years is None else index_years
+            for region, bounds in regions.items():
+                columns[f"{index}_{region}"] = _regional_series(
+                    field,
+                    latitudes,
+                    tuple(bounds),
+                )
+        return (
+            np.asarray(index_years if index_years is not None else [], dtype=int),
+            columns,
+        )
+
+    def _get_raw_output_table(
+        self,
+        cube: Cube,
+        *,
+        variable: Variable,  # noqa: ARG002 - one variable; columns name themselves
+        data_id: str,
+        data_type: str,
+    ) -> ibis.Table:
+        """One row per year, one column per ``(index, region)``.
+
+        Mirrors ``Diagnostic._get_raw_output_table``'s treatment of ``time``
+        (written as a string, cast to ``timestamp(6)``) so the table is
+        indistinguishable from any other regime-(a) table downstream. Each
+        year is stamped at **1 July**: the scoring pass reads a series by the
+        calendar year of each ``time`` value, so a mid-year stamp keeps a year
+        from rounding into its neighbour.
+        """
+        years, columns = self._series(cube)
+        frame = pd.DataFrame(
+            {
+                "time": [
+                    dt.datetime(int(year), 7, 1).isoformat(sep=" ")  # noqa: DTZ001
+                    for year in years
+                ],
+                **{
+                    name: pd.Series(np.asarray(values, dtype=float), dtype="float64")
+                    for name, values in columns.items()
+                },
+            },
+        )
+        table = ibis.memtable(frame)
+        table = table.cast(
+            {c: "timestamp(6)" if c == "time" else self._dtype for c in table.columns},
+        )
+        table = table.mutate(**{self._data_id_column: ibis.literal(data_id)})
+        return table.mutate(**{self._data_type_column: ibis.literal(data_type)})
+
+    def _combine_raw_output_tables(
+        self,
+        *raw_output_tables: ibis.Table,
+    ) -> ibis.Table | None:
+        """Union the sources' series, keyed by ``(data_id, data_type, time)``.
+
+        ``SimpleDiagnostic``'s own version keys the variable columns by suite
+        variable id, which here is ``pr`` — a column that does not exist.
+        Same override, and the same reason, as
+        :meth:`ScalarTableDiagnostic._combine_raw_output_tables`.
+        """
+        if not raw_output_tables:
+            return None
+        table = union(*raw_output_tables)
+        value_columns = [
+            c
+            for c in table.columns
+            if c not in (self._data_id_column, self._data_type_column, "time")
+        ]
+        return self._remove_superfluous_rows(
+            table,
+            unique_columns=(self._data_id_column, self._data_type_column, "time"),
+            variable_columns=value_columns,
         )
 
 

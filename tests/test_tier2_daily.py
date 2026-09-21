@@ -480,41 +480,45 @@ def _series_cube(annual_spikes: dict[int, float], background: float = 2.0) -> Cu
     )
 
 
-def _series_variable(index: str, region: str) -> Variable:
-    return Variable(
-        f"{index}_{region}",
-        "pr",
-        "day",
-        units="mm day-1",
-        diagnostic_kwargs={"index": index, "region": region},
-    )
+def _series_variable() -> Variable:
+    """The entry's single suite variable: the eight columns name themselves."""
+    return Variable("pr", "pr", "day", units="mm day-1")
 
 
-def test_the_index_series_is_annual_with_one_column_per_variable() -> None:
-    """Regime (a)'s shape: a `time` axis and one column per suite variable id."""
+def test_the_index_series_is_annual_with_eight_columns_from_one_load() -> None:
+    """Regime (a)'s shape, and the one-load design that keeps it affordable.
+
+    ClimateEval re-reads the reference and every comparison member once per
+    suite VARIABLE, so the eight (index, region) series have to come off a
+    single `pr` variable or the daily record is read eight times per source.
+    """
     from climatebench2.diags import AnnualExtremeIndexSeries
 
     spikes = {year: 20.0 + year - SERIES_FIRST_YEAR for year in SERIES_YEARS}
-    variables = [
-        _series_variable("rx1day", "global_land"),
-        _series_variable("rx1day", "tropical_land"),
-    ]
     output = _run(
         AnnualExtremeIndexSeries,
-        variables,
+        [_series_variable()],
         [_series_cube(spikes)],
     )
     frame = output.raw_output.to_pandas().sort_values("time").reset_index(drop=True)
 
     assert "time" in frame.columns
-    assert set(frame.columns) >= {"rx1day_global_land", "rx1day_tropical_land"}
+    regions = list(get_threshold("tier2.extremes.regions"))
+    expected_columns = {
+        f"{index}_{region}" for index in ("rx1day", "rx5day") for region in regions
+    }
+    assert expected_columns <= set(frame.columns)
+    assert len(expected_columns) == 8  # noqa: PLR2004
+    # ... and NOT a column named after the suite variable
+    assert "pr" not in frame.columns
+
     assert len(frame) == SERIES_YEARS.size
     assert list(pd.to_datetime(frame["time"]).dt.year) == list(SERIES_YEARS)
 
     # The field is uniform, so every band sees the year's own spike.
     expected = [float(spikes[year]) for year in SERIES_YEARS]
-    assert frame["rx1day_global_land"].to_list() == pytest.approx(expected, abs=1e-3)
-    assert frame["rx1day_tropical_land"].to_list() == pytest.approx(expected, abs=1e-3)
+    for region in regions:
+        assert frame[f"rx1day_{region}"].to_list() == pytest.approx(expected, abs=1e-3)
 
 
 def test_rx5day_is_the_five_day_running_total() -> None:
@@ -523,7 +527,7 @@ def test_rx5day_is_the_five_day_running_total() -> None:
 
     output = _run(
         AnnualExtremeIndexSeries,
-        [_series_variable("rx5day", "global_land")],
+        [_series_variable()],
         [_series_cube({SERIES_FIRST_YEAR + 1: 50.0})],
     )
     frame = output.raw_output.to_pandas().sort_values("time").reset_index(drop=True)
@@ -532,6 +536,11 @@ def test_rx5day_is_the_five_day_running_total() -> None:
     assert values[1] == pytest.approx(58.0, abs=1e-3)
     assert values[0] == pytest.approx(10.0, abs=1e-3)
     assert values[-1] == pytest.approx(10.0, abs=1e-3)
+    # The 1-day index of the same year is the spike itself
+    assert frame["rx1day_global_land"].to_numpy(float)[1] == pytest.approx(
+        50.0,
+        abs=1e-3,
+    )
 
 
 def test_the_index_series_is_scored_held_out_over_the_test_window() -> None:
@@ -539,7 +548,10 @@ def test_the_index_series_is_scored_held_out_over_the_test_window() -> None:
 
     Two members and a reference, all over 2005-2018 — 10 baseline years,
     which is exactly `tier2.anomaly_baseline.min_years`, the situation IMERG
-    puts the real entry in (it has 14).
+    puts the real entry in (it has 14). Every one of the eight columns is
+    scored as its own `var_id`: `score_raw_output` iterates the table's
+    non-coordinate columns, so the one-load shape costs the scorecard
+    nothing.
     """
     from climatebench2.diags import AnnualExtremeIndexSeries
     from climatebench2.scoring_pass import (
@@ -553,7 +565,7 @@ def test_the_index_series_is_scored_held_out_over_the_test_window() -> None:
             for year in SERIES_YEARS
         }
 
-    variable = _series_variable("rx1day", "global_land")
+    variable = _series_variable()
     reference = {variable.id: _series_cube(spikes(1.0))}
     frames = []
     for i, variant in enumerate(("r1i1p1f1", "r2i1p1f1")):
@@ -589,13 +601,19 @@ def test_the_index_series_is_scored_held_out_over_the_test_window() -> None:
         },
         diagnostic="pr_extremes_series",
     )
-    scored = [
-        r
-        for r in rows
-        if r["data_id"] == "SynthModel" and r["var_id"] == "rx1day_global_land"
-    ]
-    assert len(scored) == 1
-    row = scored[0]
+    scored = {
+        r["var_id"]: r for r in rows if r["data_id"] == "SynthModel"
+    }
+    regions = list(get_threshold("tier2.extremes.regions"))
+    columns = {
+        f"{index}_{region}"
+        for index in ("rx1day", "rx5day")
+        for region in regions
+    }
+    # Every column is scored as its own var_id, and every annual series also
+    # gets the regime-(c) trend-consistency companion row.
+    assert set(scored) == columns | {f"{c}_trend_consistency" for c in columns}
+    row = scored["rx1day_global_land"]
     assert row["n_members"] == 2.0
     assert np.isfinite(row["crps"])
     # The paper's SS 5.6 scorecard rule: this entry's observations postdate
@@ -605,20 +623,28 @@ def test_the_index_series_is_scored_held_out_over_the_test_window() -> None:
     assert row["n_time"] == 4.0
 
 
-def test_the_series_needs_a_pre_registered_index_and_region() -> None:
-    """The index and the band are protocol choices, not free text."""
+def test_the_series_entry_refuses_a_second_variable() -> None:
+    """A variable per region would re-read the whole daily record per region."""
     from climatebench2.diags import AnnualExtremeIndexSeries
 
-    with pytest.raises(ValueError, match="diagnostic_kwargs\\['index'\\]"):
+    with pytest.raises(ValueError, match="exactly ONE suite variable"):
         _run(
             AnnualExtremeIndexSeries,
-            [_series_variable("r95ptot", "global_land")],
+            [
+                Variable("pr_a", "pr", "day", units="mm day-1"),
+                Variable("pr_b", "pr", "day", units="mm day-1", min_lat=-30.0),
+            ],
             [_series_cube({})],
         )
-    with pytest.raises(ValueError, match="diagnostic_kwargs\\['region'\\]"):
+
+
+def test_the_series_entry_refuses_a_non_precipitation_variable() -> None:
+    from climatebench2.diags import AnnualExtremeIndexSeries
+
+    with pytest.raises(ValueError, match="precipitation indices"):
         _run(
             AnnualExtremeIndexSeries,
-            [_series_variable("rx1day", "antarctica")],
+            [Variable("tasmax", "tasmax", "day")],
             [_series_cube({})],
         )
 
@@ -638,7 +664,7 @@ def test_the_series_and_the_scalar_climatology_use_the_same_index() -> None:
 
     series = _run(
         AnnualExtremeIndexSeries,
-        [_series_variable("rx1day", "global_land")],
+        [_series_variable()],
         [cube],
     ).raw_output.to_pandas()
     scalars = _run(
@@ -647,7 +673,51 @@ def test_the_series_and_the_scalar_climatology_use_the_same_index() -> None:
         [cube],
     ).raw_output.to_pandas()
 
-    assert scalars["rx1day_global_land_clim"].iloc[0] == pytest.approx(
-        float(series["rx1day_global_land"].mean()),
-        abs=1e-3,
+    for index in ("rx1day", "rx5day"):
+        for region in get_threshold("tier2.extremes.regions"):
+            assert scalars[f"{index}_{region}_clim"].iloc[0] == pytest.approx(
+                float(series[f"{index}_{region}"].mean()),
+                abs=1e-3,
+            ), f"{index}_{region}"
+
+
+def test_climateeval_loads_a_reference_once_per_suite_variable() -> None:
+    """The upstream fact the one-load design rests on — pinned, not assumed.
+
+    `SimpleDiagnostic._get_reference_cubes` and `_get_output_of_other_data`
+    both call `get_cube` inside a loop over `self._variables`, with no cache
+    across variables. So N variables in one entry means N full loads of the
+    reference AND of every `other_data` member. For a 40-year daily record
+    and ~109 comparison members that is the difference between a feasible
+    job and terabytes of re-reads, which is why `pr_extremes_series` takes
+    one variable and emits eight columns.
+    """
+    calls: list[str] = []
+
+    class _CountingSource(_StubSource):
+        def get_cube(self, _root, variable, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+            calls.append(variable.id)
+            return type(self).cubes[variable.id].copy()
+
+    cube = _pr_cube()
+    variables = [
+        Variable("pr_land", "pr", "day", units="mm day-1", landsea_mask="land_only"),
+        Variable("pr_tropics", "pr", "day", units="mm day-1", min_lat=-30.0),
+    ]
+    _CountingSource.cubes = {v.id: cube.copy() for v in variables}
+    diag = ETCCDIExtremes(
+        "extremes",
+        {
+            variable: SimpleDiagnosticInputData(reference=_CountingSource, other=())
+            for variable in variables
+        },
+        fail_on_missing_data=True,
+        download_missing_data=False,
+    )
+    diag.get_output(CubeList([cube]), _info())
+
+    assert calls == ["pr_land", "pr_tropics"], (
+        "ClimateEval cached the reference across variables — if that is now "
+        "true upstream, the one-variable constraint in "
+        "AnnualExtremeIndexSeries._check_variables can be relaxed"
     )

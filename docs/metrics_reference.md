@@ -1835,7 +1835,7 @@ gone.
 | ts (skin temperature) | (a) | ✅ (2026-09-20, `9192aaf`) — `ts` is one of the paper's nine figure variables (**RATIFIED**, decision B.26) and now has its own core-variable stanza with the comparison ensemble in `other_data`, like every other core variable. Reference **MERRA2**, not ERA5: ERA5 `ts` exists upstream (#48, merged) but only as a CDS download and the staged ERA5 has no `ts`, whereas MERRA2 `ts` is staged monthly 1980-01..2021-12 — so `ts` is scored over **2015–2021**, not the full test window. 🟡 MERRA2 is a reanalysis stand-in for a satellite skin-temperature product | suite + `climateeval.data.MERRA2` |
 | tos (SST) | (a)/(b) | 🟡 scored, but against **EN4** rather than the protocol's ESACCI-SST (2026-09-20, `b9f4952`): ESACCI-SST is not staged in ClimateEval form and a reference that does not resolve leaves every `sst*` row unscored. EN4's `tos` is the objective analysis' surface level — an SST *analysis*, not a satellite retrieval — so swap the reference back the day ESACCI-SST is staged. `tos` carries the comparison ensemble (it did not before `b9f4952`, so no comparison model reached `E_ref` there) | `sst` / `sst_baseline` / `sst_map` / `sst_eof_projection` + `climateeval.data.EN4` |
 | pr anomalies | (a) | 🟡 vs **GPCP only** (IMERG, MSWEP ❌ in ClimateEval); scored over 2015–2023, GPCP's complete years | `ScoredAnnualMeanTimeSeries` + `GPCP` |
-| pr intensity PDF, Rx1day/Rx5day/R95pTOT/CDD | scalars + skill | ✅ **computed** (WP6b, `d8df85b`): all four ETCCDI precipitation indices in `ETCCDIExtremes` (Rx5day as the annual maximum 5-day running total; R95pTOT as the fraction of the **annual total** above the base-period wet-day 95th percentile; CDD truncated at the year boundary) plus the wet-day intensity PDF in the Perkins entry above. ✅ **scored since 2026-09-21** against **IMERG** (`climatebench2.data.IMERG`, the product Table 2 names): the four indices are fair-CRPS'd across the submission's members against IMERG's own scalars over **2001–2014** — the reference's complete years clipped before the reserved window, applied to model and reference alike so the two climatologies are the same statistic (decision B.30) — with `E_ref` from the `StagedCMIP6HistoricalSSP245` members that carry `day/pr`. Rx1day and Rx5day are **additionally** emitted as an annual regional series (`diags.tier2_daily.AnnualExtremeIndexSeries`, suite entry `pr_extremes_series`, 8 variables) and scored as regime (a) over the **held-out** post-2015 window, anomalised about each source's own 1985–2014 climatology — 14 years for IMERG, just above the `min_years: 10` floor. ⚠ the other four indices are in-sample only (they are defined against a base-period percentile, or are a non-Gaussian count). The old hourly `Histogram`/EMD display remains, on `ERA5Hourly`, because IMERG is daily | `diags/tier2_daily.py`, `physics.annual_max_running_sum`/`heavy_precipitation_fraction`/`max_consecutive_dry_days` |
+| pr intensity PDF, Rx1day/Rx5day/R95pTOT/CDD | scalars + skill | ✅ **computed** (WP6b, `d8df85b`): all four ETCCDI precipitation indices in `ETCCDIExtremes` (Rx5day as the annual maximum 5-day running total; R95pTOT as the fraction of the **annual total** above the base-period wet-day 95th percentile; CDD truncated at the year boundary) plus the wet-day intensity PDF in the Perkins entry above. ✅ **scored since 2026-09-21** against **IMERG** (`climatebench2.data.IMERG`, the product Table 2 names): the four indices are fair-CRPS'd across the submission's members against IMERG's own scalars over **2001–2014** — the reference's complete years clipped before the reserved window, applied to model and reference alike so the two climatologies are the same statistic (decision B.30) — with `E_ref` from the `StagedCMIP6HistoricalSSP245` members that carry `day/pr`. Rx1day and Rx5day are **additionally** emitted as an annual regional series (`diags.tier2_daily.AnnualExtremeIndexSeries`, suite entry `pr_extremes_series`, **one** suite variable emitting 8 columns — ClimateEval re-loads a reference once per variable, so a variable per region would re-read the daily record eight times per source) and scored as regime (a) over the **held-out** post-2015 window, anomalised about each source's own 1985–2014 climatology — 14 years for IMERG, just above the `min_years: 10` floor. ⚠ the other four indices are in-sample only (they are defined against a base-period percentile, or are a non-Gaussian count). The old hourly `Histogram`/EMD display remains, on `ERA5Hourly`, because IMERG is daily | `diags/tier2_daily.py`, `physics.annual_max_running_sum`/`heavy_precipitation_fraction`/`max_consecutive_dry_days` |
 | TOA fluxes (LW/SW, all- and clear-sky) | (a) | ✅ (gap item 6, `9d4b7a9`) `rsut`, `rlut`, `rtnt` **and `rsutcs`/`rlutcs`** vs CERES-EBAF, all in `core_variables` so they are scored by the pass and carried through the annual-cycle, map, zonal-line, baseline and EOF entries alike. Scored over **2015–2024** (CERES-EBAF to 2025-09). `rtnt` is derived, so a comparison member needs all three of `rsdt`/`rsut`/`rlut` staged (`dc1efc3`) — before that fix it had **zero** comparison members | suite + `CERESEBAF` |
 | Sea ice extent, Sep/Feb minima, trends | (a)/(b) | ✅ **extent, not area** (2026-09-20, `b9f4952`; PR #47 merged): the stanzas use `SeaIceExtentAnnualCycle` / `SeaIceExtentTimeSeries` (Σ A where siconc ≥ 15 %), which is what the paper scores — area is a systematically different, much less bias-sensitive number. ⚠ There is **no `extent_threshold` diagnostic kwarg**; 15 % is the class default `_concentration_threshold` (`SEA_ICE_EXTENT_THRESHOLD`), and a suite passing `extent_threshold:` would raise on an unexpected kwarg — the commented-out stanza this replaced was wrong about the API. Reference **HadISST** (`reanalysis_HadISST/mon/siconc`, to 2021-12, so the scored window is 2015–2021); the protocol names OSI-450 / NSIDC-G02202, neither of which is staged — **RATIFIED**, decision B.25. `siconc` also gained the comparison ensemble; until `b9f4952` the sea-ice stanzas listed observational products only, so **no comparison model ever reached `E_ref`** there and every sea-ice score was unreferenced. The NH-Sep/SH-Feb minimum series is scored as regime (a); the annual-cycle entry stays deterministic (a `month_number` axis is neither regime) | `ClimateBench2_TierII.yml`, `climateeval.diags.simple._sea_ice` |
 | OHC 0–100 m, 0–2000 m | (a) | ✅ (gap item 6, `9d4b7a9`) total column, **0–2000 m and 0–100 m** (`extract_volume`) vs EN4/IAP via `OceanHeatContentTimeSeries` on `phcint`; all three are annual series with a reference, so the pass scores them as regime (a) — verified, and reached only after the per-variable reference fix | suite |
@@ -2518,8 +2518,9 @@ HadGHCND and MSWEP have no DataSource at all.
 is in-sample, which the §5.6 scorecard has to say out loud. The same two block
 maxima are therefore *also* emitted as an **annual series** —
 `diags/tier2_daily.py::AnnualExtremeIndexSeries`, one value per year,
-cos(lat)-weighted over one `tier2.extremes.regions` band, eight suite variables
-(`rx1day_<region>`, `rx5day_<region>`) — which is regime (a)'s shape, so
+cos(lat)-weighted over each `tier2.extremes.regions` band, **one suite variable
+emitting eight columns** (`rx1day_<region>`, `rx5day_<region>`) — which is
+regime (a)'s shape, so
 `scoring_pass` scores it as a **fair CRPS over the reserved post-2015 window**
 against IMERG's own series, with the CMIP6 comparison ensemble for `E_ref`. It
 is the one `held-out` entry in the daily suite (`tier2.window_labels`) and the
@@ -2536,6 +2537,31 @@ a series of them stands on its own. TX90p, WSDI and R95pTOT are all defined
 an in-sample threshold; CDD is an annual count that is far from Gaussian. Those
 four stay in-sample only, which is what the paper asks for anyway.
 
+**One variable, eight columns — a cost constraint, not a style choice.**
+ClimateEval loads `reference_data` and every `other_data` source **once per
+suite variable**: `SimpleDiagnostic._get_reference_cubes` and
+`_get_output_of_other_data` both call `get_cube` inside a loop over
+`self._variables`, and nothing is cached between them (pinned by a test, so a
+future upstream cache is noticed). A variable per (index, region) would
+therefore have re-read the full daily `pr` record eight times for IMERG *and*
+for every comparison member — terabytes of reads for eight reductions of one
+array. `AnnualExtremeIndexSeries` instead overrides `_get_raw_output_table`
+(the `ScalarTableDiagnostic` pattern applied to a time series) and refuses a
+second variable. Nothing downstream had to change: `scoring_pass
+.score_raw_output` already scores **every non-coordinate column** of a
+time-series table as its own `var_id`, so the eight columns each get their own
+fair-CRPS row and their own regime-(c) trend-consistency companion.
+
+**Daily-`pr` loads per source, for the suite as configured.** Per *comparison
+member*: **2** — `extremes`/`pr` and `pr_extremes_series`, the only two
+variables carrying `other_data` (the Perkins entries have a reference but no
+comparison ensemble, so they cost the comparison members nothing). Per
+*IMERG*: **4** — `extremes`/`pr`, the two Perkins `pr_intensity_*` variables
+and `pr_extremes_series`. Per *submission member*: the CLI loads the member's
+CubeList once, but each variable realises it independently, so also **4**
+(three of them clipped to 2001–2014). Before the one-load fix those numbers
+were 9, 11 and 11.
+
 The index in the series and the index behind the scalar are the **same**
 `physics.annual_max_running_sum` call with the same regional weighting on the
 same conservative 1° grid — the scalar climatology is exactly the mean of the
@@ -2545,9 +2571,9 @@ separately.
 ❗ Memory and cost: the whole daily record is realised as one `(time, lat, lon)`
 array on the 1° grid — fine for a few decades, heavy for a full historical run.
 The IMERG clip to 2001–2014 bounds that for the in-sample precipitation
-entries; `pr_extremes_series` does not have it, and it is eight variables ×
-(the submission's members + IMERG + every comparison member that has `day/pr`
-staged), each realising a daily record. The comparison ensemble costs nothing
+entries; `pr_extremes_series` does not have it — but it is **one** variable, not eight,
+so it realises each source's daily record once (see "one variable, eight
+columns" above). The comparison ensemble costs nothing
 until that data exists (`StagedCMIP6HistoricalSSP245` enumerates directories
 and yields only members that carry the variable at that frequency) and is the
 dominant cost the day it does. Like the other daily diagnostics (I.3b, I.5d)

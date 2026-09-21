@@ -92,18 +92,28 @@
 #
 # The one held-out entry in this suite. `extremes` above reduces each index
 # to an in-sample climatology and trend over 2001-2014; this keeps the
-# SERIES — one value per year, cos(lat)-weighted over one
-# `tier2.extremes.regions` band — which is regime (a)'s shape (a `time` axis
-# plus one column per variable id), so `scoring_pass` scores it as a fair
-# CRPS over the reserved post-2015 window against IMERG's own series, with
-# the CMIP6 comparison ensemble giving E_ref.
+# SERIES, which is regime (a)'s shape (a `time` axis plus one column per
+# scored quantity), so `scoring_pass` scores it as a fair CRPS over the
+# reserved post-2015 window against IMERG's own series, with the CMIP6
+# comparison ensemble giving E_ref.
+#
+# ONE VARIABLE, EIGHT COLUMNS, and it must stay that way. The diagnostic
+# emits `rx1day_<region>` and `rx5day_<region>` for the four
+# `tier2.extremes.regions` bands from a SINGLE `pr` load. ClimateEval loads
+# `reference_data` and every `other_data` source once per suite VARIABLE
+# (`SimpleDiagnostic._get_reference_cubes` / `_get_output_of_other_data`
+# both call `get_cube` inside a loop over the variables, with no cache), so
+# a variable per region would re-read ~40 years of daily `pr` eight times
+# for IMERG and for every one of the ~109 comparison members -- terabytes
+# of reads for eight reductions of one array. The diagnostic refuses a
+# second variable rather than letting that come back.
 #
 # WINDOW. No `timerange`, deliberately, and it must stay that way: this
 # entry is listed in `tier2.anomaly_baseline`, so every source (the
 # submission's members, IMERG, every comparison member) is reduced to an
 # anomaly about ITS OWN 1985-2014 climatology before the post-2015 steps are
 # scored. IMERG contributes 2001-2014 = 14 baseline years, above the
-# `tier2.anomaly_baseline.min_years` = 10 floor — the thinnest baseline of
+# `tier2.anomaly_baseline.min_years` = 10 floor -- the thinnest baseline of
 # any scored entry, and the reason B.29 matters. That same listing is what
 # exempts it from the pre-test cap `reference_windows` puts on the entries
 # above.
@@ -113,77 +123,14 @@
 # WSDI and R95pTOT are defined against a base-period percentile (the
 # held-out years would be scored through an in-sample threshold) and CDD is
 # a far-from-Gaussian annual count. Those four stay in-sample only.
-#
-# COST. Eight variables x (submission members + IMERG + the comparison
-# ensemble), each realising a daily record on the 1 degree grid. The
-# comparison ensemble only appears for members that actually have
-# `day/pr` staged (`StagedCMIP6HistoricalSSP245` enumerates directories), so
-# this is free until that data exists and expensive the day it does.
 - name: pr_extremes_series
   diagnostic: climatebench2.diags.AnnualExtremeIndexSeries
   variables:
-    - id: rx1day_global_land
+    - id: pr
       var_name: pr
       frequency: day
       units: mm day-1
       landsea_mask: land_only
-      diagnostic_kwargs: {index: rx1day, region: global_land}
-      reference_data: climatebench2.data.IMERG
-      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
-    - id: rx1day_tropical_land
-      var_name: pr
-      frequency: day
-      units: mm day-1
-      landsea_mask: land_only
-      diagnostic_kwargs: {index: rx1day, region: tropical_land}
-      reference_data: climatebench2.data.IMERG
-      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
-    - id: rx1day_nh_extratropical_land
-      var_name: pr
-      frequency: day
-      units: mm day-1
-      landsea_mask: land_only
-      diagnostic_kwargs: {index: rx1day, region: nh_extratropical_land}
-      reference_data: climatebench2.data.IMERG
-      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
-    - id: rx1day_sh_extratropical_land
-      var_name: pr
-      frequency: day
-      units: mm day-1
-      landsea_mask: land_only
-      diagnostic_kwargs: {index: rx1day, region: sh_extratropical_land}
-      reference_data: climatebench2.data.IMERG
-      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
-    - id: rx5day_global_land
-      var_name: pr
-      frequency: day
-      units: mm day-1
-      landsea_mask: land_only
-      diagnostic_kwargs: {index: rx5day, region: global_land}
-      reference_data: climatebench2.data.IMERG
-      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
-    - id: rx5day_tropical_land
-      var_name: pr
-      frequency: day
-      units: mm day-1
-      landsea_mask: land_only
-      diagnostic_kwargs: {index: rx5day, region: tropical_land}
-      reference_data: climatebench2.data.IMERG
-      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
-    - id: rx5day_nh_extratropical_land
-      var_name: pr
-      frequency: day
-      units: mm day-1
-      landsea_mask: land_only
-      diagnostic_kwargs: {index: rx5day, region: nh_extratropical_land}
-      reference_data: climatebench2.data.IMERG
-      other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
-    - id: rx5day_sh_extratropical_land
-      var_name: pr
-      frequency: day
-      units: mm day-1
-      landsea_mask: land_only
-      diagnostic_kwargs: {index: rx5day, region: sh_extratropical_land}
       reference_data: climatebench2.data.IMERG
       other_data: [climatebench2.data.StagedCMIP6HistoricalSSP245]
 

@@ -292,7 +292,7 @@ DAILY_DEFINITION = [
         "name": "pr_extremes_series",
         "variables": [
             {
-                "id": "rx1day_global_land",
+                "id": "pr",
                 "var_name": "pr",
                 "frequency": "day",
                 "reference_data": "climatebench2.data.IMERG",
@@ -357,7 +357,7 @@ def test_the_held_out_series_keeps_the_whole_record(tmp_path) -> None:  # noqa: 
     """
     _imerg_files(tmp_path)
     used = _daily_windows(tmp_path)
-    assert used["pr_extremes_series/rx1day_global_land"] is None
+    assert used["pr_extremes_series/pr"] is None
 
 
 def test_a_full_record_suite_without_a_data_root_is_untouched() -> None:

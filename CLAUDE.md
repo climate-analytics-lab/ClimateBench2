@@ -25,7 +25,7 @@ Two documents govern all work here:
   "Decisions needed from Duncan" section is where every ⚠ / `TODO(Duncan)`
   lives — add to it rather than inventing a value.
 
-**Current state (2026-09-21): 351 tests pass.** Every test fixture is still
+**Current state (2026-09-21): 380 tests pass.** Every test fixture is still
 synthetic, so the test suite alone never licenses "working" — but the code is
 no longer untried on real data. Tier I has run end to end on **CNRM-CM6-1**
 (every Required gate produces a row) and Tier II on **MPI-ESM1-2-LR** against a
@@ -56,8 +56,10 @@ climatebench2/
 ├── physics.py           # pure Tier I physics + the ETCCDI indices (numpy only)
 ├── baselines.py         # climatology pseudo-members, the calibrated two-layer EBM
 ├── data/                # packaged protocol tables (the ERF series behind the EBM)
-│   └── cmip6_staged.py  #   + StagedCMIP6HistoricalSSP245: the CMIP6 comparison
-│                        #     ensemble behind E_ref, found in a staged root
+│   ├── cmip6_staged.py  #   + StagedCMIP6HistoricalSSP245: the CMIP6 comparison
+│   │                    #     ensemble behind E_ref, found in a staged root
+│   └── imerg.py         #   + IMERG: the daily-pr observational reference (paper
+│                        #     Table 2). Belongs upstream; here because the pin
 ├── leaderboard/         # .ddb results → scores table → static HTML page
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 ```
@@ -121,7 +123,10 @@ climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --mem
 #   source's own 1985-2014 climatology; only the post-2015 steps are scored, and the
 #   maps/annual cycles/EOF basis keep the test window -- and TierII_daily takes the
 #   FULL record (its extremes/PDF/diurnal climatologies are defined over it, so
-#   every entry there is in-sample)
+#   every entry there is in-sample EXCEPT `pr_extremes_series`, the held-out annual
+#   Rx1day/Rx5day series). A variable of that suite with a STAGED reference is cut
+#   to the reference's own record clipped before 2015 (IMERG: 2001-2014), so the
+#   model and the observations give the same in-sample statistic
 climatebench2 score MODEL --name MyModel -o /work/run/MyModel --data-root /work/staged
 #   -o/--out is the run's output directory (default <name>_climatebench2/); --data-root
 #   is the staged reference tree AND, unless $CLIMATEBENCH2_STAGED_CMIP6_ROOT overrides

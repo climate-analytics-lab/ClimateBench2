@@ -224,6 +224,41 @@ tier2:
   # A reference whose record covers fewer than this many years of the baseline
   # window is skipped (with a logged reason) rather than half-sampled.
   climatology_baseline_min_years: 10
+
+  # REGIME (a) IS SCORED ON ANOMALIES (paper §scoring; metrics_reference.md
+  # "(a) Time-resolved quantities"). Every scored time series — the
+  # submission's members, the reference and every comparison member — is first
+  # reduced to an anomaly about ITS OWN climatology over
+  # `climatology_baseline_period`, per `data_id` (i.e. per ensemble member),
+  # and only then cut to `test_window_start`-present for scoring. Without this
+  # the fair CRPS is dominated by each field's mean-state bias rather than by
+  # the forced trajectory + internal variability the protocol asks about (on
+  # real data CNRM-CM6-1's 1.1 K cold absolute GMST bias alone gave
+  # CRPS ~ 1.0 K and skill -2.85 with a perfectly good post-2015 trajectory).
+  #
+  # Which suite entries this applies to is protocol metadata, exactly like
+  # `window_labels` below, and is keyed the same way (the suite entry name =
+  # the DuckDB schema the rows land in). It drives BOTH halves of the
+  # mechanism: `reference_windows.apply_reference_windows` gives a listed
+  # entry the baseline-extended load window, and `scoring_pass` anomalises
+  # its series. `default` is false so Tier I, `ClimateBench2_TierII_daily`
+  # (whose annual block maxima are in-sample over the full record) and any
+  # user suite keep absolute values.
+  anomaly_baseline:
+    default: false
+    diagnostics:
+      annual_mean_timeseries: true
+      sst: true
+      ohc: true
+      sea_ice_minimum: true
+    # A source covering fewer than this many distinct years of the baseline
+    # window is NOT scored: it gets a `reason` row, never a silent fall back
+    # to absolute values. ⚠ TODO(Duncan): 10 matches
+    # `climatology_baseline_min_years` above. 20 would be the stricter,
+    # more conventional climatological minimum, but CERES-EBAF starts
+    # 2000-03, so 20 would leave rsut/rlut/rtnt/rsutcs/rlutcs — five of the
+    # paper's nine figure variables — unscored.
+    min_years: 10
   # Regime (a): fair (Ferro) CRPS with effective-sample-size correction on the
   # reported uncertainty. Fair CRPS is undefined for a deterministic forecast,
   # so a single-member model is reported as "n/a (single member)", never as

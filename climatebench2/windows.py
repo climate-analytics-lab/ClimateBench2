@@ -10,8 +10,11 @@ control into observation-length segments) cannot drift apart:
   year every January without a code change.
 - **baseline window** — ``tier2.climatology_baseline_period`` = 1985–2014;
   the pre-test record. It is the Climatology baseline's sample, the Pinatubo
-  reference climatology, and the reference's PRE-2015 record for the
-  regime-(b) EOF basis and its standardisation.
+  reference climatology, the reference's PRE-2015 record for the regime-(b)
+  EOF basis and its standardisation, and — since the regime-(a) scores are
+  **anomalies** — the climatology every scored time series is taken relative
+  to, which is why the scored suite entries load from its first year
+  (:func:`extend_to_baseline`).
 - **long trend window** — ``tier2.long_trend_start`` → the last complete
   year; the "1950-present" window of §II.1, the second length the
   internal-variability diagnostic reports σ_int for.
@@ -57,6 +60,54 @@ def baseline_window_years() -> tuple[int, int]:
 def baseline_timerange() -> str:
     """ISO timerange of the pre-test baseline window."""
     return timerange(*baseline_window_years())
+
+
+def extend_to_baseline(nominal: str) -> str:
+    """``nominal`` with its start pulled back to the baseline window's first year.
+
+    Regime (a) scores **anomalies about each source's own 1985–2014
+    climatology** (docs/metrics_reference.md, Tier II preamble), so the suite
+    entries whose ``raw_output`` is a scored time series must load the
+    submission, the reference and every comparison member from the baseline
+    start, not from ``tier2.test_window_start``. The end is untouched: it is
+    still the last scored year, and :mod:`climatebench2.reference_windows`
+    still clips it to what each reference product actually covers.
+
+    A ``nominal`` that already reaches back past the baseline (a user's
+    ``--timerange 19790101/...``) is returned unchanged.
+    """
+    first = int(nominal.split("/")[0][:4])
+    last = int(nominal.split("/")[1][:4])
+    baseline_first, _ = baseline_window_years()
+    return timerange(min(first, baseline_first), last)
+
+
+def scores_anomalies(entry_name: str) -> bool:
+    """Whether one suite entry's time series are scored as **anomalies**.
+
+    Regime (a) scores anomalies about each source's own baseline-window
+    climatology, but only for the entries the protocol says so of
+    (``tier2.anomaly_baseline``, keyed by suite entry name — which is also
+    the DuckDB schema the rows land in, so ``leaderboard --rescore`` resolves
+    it the same way the suite run did). Everything unlisted takes ``default``,
+    which is false: Tier I, the daily suite's in-sample annual block maxima
+    and any user suite keep absolute values.
+
+    This one predicate drives both halves of the mechanism — the load window
+    (:func:`climatebench2.reference_windows.apply_reference_windows`) and the
+    scoring (:mod:`climatebench2.scoring_pass`) — so the two cannot disagree
+    about which series are anomalies.
+    """
+    table = get_threshold("tier2.anomaly_baseline")
+    by_entry = table.get("diagnostics") or {}
+    if entry_name in by_entry:
+        return bool(by_entry[entry_name])
+    return bool(table.get("default", False))
+
+
+def anomaly_min_baseline_years() -> int:
+    """Distinct baseline years a source needs before it may be anomalised."""
+    return int(get_threshold("tier2.anomaly_baseline.min_years"))
 
 
 def long_trend_window_years(today: dt.date | None = None) -> tuple[int, int]:

@@ -12,6 +12,7 @@ import datetime as dt
 
 import pytest
 
+from climatebench2 import windows as cb2_windows
 from climatebench2._cli import (
     DEFAULT_SUITES,
     DEFAULT_TIMERANGE,
@@ -297,15 +298,21 @@ def test_score_feeds_each_suite_its_protocol_window(  # noqa: PLR0915
     assert variability["data"] == [f"cubes:{picontrol}:None"]
     assert variability["timerange"] == "*"  # no cut
 
-    # Tier II: model cubes cut to the derived post-2015 test window, once per
-    # member, appending into the one database
+    # Tier II: once per member, appending into the one database. The cubes
+    # are loaded from the BASELINE window's first year, because regime (a)
+    # scores anomalies about each source's own 1985-2014 climatology; the
+    # suite's own entries then take either that extended window (the scored
+    # time series, which is what `run["timerange"]` reads back) or the
+    # nominal test window (the maps, the EOF basis, the annual cycles).
     tier2_runs = [run for run in runs if run["suite"] == "ClimateBench2_TierII"]
     window = default_tier2_timerange()
+    extended = cb2_windows.extend_to_baseline(window)
+    assert extended.startswith("1985") and extended.endswith(window.split("/")[1])
     assert len(tier2_runs) == 2
     assert [run["variant"] for run in tier2_runs] == ["r1i1p1f1", "r2i1p1f1"]
     assert [run["append"] for run in tier2_runs] == [False, True]
-    assert {run["timerange"] for run in tier2_runs} == {window}
-    assert (str(model / "historical" / "r2i1p1f1"), window) in loads
+    assert {run["timerange"] for run in tier2_runs} == {extended}
+    assert (str(model / "historical" / "r2i1p1f1"), extended) in loads
 
 
 def test_score_timerange_overrides_only_the_cube_suites(
@@ -386,7 +393,8 @@ def test_explicit_members_win_over_discovery(
         [str(model), "--member", f"r9i1p1f1={other}", "--suite", "ClimateBench2_TierII"],
     )
     assert [run["variant"] for run in runs] == ["r9i1p1f1"]
-    assert runs[0]["data"] == [f"cubes:{other}:{default_tier2_timerange()}"]
+    loaded = cb2_windows.extend_to_baseline(default_tier2_timerange())
+    assert runs[0]["data"] == [f"cubes:{other}:{loaded}"]
 
 
 def test_tier2_events_runs_once_per_member_with_its_own_historical(

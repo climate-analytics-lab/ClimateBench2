@@ -157,13 +157,40 @@ def test_apply_reference_windows_rewrites_every_variable(tmp_path) -> None:  # n
         tmp_path,
         resolved=resolved,
     )
+    # `annual_mean_timeseries` is scored on anomalies, so its window reaches
+    # back to the baseline window's first year; the end is still clipped to
+    # what the reference actually covers (HadCRUT5 here stops 2023-09, so
+    # 2022 is its last complete scored year).
     windows = {v["id"]: v["timerange"] for v in out[0]["variables"]}
-    assert windows == {"tas": "20150101/20221231", "pr": NOMINAL}
-    assert resolved == windows
-    # Only the clipped one is reported.
-    assert list(reference_windows.summarise(resolved, NOMINAL)) == [
-        "  tas: 20150101/20221231 (nominal 20150101/20251231)",
+    assert windows == {"tas": "19850101/20221231", "pr": "19850101/20251231"}
+    assert resolved == {
+        "annual_mean_timeseries/tas": ("19850101/20221231", "19850101/20251231"),
+        "annual_mean_timeseries/pr": ("19850101/20251231", "19850101/20251231"),
+    }
+    # Only the clipped one is reported: `pr` got exactly what was asked for.
+    assert list(reference_windows.summarise(resolved)) == [
+        "  annual_mean_timeseries/tas: 19850101/20221231 "
+        "(asked for 19850101/20251231)",
     ]
+
+
+def test_only_the_anomaly_scored_entries_reach_back_to_the_baseline() -> None:
+    """The EOF basis and the maps keep the test window; the series do not."""
+    definition = [
+        {
+            "name": name,
+            "variables": [{"id": "tas", "var_name": "tas", "frequency": "mon"}],
+        }
+        for name in ("annual_mean_timeseries", "map", "eof_projection", "sst")
+    ]
+    out = reference_windows.apply_reference_windows(definition, NOMINAL, None)
+    used = {entry["name"]: entry["variables"][0]["timerange"] for entry in out}
+    assert used == {
+        "annual_mean_timeseries": "19850101/20251231",
+        "sst": "19850101/20251231",
+        "map": NOMINAL,
+        "eof_projection": NOMINAL,
+    }
 
 
 def test_cli_materialises_a_windowed_suite(tmp_path) -> None:  # noqa: ANN001
@@ -198,6 +225,8 @@ def test_cli_materialises_a_windowed_suite(tmp_path) -> None:  # noqa: ANN001
 
     # Same stem, so the suite keeps its name and its database filename.
     assert target.endswith("MySuite.yml")
-    assert used == {"tas": "20150101/20221231"}
+    assert used == {
+        "annual_mean_timeseries/tas": ("19850101/20221231", "19850101/20251231"),
+    }
     written = yaml.safe_load(open(target, encoding="utf-8"))  # noqa: PTH123, SIM115
-    assert written[0]["variables"][0]["timerange"] == "20150101/20221231"
+    assert written[0]["variables"][0]["timerange"] == "19850101/20221231"

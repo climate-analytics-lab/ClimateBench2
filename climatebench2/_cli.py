@@ -40,7 +40,14 @@ Each suite is fed the data *shape* and time window the protocol asks for
   **piControl** experiment in full — the paper asks for ≥ 100 yr of control;
 - the Tier II suites take the model's cubes cut to the **post-2015 test
   window** (``tier2.test_window_start`` → ``<start>0101/<last complete
-  year>1231``), which ``--timerange`` overrides explicitly.
+  year>1231``), which ``--timerange`` overrides explicitly. The monthly
+  Tier II suite is then windowed **per suite entry**
+  (:func:`materialise_windowed_suite`): its regime-(a) time-series entries
+  reach back to the **baseline window's first year** (1985), because they
+  are scored on anomalies about each source's own 1985–2014 climatology,
+  while the EOF basis, the maps, the annual cycles and the zonal lines keep
+  the test window. The submission's cubes are therefore loaded from 1985
+  too; every diagnostic re-clips them to its own variable's ``timerange``.
 """
 
 from __future__ import annotations
@@ -270,23 +277,33 @@ def materialise_windowed_suite(
     out_dir: Path,
     nominal: str,
     data_root: Path | None,
-) -> tuple[str, dict[str, str]]:
-    """Write a copy of a suite YAML with a per-variable scored window.
+) -> tuple[str, dict[str, tuple[str, str]]]:
+    """Write a copy of a suite YAML with a per-entry, per-variable window.
 
-    The protocol's test window runs to the last complete year, but no
-    observational product is that current, and ClimateEval *drops* a reference
-    whose record stops short of the requested range rather than clipping it
-    (:mod:`climatebench2.reference_windows`) — which silently deletes the
-    variable's entire row from the scorecard. Writing the clipped window into
-    each variable stanza, and building the suite with no global
-    ``variable_kwargs['timerange']``, is what keeps those rows.
+    A single global ``variable_kwargs['timerange']`` cannot express what the
+    Tier II suite needs, for two reasons:
+
+    * The protocol's test window runs to the last complete year, but no
+      observational product is that current, and ClimateEval *drops* a
+      reference whose record stops short of the requested range rather than
+      clipping it (:mod:`climatebench2.reference_windows`) — which silently
+      deletes the variable's entire row from the scorecard.
+    * Regime (a) is scored on **anomalies about each source's own 1985–2014
+      climatology**, so the scored time-series entries must load from 1985
+      while the EOF basis, the maps, the annual cycles and the zonal lines
+      must keep the test window — their statistic *is* the test-window field.
+
+    Writing the resolved window into each variable stanza, and building the
+    suite with no global ``variable_kwargs['timerange']``, is what expresses
+    both. Returns the written path and
+    ``"<entry>/<variable>" -> (window used, window asked for)``.
     """
     import yaml
 
     from climatebench2 import reference_windows
 
     definition = yaml.safe_load(Path(resolved).read_text(encoding="utf-8"))
-    windows_used: dict[str, str] = {}
+    windows_used: dict[str, tuple[str, str]] = {}
     windowed = reference_windows.apply_reference_windows(
         definition,
         nominal,
@@ -549,14 +566,19 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
             # diagnostic swallows unknown kwargs (`ComplexDiagnostic._kwargs`).
             extra_kwargs["paleo_data_root"] = str(args.paleo_data_root)
 
-        # Per-variable scored window. A reference that stops short of the
-        # requested range is DROPPED by ClimateEval, not clipped, so a window
-        # running to the last complete year would delete `tas` (HadCRUT5 ends
-        # 2023-09), `siconc` (HadISST 2021-12) and the clouds (ESACCI-CLOUD
-        # 2016) from the scorecard entirely. Resolve each variable's window
-        # against what is staged and carry it in the suite itself.
+        # Per-ENTRY, per-variable scored window, carried in the suite itself
+        # rather than as one global `variable_kwargs['timerange']`:
+        #   * a reference that stops short of the requested range is DROPPED
+        #     by ClimateEval, not clipped, so a window running to the last
+        #     complete year would delete `tas` (HadCRUT5 ends 2023-09),
+        #     `siconc` (HadISST 2021-12) and the clouds (ESACCI-CLOUD 2016)
+        #     from the scorecard entirely;
+        #   * the regime-(a) entries are scored on ANOMALIES about each
+        #     source's own 1985-2014 climatology, so they load from 1985
+        #     while the EOF basis, the maps and the annual cycles keep the
+        #     test window (`windows.scores_anomalies`).
         suite_timerange_kwarg: str | None = timerange
-        if timerange is not None and args.data_root is not None:
+        if timerange is not None:
             windowed_dir = out_dir / "_windowed_suites"
             windowed_dir.mkdir(parents=True, exist_ok=True)
             resolved, windows_used = materialise_windowed_suite(
@@ -568,14 +590,16 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
             suite_timerange_kwarg = None
             from climatebench2 import reference_windows
 
-            clipped = list(reference_windows.summarise(windows_used, timerange))
-            if clipped:
+            moved = list(reference_windows.summarise(windows_used))
+            if moved:
                 print(
-                    f"Suite '{stem}': the scored window is clipped to the "
-                    f"reference record for {len(clipped)} variable(s) —",
+                    f"Suite '{stem}': {len(moved)} variable window(s) differ "
+                    f"from the nominal {timerange} — extended back to the "
+                    f"baseline window where the score is an anomaly, clipped "
+                    f"forward to what the reference record covers —",
                     file=sys.stderr,
                 )
-                for line in clipped:
+                for line in moved:
                     print(line, file=sys.stderr)
 
         suite = build_suite(resolved, extra_kwargs, suite_timerange_kwarg)
@@ -634,7 +658,22 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
                 if spec.per_member
                 else [(first_label, first_path)]
             )
-            runs = [(load(path, timerange), info_for(label)) for label, path in chosen]
+            # The submission is loaded over the WIDEST window any entry of
+            # this suite asks for — back to the baseline window, because the
+            # regime-(a) entries score anomalies about each member's own
+            # 1985-2014 climatology. That costs only file reads: every
+            # diagnostic re-clips the CubeList to its own variable's
+            # `timerange` (`climateeval._utils.get_prepared_cube` ->
+            # `_extract_time_and_region`), so the entries that keep the test
+            # window are unaffected.
+            load_timerange = (
+                windows.extend_to_baseline(timerange)
+                if timerange is not None
+                else None
+            )
+            runs = [
+                (load(path, load_timerange), info_for(label)) for label, path in chosen
+            ]
 
         if spec.window == "tier2":
             root = staged_root(args.data_root)

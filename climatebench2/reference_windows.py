@@ -16,8 +16,17 @@ reference is not a smaller score, it is *no score at all*: the variable's whole
 row vanishes from the scorecard, silently. On real data that removed ``tas`` —
 the protocol's primary Tier II variable — from every Tier II table.
 
-So the window is resolved **per variable** against the reference actually
-staged, and the resolved window is what the suite carries. The protocol's
+A second thing moves a window: regime (a) is scored on **anomalies about
+each source's own 1985–2014 climatology**, so the suite entries whose series
+are scored that way (``windows.scores_anomalies``) are loaded from the
+baseline window's first year rather than from the start of the test window.
+That extension happens *before* the clip, so a reference that starts inside
+the baseline window (CERES-EBAF: 2000-03) keeps the part of it that exists
+and the scoring pass decides whether it is enough.
+
+So the window is resolved **per variable and per suite entry** against the
+reference actually staged, and the resolved window is what the suite
+carries. The protocol's
 intent is preserved: every model is scored over the same window for a given
 variable (the window is a property of the reference, not of the submission),
 and the window used is reported rather than assumed. A variable whose reference
@@ -222,16 +231,42 @@ def apply_reference_windows(
     nominal: str,
     data_root: Path | str | None,
     *,
-    resolved: dict[str, str] | None = None,
+    resolved: dict[str, tuple[str, str]] | None = None,
+    entry: str = "",
 ) -> Any:  # noqa: ANN401
     """Walk a parsed suite definition, giving each variable its own window.
 
+    Two things decide a variable's window, in this order:
+
+    1. **the suite entry it belongs to.** An entry whose series are scored as
+       anomalies (``windows.scores_anomalies``, i.e. regime (a)) is loaded
+       from the **baseline window's first year**, not from the start of the
+       test window: the anomaly of the submission, of the reference and of
+       every comparison member is taken about that source's own 1985–2014
+       climatology, so the climatology has to be in the cube. Every other
+       entry — the EOF basis, the maps, the annual cycles, the zonal lines —
+       keeps the nominal test window, because their statistic *is* the
+       test-window field and a longer cube would silently redefine it.
+    2. **what the reference actually covers**, as before. Clipping narrows
+       both ends, so a reference that starts after 1985 (CERES-EBAF: 2000-03)
+       keeps whatever part of the baseline it has — and the scoring pass, not
+       this module, decides whether that is enough to anomalise with.
+
     Returns the rewritten definition. ``resolved``, when given, collects
-    ``variable id -> timerange`` for reporting.
+    ``"<entry>/<variable id>" -> (window used, window asked for)`` for
+    reporting — keyed by entry because one variable now gets *different*
+    windows in different entries (``tas`` is loaded from 1985 for
+    ``annual_mean_timeseries`` and from 2015 for ``map``).
     """
     if isinstance(node, list):
         return [
-            apply_reference_windows(item, nominal, data_root, resolved=resolved)
+            apply_reference_windows(
+                item,
+                nominal,
+                data_root,
+                resolved=resolved,
+                entry=entry,
+            )
             for item in node
         ]
     if not isinstance(node, dict):
@@ -239,16 +274,33 @@ def apply_reference_windows(
     if "var_name" in node and "frequency" in node:
         timerange = resolve_variable_timerange(node, nominal, data_root)
         if resolved is not None:
-            resolved[str(node.get("id", node["var_name"]))] = timerange
+            var_id = str(node.get("id", node["var_name"]))
+            key = f"{entry}/{var_id}" if entry else var_id
+            resolved[key] = (timerange, nominal)
         return {**node, "timerange": timerange}
+    if "variables" in node:
+        entry = str(node.get("name", entry))
+        if windows.scores_anomalies(entry):
+            nominal = windows.extend_to_baseline(nominal)
     return {
-        key: apply_reference_windows(value, nominal, data_root, resolved=resolved)
+        key: apply_reference_windows(
+            value,
+            nominal,
+            data_root,
+            resolved=resolved,
+            entry=entry,
+        )
         for key, value in node.items()
     }
 
 
-def summarise(resolved: dict[str, str], nominal: str) -> Iterable[str]:
-    """Human-readable lines describing every window that had to be clipped."""
-    for var_id, timerange in sorted(resolved.items()):
+def summarise(resolved: dict[str, tuple[str, str]]) -> Iterable[str]:
+    """Human-readable lines for every window that is not the protocol nominal.
+
+    Two things move a window off the nominal: the regime-(a) extension back
+    to the baseline window, and the clip to the reference's record. Both are
+    worth printing, and the ``(asked for …)`` half says which happened.
+    """
+    for key, (timerange, nominal) in sorted(resolved.items()):
         if timerange != nominal:
-            yield f"  {var_id}: {timerange} (nominal {nominal})"
+            yield f"  {key}: {timerange} (asked for {nominal})"

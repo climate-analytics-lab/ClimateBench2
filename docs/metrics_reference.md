@@ -502,14 +502,14 @@ bound is unreachable or the definition is ambiguous. They are recorded here rath
    (2020, GRL, doi:10.1029/2020GL089235) GCM consensus of 1.9 W m⁻² K⁻¹; tolerance
    stays ±25 % → [1.425, 2.375]. The gridpoint/`historical` statistic is dropped
    entirely rather than kept alongside it. See §I.3a for the full spec and code.
-2. **I.1's 0.1 W m⁻² mean bound will fail most of CMIP6, and the regrid biases it.**
+2. **I.1's 0.1 W m⁻² mean bound will fail most of CMIP6, and the regrid biases it.** *(Resolved 2026-09-21: bound is now 0.5 W m⁻², 27/51 pass; text below is the original finding.)*
    |μ(N)| < 0.1 W m⁻² over the last 100 yr of piControl is tighter than the published
    drift of most CMIP6 controls; the Tier I ensemble will show how many. Separately, the
    protocol's common **2° regrid biases the global mean by about +0.05 W m⁻²** — half
    the bound — so the number a submission is judged on is partly an artefact of the
    evaluation grid. Options: loosen the bound, compute the mean on the native grid, or
    state the regrid as part of the definition. → I.1.
-3. **I.8a's AMET peak-latitude bound is one grid cell wide.** `45 ± 5°` on the common 2°
+3. **I.8a's AMET peak-latitude bound is one grid cell wide.** *(Resolved 2026-09-21: bound is now 41 ± 2.5°N, 43/43 pass with the sub-gridscale peak; text below is the original finding.)* `45 ± 5°` on the common 2°
    grid admits essentially the cells at 41, 43, 45, 47 and 49°N, and the peak of a
    smooth profile moves by a cell for reasons that are not physics. On CNRM-CM6-1 the
    AMET peak sits at **39.9°N** — just outside. Either the bound is a genuine 5°
@@ -544,7 +544,7 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 
 | # | Diagnostic | Paper requirement (short) | Req. | Status (2026-09-20) | Code |
 |---|---|---|---|---|---|
-| I.1 | Energy balance (piControl) | \|μ(N)\| < 0.1 W/m²; 10-yr-running-mean drift \|δ\| < 0.02 W/m²/decade; **evaluated over the last 100 yr of piControl** | Req. | ✅ both criteria over the last `tier1.energy_balance.evaluation_years` = 100 annual values; a shorter control is used whole with a logged warning and the length reported as `n_years`. **Run on real data:** CNRM-CM6-1 gives a mean imbalance of **+1.45 W m⁻²** against the 0.1 bound — see decision E.2, which is about the bound and the 2° regrid, not about this code | `diags.tier1_physics.EnergyBalanceGate`, `physics.running_mean_drift` |
+| I.1 | Energy balance (piControl) | \|μ(N)\| < **0.5** W/m² (was 0.1; ratified 2026-09-21, see decision list); 10-yr-running-mean drift \|δ\| < 0.02 W/m²/decade; **evaluated over the last 100 yr of piControl** | Req. | ✅ both criteria over the last `tier1.energy_balance.evaluation_years` = 100 annual values; a shorter control is used whole with a logged warning and the length reported as `n_years`. **Run on real data:** CNRM-CM6-1 gives a mean imbalance of **+1.45 W m⁻²** against the 0.1 bound — see decision E.2, which is about the bound and the 2° regrid, not about this code | `diags.tier1_physics.EnergyBalanceGate`, `physics.running_mean_drift` |
 | I.2a | Water budget closure | \|⟨P⟩−⟨E⟩\| < 0.05 mm/day | Req. | ✅ | `ClosureGate`, `physics.water_budget_residual` |
 | I.2b | Atmospheric energy budget | \|⟨Q_rad⟩ − (⟨L·P⟩+⟨SHF⟩)\| < 2 W/m² | Req. | ✅ the paper's arrangement, `Q_rad = sfc_net_rad − TOA_net`; an Earth-like column (LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m²) now closes to ≈ 0 | `ClosureGate`, `physics.atmospheric_energy_residual` |
 | I.3a | Clear-sky LW feedback β = ∂rlutcs/∂Ts | global-mean **forced** slope (abrupt-4xCO2 vs piControl) within ±25% of 1.9 W/m²/K — **RATIFIED 2026-09-21** | Req. | ✅ OLS slope of annual global-mean `rlutcs` on `ts` anomalies (baseline = piControl long-term mean, `physics.gregory_regression`), ±25% of 1.9. Closes decision E.1: on CNRM-CM6-1 the forced-response slope was already measured at **1.75**, inside the new window (the superseded interannual `historical` gridpoint statistic gave 0.71, outside the old [1.65, 2.75]) | `ClearSkyFeedbackGate`, `physics.gregory_regression` |
@@ -560,7 +560,7 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 | I.6b | Arctic amplification | (ΔT>66.5N)/(ΔT global) ≥ 1.5; a4x last 50 yr | Req. | ✅ thin wrapper over `climateeval.diags.complex.ArcticAmplification` (⬆ done) | `ArcticAmplificationGate` |
 | I.6c | ECS (Gregory, 150 yr) | ∈ [1, 7] K | Req. | ✅ gate wrapper over ClimateEval's `ECS` (the template for the ⬆ rows). **Run on real data:** CNRM-CM6-1 gives **4.90 K**, inside [1, 7] | `ECSGate` |
 | I.7 | Aerosol forcing (hist-aer) | 2015 aerosol ERF ∈ [−2.0, −0.5] W/m²; ΔT(2015) < 0 — **Required** (promoted from Extended) | Req. | ✅ ERF = ΔN − λ_Gregory·ΔT, range, cooling; "2015" is now the **decadal mean** `tier1.aerosol_forcing.window` = 2010–2019, slid back (keeping its length) to the end of a hist-aer record that stops in 2014 and emitted as `window_first/last_year`; drift removed with the **parallel piControl segment** from `branch_time_in_parent`/`parent_time_units`, falling back to the long-term mean with a warning (`parallel_segment` flag) | `AerosolForcingGate`, `physics.aerosol_erf` / `clip_window_to_record` / `parallel_control_window` |
-| I.8a | Meridional heat transport | OMET peak 1.5–2.0 PW near 15–20°; AMET peak 4–5 PW near ~45° | Req. | ✅ thresholds per paper (15–20°, 45 ± 5°); thin wrapper over `climateeval.diags.complex.MeridionalHeatTransport`, search bands from `thresholds.yml` (⬆ done). **Run on real data:** CNRM-CM6-1's AMET peak is at **39.9°N**, just outside `45 ± 5°` — and on the 2° grid that bound is about one cell wide, decision E.3 | `MeridionalHeatTransportGate` |
+| I.8a | Meridional heat transport | OMET peak 1.5–2.0 PW near 15–20°; AMET peak 4–5 PW at **41 ± 2.5°N** (was 45 ± 5; ratified 2026-09-21) | Req. | ✅ thresholds per paper (15–20°, 45 ± 5°); thin wrapper over `climateeval.diags.complex.MeridionalHeatTransport`, search bands from `thresholds.yml` (⬆ done). **Run on real data:** CNRM-CM6-1's AMET peak is at **39.9°N**, just outside `45 ± 5°` — and on the 2° grid that bound is about one cell wide, decision E.3 | `MeridionalHeatTransportGate` |
 | I.8b | ITCZ–EFE relationship | 12-month climatology; slope within ±50% of ~3°/PW; r > 0.9 | Req. | ✅ 12-month climatology, slope ±50% of 3°/PW, \|r\| > 0.9; the hard-coded-1980 bug is gone. **Real-data fix (2026-09-20):** the ITCZ latitude *lags* F_xeq by `tier1.itcz_efe.itcz_lag_months` = 2 months (Donohoe et al. 2013's seasonal-cycle lag), which the regression must account for — without it, CNRM-CM6-1 gave slope/r = **−1.18 / −0.43** (both gate rows failing) and MPI-ESM1-2-LR **−2.04 / −0.59** (only the slope passing); with the lag, CNRM-CM6-1 gives **−2.59 / −0.94** and MPI-ESM1-2-LR **−3.18 / −0.92**, both gate rows passing on both models | `ITCZEFEGate`, `physics.itcz_efe_regression` |
 | (extra) | Bjerknes compensation 40–70N | not in paper's Tier I list as specced | extra | ✅ vs its own spec; tagged `requirement: extra` and **excluded from the entry ticket** (fixed 2026-09-14, gap item 2) | `BjerknesGate` |
 | (extra) | Clausius–Clapeyron scaling | not in paper's Tier I list as specced | extra | ✅ vs its own spec; tagged `requirement: extra`, excluded from the entry ticket | `CCScalingGate` |
@@ -628,7 +628,7 @@ basic "the model is a physically closed system" test.
   equilibrating early in the control, and is the segment contemporaneous with the
   historical branch point.
 - Compute global annual-mean `N(t) = rsdt − rsut − rlut`.
-- Pass criterion 1: long-term mean `|μ(N)| < 0.1 W/m²`.
+- Pass criterion 1: long-term mean `|μ(N)| < 0.5 W/m²` (**0.1 → 0.5 ratified 2026-09-21**: CMIP6 control imbalances are O(0.1–1) W m⁻² — Hobbs et al. 2016, Irving et al. 2021 — and 0.5 keeps the control below the observed EEI, Loeb et al. 2021; interannual σ of annual N is 0.2–0.6, s.e. of the 100-yr mean 0.02–0.06, so the bound is a tuning criterion, not a noise floor).
 - Pass criterion 2: drift of the **10-yr running mean** of N, `|δ| < 0.02 W/m²/decade`.
 
 **Implementation status: ✅** — `climatebench2/diags/tier1_physics.py::EnergyBalanceGate`
@@ -1342,7 +1342,7 @@ deep tropics, atmosphere the midlatitudes (Trenberth & Caron 2001; ECCO/ERA5).
 cumulative from the S pole). AMET from `div_A`, OMET from `F_sfc`.
 Inputs: piControl monthly, 9 Amon variables (all now in ClimateEval's registry).
 
-**Spec.** **Peak OMET 1.5–2.0 PW near 15–20°N; peak AMET 4–5 PW at ~45°N**
+**Spec.** **Peak OMET 1.5–2.0 PW near 15–20°N; peak AMET 4–5 PW at 41 ± 2.5°N** (ratified 2026-09-21: centred on the observed peak, half the previous ±5° width; was ~45°N)
 (vs ECCO/ERA5).
 
 **Status: ✅.**
@@ -1350,7 +1350,7 @@ Inputs: piControl monthly, 9 Amon variables (all now in ClimateEval's registry).
   `climateeval.diags.complex.MeridionalHeatTransport` — the same residual computation
   on time-mean zonal-mean fluxes on the 2° grid, plus the CMIP6 piControl comparison
   ensemble. Four gate rows on the upstream output columns — `omet_peak` [1.5, 2.0] PW,
-  `omet_peak_lat` [15, 20]°, `amet_peak` [4, 5] PW, `amet_peak_lat` 45 ± 5° — all from
+  `omet_peak_lat` [15, 20]°, `amet_peak` [4, 5] PW, `amet_peak_lat` 41 ± 2.5° (45 ± 5 until 2026-09-21) — all from
   `tier1.meridional_heat_transport`, whose `omet_search_band` [5, 30] and
   `amet_search_band` [25, 55] are fed into the upstream kwargs. The legacy widened pass
   windows and CB2's `_transport_profiles` are gone.

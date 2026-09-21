@@ -515,3 +515,28 @@ def test_leaderboard_rescore_flag_reruns_the_pass(
     scored.clear()
     main(["leaderboard", str(db_path), "--csv", str(tmp_path / "s.csv")])
     assert scored == []
+
+
+def test_leaderboard_regate_flag_reruns_the_gate_pass(
+    tmp_path,  # noqa: ANN001
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    from climatebench2._cli import main
+
+    db_path = tmp_path / "ClimateBench2_TierI.ddb"
+    db_path.write_bytes(b"")
+    regated: list[list] = []
+    monkeypatch.setattr(
+        "climatebench2._cli.run_regate_pass",
+        lambda paths: regated.append(list(paths)),
+    )
+    monkeypatch.setattr(
+        "climatebench2.leaderboard.build_scores_table",
+        lambda paths: __import__("pandas").DataFrame({"model": ["M"]}),
+    )
+    main(["leaderboard", str(db_path), "--regate", "--csv", str(tmp_path / "s.csv")])
+    assert [p.name for p in regated[0]] == ["ClimateBench2_TierI.ddb"]
+
+    regated.clear()
+    main(["leaderboard", str(db_path), "--csv", str(tmp_path / "s.csv")])
+    assert regated == []

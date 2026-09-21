@@ -114,12 +114,24 @@ class SuiteSpec:
         experiment-based suite that runs per member gets **that member's own
         record** as its ``historical`` key. False for Tier I and Tier III: a
         gate is a property of the model, not of one member.
+    ``reference_overlap``
+        Only for ``window == "full"``: whether a variable of this suite that
+        *has* a staged observational reference should be cut to that
+        reference's own pre-2015 record rather than left on the model's whole
+        record (:func:`climatebench2.reference_windows.resolve_full_record_timerange`).
+        True for the daily suite, whose in-sample statistics are climatologies
+        — an Rx1day climatology over a model's 1850–2100 and one over IMERG's
+        2001–2025 are different statistics, and an in-sample one must not
+        reach into the reserved window. False for
+        ``ClimateBench2_TierI_variability``, whose ``full`` window means "this
+        is a piControl with its own calendar", where any clip is wrong.
     """
 
     shape: str
     source: str = "model"
     window: str = "historical"
     per_member: bool = False
+    reference_overlap: bool = False
     note: str = ""
 
 
@@ -147,11 +159,16 @@ SUITE_REGISTRY: dict[str, SuiteSpec] = {
         shape="cubes",
         window="full",
         per_member=True,
+        reference_overlap=True,
         note=(
             "Tier II daily/hourly statistics over the FULL historical record "
             "(the paper computes the extremes and the PDF/diurnal "
             "climatologies over it, not over the test window) — every entry "
-            "is labelled in-sample"
+            "is in-sample except `pr_extremes_series`, whose annual Rx1day/"
+            "Rx5day series is scored held-out over the test window. A variable "
+            "with a STAGED reference is cut to that reference's own pre-2015 "
+            "record instead (IMERG: 2001–2014), so the model and the "
+            "observations give the same statistic"
         ),
     ),
     "ClimateBench2_TierII_events": SuiteSpec(
@@ -280,10 +297,16 @@ def substitute_reference(node: Any, reference: str, others: list[str]) -> Any:  
 def materialise_windowed_suite(
     resolved: str,
     out_dir: Path,
-    nominal: str,
+    nominal: str | None,
     data_root: Path | None,
 ) -> tuple[str, dict[str, tuple[str, str]]]:
     """Write a copy of a suite YAML with a per-entry, per-variable window.
+
+    ``nominal`` is the suite's protocol window, or ``None`` for a suite that
+    has none (``SuiteSpec.window == "full"``, i.e. the daily suite). With
+    ``None`` only a variable with a *staged* reference gets a window at all —
+    that reference's own pre-2015 record — and everything else keeps the
+    model's whole record.
 
     A single global ``variable_kwargs['timerange']`` cannot express what the
     Tier II suite needs, for two reasons:
@@ -582,8 +605,14 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
         #     source's own 1985-2014 climatology, so they load from 1985
         #     while the EOF basis, the maps and the annual cycles keep the
         #     test window (`windows.scores_anomalies`).
+        #   * a full-record suite (the daily one) has no nominal window at
+        #     all, but a variable with a STAGED reference still has to be cut
+        #     to that reference's own pre-2015 record: an in-sample
+        #     climatology has to be the same statistic for the model and the
+        #     observations, and must not reach into the reserved window
+        #     (`SuiteSpec.reference_overlap`).
         suite_timerange_kwarg: str | None = timerange
-        if timerange is not None:
+        if timerange is not None or spec.reference_overlap:
             windowed_dir = out_dir / "_windowed_suites"
             windowed_dir.mkdir(parents=True, exist_ok=True)
             resolved, windows_used = materialise_windowed_suite(
@@ -599,9 +628,11 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
             if moved:
                 print(
                     f"Suite '{stem}': {len(moved)} variable window(s) differ "
-                    f"from the nominal {timerange} — extended back to the "
-                    f"baseline window where the score is an anomaly, clipped "
-                    f"forward to what the reference record covers —",
+                    f"from the nominal "
+                    f"{timerange or reference_windows.FULL_RECORD} — extended "
+                    f"back to the baseline window where the score is an "
+                    f"anomaly, clipped forward to what the reference record "
+                    f"covers —",
                     file=sys.stderr,
                 )
                 for line in moved:

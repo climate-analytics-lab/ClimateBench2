@@ -24,6 +24,19 @@ That extension happens *before* the clip, so a reference that starts inside
 the baseline window (CERES-EBAF: 2000-03) keeps the part of it that exists
 and the scoring pass decides whether it is enough.
 
+A third case has no protocol window to clip at all. ``ClimateBench2_TierII_daily``
+runs over the model's **whole record** (``_cli.SuiteSpec.window == "full"``),
+because the paper defines its extremes, PDFs and diurnal climatologies over
+the full historical record. That is right while an entry has no reference,
+and wrong as soon as one appears: IMERG starts 2000-06, so an Rx1day
+climatology over a model's 1850–2100 and one over IMERG's record are simply
+different statistics, and an in-sample statistic must not reach into the
+reserved post-2015 window either. For such a suite the window of a
+**referenced** variable is the reference's own complete years clipped to end
+at :func:`climatebench2.windows.pre_test_last_year`
+(:func:`resolve_full_record_timerange`) — 2001–2014 for IMERG — and every
+unreferenced variable keeps the full record untouched.
+
 So the window is resolved **per variable and per suite entry** against the
 reference actually staged, and the resolved window is what the suite
 carries. The protocol's
@@ -226,9 +239,87 @@ def resolve_variable_timerange(
     return clip_to_coverage(nominal, coverage)
 
 
+#: What :func:`summarise` prints as the "asked for" window of a suite that
+#: has none — the daily suite runs over the model's whole record
+#: (``_cli.SuiteSpec.window == "full"``).
+FULL_RECORD = "full record"
+
+
+def resolve_full_record_timerange(
+    variable: dict[str, Any],
+    entry: str,
+    data_root: Path | str | None,
+) -> str | None:
+    """The window one variable of a **full-record** suite is computed over.
+
+    ``ClimateBench2_TierII_daily`` has no protocol window: its extremes,
+    PDFs and diurnal climatologies are defined over the whole historical
+    record and labelled in-sample. That is right for an entry with no
+    observational reference — the numbers are reported, not scored — but
+    wrong the moment one appears, for two reasons:
+
+    * **the statistics would not be comparable.** IMERG starts 2000-06; a
+      submission's daily record may start in 1850. An Rx1day climatology
+      over 1850–2100 and one over 2001–2025 are not the same statistic, and
+      the difference between them would be read as model error.
+    * **an in-sample statistic must not reach into the reserved window.**
+      The whole record includes 2015-present, which is the held-out period
+      (:func:`climatebench2.windows.pre_test_last_year`).
+
+    So a referenced variable of such a suite is computed over the
+    **reference's own complete years, clipped to end before the test
+    window** — 2001–2014 for IMERG — and both the model and the reference
+    get that same window, because it is written into the ``Variable`` both
+    are loaded through.
+
+    ``None`` means "leave the full record alone", which is every case where
+    clipping could only invent a window:
+
+    * no data root, no ``reference_data``, or a reference class that will
+      not import;
+    * **nothing staged** for the reference. An unstaged reference is going
+      to be dropped by ClimateEval anyway, and capping the model's record at
+      2014 for an entry that will not be scored would only throw data away.
+      This is what keeps the ``perkins`` ``tas`` entries on the full record
+      today: ``ERA5Daily`` is merged upstream but no daily ERA5 is staged;
+    * an entry the protocol scores as **anomalies**
+      (``tier2.anomaly_baseline``, i.e. regime (a)). Those are the held-out
+      series: they need the 1985–2014 baseline *and* the post-2015 steps, so
+      the full record is exactly right and a pre-test cap would delete every
+      scored year;
+    * a reference whose record lies entirely after the test window starts,
+      which cannot happen today and would be a staging error if it did.
+    """
+    if data_root is None or windows.scores_anomalies(entry):
+        return None
+    reference = variable.get("reference_data")
+    var_name = variable.get("var_name")
+    frequency = variable.get("frequency")
+    if not reference or not var_name or not frequency:
+        return None
+    source_id = _source_id(str(reference))
+    if source_id is None:
+        return None
+    coverage = source_coverage(data_root, source_id, str(frequency), str(var_name))
+    if coverage is None:
+        coverage = _derived_coverage(
+            data_root,
+            source_id,
+            str(frequency),
+            str(var_name),
+        )
+    if coverage is None:
+        return None
+    first = coverage[0]
+    last = min(coverage[1], windows.pre_test_last_year())
+    if first > last:
+        return None
+    return windows.timerange(first, last)
+
+
 def apply_reference_windows(
     node: Any,  # noqa: ANN401
-    nominal: str,
+    nominal: str | None,
     data_root: Path | str | None,
     *,
     resolved: dict[str, tuple[str, str]] | None = None,
@@ -236,7 +327,14 @@ def apply_reference_windows(
 ) -> Any:  # noqa: ANN401
     """Walk a parsed suite definition, giving each variable its own window.
 
-    Two things decide a variable's window, in this order:
+    ``nominal`` is the suite's protocol window, or ``None`` for a suite that
+    has none (``_cli.SuiteSpec.window == "full"``). With ``None`` the only
+    thing that can move a window is a **staged reference**, and it moves it
+    to the reference's own pre-test record
+    (:func:`resolve_full_record_timerange`); a variable with no reference
+    keeps the full record and gets no ``timerange`` key at all.
+
+    With a ``nominal``, two things decide a variable's window, in this order:
 
     1. **the suite entry it belongs to.** An entry whose series are scored as
        anomalies (``windows.scores_anomalies``, i.e. regime (a)) is loaded
@@ -272,6 +370,15 @@ def apply_reference_windows(
     if not isinstance(node, dict):
         return node
     if "var_name" in node and "frequency" in node:
+        if nominal is None:
+            full_record = resolve_full_record_timerange(node, entry, data_root)
+            if full_record is None:
+                return node
+            if resolved is not None:
+                var_id = str(node.get("id", node["var_name"]))
+                key = f"{entry}/{var_id}" if entry else var_id
+                resolved[key] = (full_record, FULL_RECORD)
+            return {**node, "timerange": full_record}
         timerange = resolve_variable_timerange(node, nominal, data_root)
         if resolved is not None:
             var_id = str(node.get("id", node["var_name"]))
@@ -280,7 +387,7 @@ def apply_reference_windows(
         return {**node, "timerange": timerange}
     if "variables" in node:
         entry = str(node.get("name", entry))
-        if windows.scores_anomalies(entry):
+        if nominal is not None and windows.scores_anomalies(entry):
             nominal = windows.extend_to_baseline(nominal)
     return {
         key: apply_reference_windows(

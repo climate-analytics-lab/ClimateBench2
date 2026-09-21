@@ -51,6 +51,20 @@ def test_window_timerange(today: dt.date | None = None) -> str:
     return timerange(*test_window_years(today))
 
 
+def pre_test_last_year() -> int:
+    """The last year *before* the reserved test window (2014).
+
+    An **in-sample** statistic — the ETCCDI climatologies, the PDF overlaps,
+    the diurnal and seasonal climatologies — is one the protocol allows to be
+    computed from data a modeller could have seen, and the line between
+    "could have seen" and "reserved" is ``tier2.test_window_start``. So an
+    in-sample window may end here and no later: an extremes climatology that
+    ran to 2025 would be scored partly on the held-out period, which is the
+    one thing the split exists to prevent.
+    """
+    return int(get_threshold("tier2.test_window_start")) - 1
+
+
 def baseline_window_years() -> tuple[int, int]:
     """``(first, last)`` year of the pre-test 1985–2014 baseline window."""
     first, last = get_threshold("tier2.climatology_baseline_period")

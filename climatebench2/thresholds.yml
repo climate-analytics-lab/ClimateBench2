@@ -255,6 +255,20 @@ tier2:
       sst: true
       ohc: true
       sea_ice_minimum: true
+      # The daily suite's one HELD-OUT entry (2026-09-21): the annual
+      # regional-mean Rx1day/Rx5day series, scored over the test window
+      # against IMERG. Listing it here does two things at once, which is the
+      # point of one predicate (`windows.scores_anomalies`) driving both
+      # halves: the scoring pass anomalises the series per data_id, and
+      # `reference_windows` exempts it from the pre-test cap the suite's
+      # other IMERG-referenced entries get (it needs the 1985-2014 baseline
+      # AND the post-2015 steps, i.e. the whole record).
+      #
+      # Feasible because IMERG covers 2001-2014 = 14 baseline years, above
+      # the `min_years: 10` floor below. It is the thinnest baseline of any
+      # scored entry: 14 years, not 30. Duncan, decision B.29 -- if 10 rises
+      # to 20 this entry goes unscored with a `reason` row.
+      pr_extremes_series: true
     # A source covering fewer than this many distinct years of the baseline
     # window is NOT scored: it gets a `reason` row, never a silent fall back
     # to absolute values. ⚠ TODO(Duncan): 10 matches
@@ -381,14 +395,22 @@ tier2:
       tas_annual_max: in-sample
       pr_intensity_pdf: in-sample
       pr_diurnal_cycle: in-sample
-      # The daily suite runs over the FULL historical record (work package
-      # 6b), so everything in it is in-sample. `extremes` has no
-      # observational reference yet and so writes no scored row at all; the
-      # label is here for the day HadEX3 lands upstream. `perkins` writes
-      # metrics rather than pass rows, so its label is the leaderboard's.
+      # The daily suite's climatologies are computed over the historical
+      # record (work package 6b), so they are in-sample. `extremes` scores
+      # its PRECIPITATION indices against IMERG over 2001-2014 (the
+      # reference's record clipped before the test window); its tasmax/tasmin
+      # indices still have no reference and so write no scored row at all,
+      # and the label waits for HadEX3 to be staged. `perkins` writes metrics
+      # rather than pass rows, so its label is the leaderboard's.
       extremes: in-sample
       diurnal_harmonic: in-sample
       perkins: in-sample
+      # ... and the one exception in that suite: the annual Rx1day/Rx5day
+      # series is scored over the reserved post-2015 window against IMERG,
+      # so it is HELD-OUT. It is also the only daily entry in
+      # `anomaly_baseline` above, which is what keeps it on the full record
+      # while its in-sample neighbours are capped at 2014.
+      pr_extremes_series: held-out
       pinatubo: in-sample
       hemispheric_asymmetry: in-sample
       # Seasonal-cycle metrics: properties of the 1985-2014 climatology

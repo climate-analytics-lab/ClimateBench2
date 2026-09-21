@@ -230,3 +230,147 @@ def test_cli_materialises_a_windowed_suite(tmp_path) -> None:  # noqa: ANN001
     }
     written = yaml.safe_load(open(target, encoding="utf-8"))  # noqa: PTH123, SIM115
     assert written[0]["variables"][0]["timerange"] == "19850101/20221231"
+
+
+# ---------------------------------------------------------------------------
+# The full-record suite: no nominal window, only a staged reference narrows it
+# ---------------------------------------------------------------------------
+
+
+def _imerg_files(root, last_year: int = 2025) -> None:  # noqa: ANN001
+    """IMERG's shape: daily from 2000-06 to ``last_year``-12, one file a year.
+
+    ``_write`` lays down a monthly axis, which is all `source_coverage` reads
+    (first/last time value), so the months stand in for the days.
+    """
+    var_dir = root / "observation_IMERG" / "day" / "pr"
+    _write(var_dir / "pr_day_IMERG-V07B_1deg_20000601-20001231.nc", 2000, 6, 2000, 12)
+    for year in range(2001, last_year + 1):
+        _write(
+            var_dir / f"pr_day_IMERG-V07B_1deg_{year}0101-{year}1231.nc",
+            year,
+            1,
+            year,
+            12,
+        )
+
+
+#: The daily suite in miniature: the in-sample ETCCDI entry (pr referenced,
+#: tasmax not), the Perkins entry whose tas reference is not staged, and the
+#: held-out annual series that must keep the whole record.
+DAILY_DEFINITION = [
+    {
+        "name": "extremes",
+        "variables": [
+            {"id": "tasmax", "var_name": "tasmax", "frequency": "day"},
+            {
+                "id": "pr",
+                "var_name": "pr",
+                "frequency": "day",
+                "reference_data": "climatebench2.data.IMERG",
+            },
+        ],
+    },
+    {
+        "name": "perkins",
+        "variables": [
+            {
+                "id": "tas_anomaly_land",
+                "var_name": "tas",
+                "frequency": "day",
+                "reference_data": "climateeval.data.ERA5Hourly",
+            },
+            {
+                "id": "pr_intensity_land",
+                "var_name": "pr",
+                "frequency": "day",
+                "reference_data": "climatebench2.data.IMERG",
+            },
+        ],
+    },
+    {
+        "name": "pr_extremes_series",
+        "variables": [
+            {
+                "id": "rx1day_global_land",
+                "var_name": "pr",
+                "frequency": "day",
+                "reference_data": "climatebench2.data.IMERG",
+            },
+        ],
+    },
+]
+
+
+def _daily_windows(tmp_path):  # noqa: ANN001, ANN202
+    out = reference_windows.apply_reference_windows(
+        DAILY_DEFINITION,
+        None,
+        tmp_path,
+    )
+    return {
+        f"{entry['name']}/{variable['id']}": variable.get("timerange")
+        for entry in out
+        for variable in entry["variables"]
+    }
+
+
+def test_the_in_sample_pr_entries_run_over_the_imerg_overlap(tmp_path) -> None:  # noqa: ANN001
+    """2001–2014: IMERG's complete years, clipped before the test window.
+
+    IMERG starts 2000-06-01 (so 2000 is not a complete year) and runs to
+    2025 (so the clip, not the record, fixes the end). Both the model and
+    the reference are loaded through this one `timerange`, which is the
+    point: the two Rx1day climatologies are then the same statistic.
+    """
+    _imerg_files(tmp_path)
+    used = _daily_windows(tmp_path)
+    assert used["extremes/pr"] == "20010101/20141231"
+    assert used["perkins/pr_intensity_land"] == "20010101/20141231"
+
+
+def test_an_unreferenced_variable_keeps_the_full_record(tmp_path) -> None:  # noqa: ANN001
+    """`tasmax` has no daily observational product, so nothing may clip it."""
+    _imerg_files(tmp_path)
+    used = _daily_windows(tmp_path)
+    assert used["extremes/tasmax"] is None
+
+
+def test_a_reference_that_is_not_staged_does_not_clip(tmp_path) -> None:  # noqa: ANN001
+    """The Perkins `tas` entries: ERA5Daily is merged upstream, not staged.
+
+    Capping a model's record at 2014 for an entry that will not be scored
+    anyway would only throw data away, so an unstaged reference leaves the
+    full record alone — exactly as `clip_to_source` does for the monthly
+    suite.
+    """
+    _imerg_files(tmp_path)
+    used = _daily_windows(tmp_path)
+    assert used["perkins/tas_anomaly_land"] is None
+
+
+def test_the_held_out_series_keeps_the_whole_record(tmp_path) -> None:  # noqa: ANN001
+    """`pr_extremes_series` is regime (a): it needs 1985–2014 AND post-2015.
+
+    It is listed in `tier2.anomaly_baseline`, so the pre-test cap must not
+    touch it — capping it at 2014 would delete every scored year.
+    """
+    _imerg_files(tmp_path)
+    used = _daily_windows(tmp_path)
+    assert used["pr_extremes_series/rx1day_global_land"] is None
+
+
+def test_a_full_record_suite_without_a_data_root_is_untouched() -> None:
+    """No data root, no coverage, no clip — the suite runs as written."""
+    out = reference_windows.apply_reference_windows(DAILY_DEFINITION, None, None)
+    assert all(
+        "timerange" not in variable
+        for entry in out
+        for variable in entry["variables"]
+    )
+
+
+def test_the_pre_test_cap_is_the_year_before_the_test_window() -> None:
+    from climatebench2 import windows
+
+    assert windows.pre_test_last_year() == 2014

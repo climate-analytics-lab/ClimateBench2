@@ -431,6 +431,15 @@ bound is unreachable or the definition is ambiguous. They are recorded here rath
    a clear-sky-emission result about the forced/spatial relation, so the ±25 % window
    appears to have been written for one of those two rather than for the interannual
    gridpoint slope. Which statistic does the protocol mean? → I.3a.
+
+   **RATIFIED 2026-09-21 (Duncan).** I.3a is redefined to the **forced** statistic:
+   the OLS slope of annual global-mean `rlutcs` on `ts` anomalies over the
+   abrupt-4xCO2 response (`picontrol` + `4xco2`, the ECS gate's own inputs), baseline
+   = piControl long-term mean. Reference moves from Koll & Cronin's (2018) 2.2
+   (fixed-RH column value, which GCMs undershoot) to Zhang, Jeevanjee & Fueglistaler's
+   (2020, GRL, doi:10.1029/2020GL089235) GCM consensus of 1.9 W m⁻² K⁻¹; tolerance
+   stays ±25 % → [1.425, 2.375]. The gridpoint/`historical` statistic is dropped
+   entirely rather than kept alongside it. See §I.3a for the full spec and code.
 2. **I.1's 0.1 W m⁻² mean bound will fail most of CMIP6, and the regrid biases it.**
    |μ(N)| < 0.1 W m⁻² over the last 100 yr of piControl is tighter than the published
    drift of most CMIP6 controls; the Tier I ensemble will show how many. Separately, the
@@ -476,7 +485,7 @@ Every check is binary pass/fail. A model must pass Tier I to be scored in Tier I
 | I.1 | Energy balance (piControl) | \|μ(N)\| < 0.1 W/m²; 10-yr-running-mean drift \|δ\| < 0.02 W/m²/decade; **evaluated over the last 100 yr of piControl** | Req. | ✅ both criteria over the last `tier1.energy_balance.evaluation_years` = 100 annual values; a shorter control is used whole with a logged warning and the length reported as `n_years`. **Run on real data:** CNRM-CM6-1 gives a mean imbalance of **+1.45 W m⁻²** against the 0.1 bound — see decision E.2, which is about the bound and the 2° regrid, not about this code | `diags.tier1_physics.EnergyBalanceGate`, `physics.running_mean_drift` |
 | I.2a | Water budget closure | \|⟨P⟩−⟨E⟩\| < 0.05 mm/day | Req. | ✅ | `ClosureGate`, `physics.water_budget_residual` |
 | I.2b | Atmospheric energy budget | \|⟨Q_rad⟩ − (⟨L·P⟩+⟨SHF⟩)\| < 2 W/m² | Req. | ✅ the paper's arrangement, `Q_rad = sfc_net_rad − TOA_net`; an Earth-like column (LP ≈ 80, SHF ≈ 20, Q_rad ≈ 100 W/m²) now closes to ≈ 0 | `ClosureGate`, `physics.atmospheric_energy_residual` |
-| I.3a | Clear-sky LW feedback β = ∂rlutcs/∂Ts | global-mean gridpoint slope within ±25% of 2.2 W/m²/K, historical | Req. | ✅ gridpoint regression of **deseasonalised monthly anomalies** (`anomalies(period="month")`) of `rlutcs` on `ts`, ±25% of 2.2. ⚠ **The statistic the paper specifies cannot reach the paper's window:** on CNRM-CM6-1 the interannual gridpoint slope is **0.71**, while the spatial regression gives 1.92 and the forced response 1.75 — decision E.1, unresolved | `ClearSkyFeedbackGate`, `physics.gridpoint_regression_slope` |
+| I.3a | Clear-sky LW feedback β = ∂rlutcs/∂Ts | global-mean **forced** slope (abrupt-4xCO2 vs piControl) within ±25% of 1.9 W/m²/K — **RATIFIED 2026-09-21** | Req. | ✅ OLS slope of annual global-mean `rlutcs` on `ts` anomalies (baseline = piControl long-term mean, `physics.gregory_regression`), ±25% of 1.9. Closes decision E.1: on CNRM-CM6-1 the forced-response slope was already measured at **1.75**, inside the new window (the superseded interannual `historical` gridpoint statistic gave 0.71, outside the old [1.65, 2.75]) | `ClearSkyFeedbackGate`, `physics.gregory_regression` |
 | I.3b | Midlatitude geostrophic balance | spatial ρ(u, u_g) at 850 hPa daily, 30–60°, > 0.9. **Skipped (N/A) for models with no dynamical representation** | Req. (N/A allowed) | ✅ per spec (daily `ua`/`zg` at 850 hPa, optional `ps` orography mask, pooled 30–60° both hemispheres); N/A **declarable** (`score --not-applicable geostrophic_balance` → `applicable = 0`). **Run on real data (CNRM-CM6-1): ρ = 0.985** (NH 0.976, SH 0.990), after two fixes the synthetic fixtures could not have caught — `ua`/`zg`/`ps` are paired on **calendar days** rather than by position (`3c5c47c`) and the masked 850 hPa field is read with `_filled` rather than `np.asarray` (`74e0f7c`; without it the file's 1e20 under sub-surface points gave ρ = 0.088) | `diags.tier1_extended.GeostrophicBalanceGate`, `align_on_common_days` |
 | I.3c | Tropical precipitation–buoyancy | monthly P′ vs column-MSE′ slope, 20S–20N, ±30% of GPCP/ERA5 | Req. | ✅ ∫(c_p·ta + g·zg + L_v·hus) dp/g, monthly anomalies over 20S–20N, pooled slope, gated at ±30% of the run-time GPCP/ERA5 slope. Two real-data fixes: the model and reference fields are paired on **calendar months** (`77a9301` — GPCP starts 1983 and ERA5 1979, and the old positional cut regressed GPCP 1983–2014 on ERA5 1979–2010, giving an unphysical *negative* reference slope), and the reference column is integrated over the **model's own level set** (`52d2e50`), emitted as **`precip_buoyancy_n_levels`**. The stored `reference_slope` stays **null by design** (decision C.2). ⚠ The gate still reads \|model/ref − 1\| ≈ 0.84 against 0.30 on CNRM-CM6-1 — decision E.4 | `diags.tier1_extended.PrecipBuoyancyGate`, `align_on_common_months`, `physics.moist_static_energy` / `mass_weighted_column_integral` / `pooled_regression_slope` |
 | I.4a | GFMIP SST patch experiments | Δλ = ΔR_EP/ΔTs_EP − ΔR_WP/ΔTs_WP > 0.5 W/m²/K — **Extended** | Ext. | ✅ per spec; needs submission-provided `amip`/`patch_ep`/`patch_wp`; tagged `requirement: extended`, so it is reported for credit but outside the entry ticket | `GFMIPPatchGate` |
@@ -663,48 +672,52 @@ passes = abs(Qrad - (LP + SHF)) < 2.0                      # W/m2
 
 Emergent internal covariances that any physically plausible atmosphere must reproduce.
 The paper computes these on the **historical** experiment; the CB2 gates take the
-`historical` key (which the CLI defaults to the model cubes being scored).
+`historical` key (which the CLI defaults to the model cubes being scored) — **except
+I.3a**, redefined 2026-09-21 to a forced abrupt-4xCO2 statistic (below).
 
 ### I.3a Clear-sky longwave feedback β = ∂rlutcs/∂Ts
 
 **Measures.** The tight, theoretically understood link between surface temperature and
-clear-sky OLR (Koll & Cronin 2018); observed value ≈ 2.2 W/m²/K (CERES).
+clear-sky OLR. Koll & Cronin (2018) give a fixed-RH column value of ≈ 2.2 W/m²/K
+(CERES); Zhang, Jeevanjee & Fueglistaler (2020, GRL, doi:10.1029/2020GL089235) show
+GCMs' own *forced* global-mean clear-sky LW feedback in the abrupt-4xCO2 response is
+smaller and more robust, ≈ 1.9 W/m²/K — locally negative over tropical oceans,
+compensated globally.
 
-**Spec.** For each grid point, temporally regress monthly (or annual) `rlutcs` on
-surface temperature `ts` over the historical period; area-average the slope field.
-**Pass: global-mean slope within ±25% of 2.2 W/m²/K → [1.65, 2.75] W/m²/K.**
+**Spec — RATIFIED 2026-09-21 (Duncan), replaces the original.** OLS slope of the
+**annual global-mean** anomaly of `rlutcs` on the annual global-mean anomaly of `ts`,
+both anomalies relative to the piControl long-term mean (the same baseline convention
+as `climateeval.diags.complex.ECS`), over the abrupt-4xCO2 response — the same
+`picontrol`/`4xco2` inputs as the I.6c ECS gate, plus `rlutcs`/`ts`. Evaluated over the
+first `tier1.clear_sky_lw_feedback.n_years` (150) years of abrupt-4xCO2, or the whole
+record if shorter (report `n_years`). **Pass: slope within ±25% of 1.9 W/m²/K →
+[1.425, 2.375] W/m²/K.**
 
-**Status: ✅** — `ClearSkyFeedbackGate` (`historical` key): both `rlutcs` and `ts` are
-reduced to **deseasonalised monthly anomalies**
-(`esmvalcore.preprocessor.anomalies(period="month")`, paper App. B) before the
-per-gridpoint OLS on the 2° grid (`physics.gridpoint_regression_slope`), then a
-cos-weighted area mean, gated at `2.2 × (1 ± 0.25)` from
-`tier1.clear_sky_lw_feedback` (row `clear_sky_lw_feedback`). Annual means — the
-previous behaviour — suppress the seasonal covariance and shorten the sample 12-fold;
-the unit test builds a field whose monthly-anomaly β is 2.5 and whose annual-mean β is
-4.2, so a reversion fails the gate. The 2.2 reference is a fixed constant in
-`thresholds.yml` (the paper quotes the CERES-derived value, so no live CERES regression
-is needed).
+**Status: ✅ RATIFIED 2026-09-21** — `ClearSkyFeedbackGate` (`picontrol` + `4xco2`
+keys): annual global means (cos-weighted, common 2° grid) of `rlutcs` and `ts` for
+both experiments; the abrupt-4xCO2 series (first 150 yr, or fewer with a warning) has
+the piControl long-term mean subtracted from each variable, then
+`physics.gregory_regression` — already exactly this OLS slope/intercept/r² pair, reused
+rather than adding a new helper — gives the slope, gated at `1.9 × (1 ± 0.25)` from
+`tier1.clear_sky_lw_feedback` (row `clear_sky_lw_feedback`). Raw output carries
+`clear_sky_lw_feedback` (the gated slope), `clear_sky_lw_feedback_intercept`,
+`clear_sky_lw_feedback_r2` and `clear_sky_lw_feedback_n_years`.
 
-⚠ **Real data, 2026-09-20 — the spec's own statistic misses the spec's own window, and
-no code change is proposed.** On CNRM-CM6-1 the area-averaged interannual gridpoint
-slope is **0.71 W m⁻² K⁻¹**, far below [1.65, 2.75]. The gate is computing what §I.3a
-asks for; the question is whether that is the quantity 2.2 refers to. Two neighbours of
-it on the same model do land near the paper's value: the **spatial** regression of
-time-mean `rlutcs` on time-mean `ts` across grid cells gives **1.92**, and the
-regression of the **forced response** (the long-term change in each) gives **1.75**.
-Koll & Cronin's result is about clear-sky emission to space under a warming column, a
-forced/spatial statement — so the ±25 % window was plausibly written for one of those.
-Local interannual variability samples a different physical regime (circulation-driven
-temperature anomalies with compensating humidity changes) and gives a systematically
-smaller slope. **Decision E.1** asks Duncan which statistic the protocol means; until it
-is answered, I.3a will fail essentially every model and the failure is not diagnostic.
+This closes **decision E.1** below: the previous spec's gridpoint regression of
+monthly `historical` anomalies (β = 0.71 on CNRM-CM6-1, ⚠ far below the old
+[1.65, 2.75]) was an interannual statistic — circulation-driven temperature anomalies
+with compensating humidity changes — a different physical regime from Koll & Cronin's
+forced/spatial 2.2 W/m²/K. Two neighbouring statistics already computed on CNRM-CM6-1
+during the 2026-09-20 real-data run bracket the new definition directly: the **spatial**
+regression of time-mean `rlutcs` on time-mean `ts` across grid cells gave **1.92**, and
+the regression of the **forced response** (the long-term change in each, exactly the
+quantity this gate now computes) gave **1.75** — inside the new [1.425, 2.375] window.
 
 ```python
-beta = xr.apply_ufunc(linregress_slope, ts_anom, rlutcs_anom,   # per grid point, over time
-                      input_core_dims=[["time"], ["time"]], vectorize=True)
-beta_gm = area_mean(beta)
-passes = 0.75 * 2.2 <= beta_gm <= 1.25 * 2.2                     # W/m2/K
+d_ts = gmean(ts_4xco2)[:n] - gmean(ts_picontrol).mean()          # annual global means,
+d_rlutcs = gmean(rlutcs_4xco2)[:n] - gmean(rlutcs_picontrol).mean()  # cos-lat weighted
+slope, intercept, r2 = linregress(d_ts, d_rlutcs)                # physics.gregory_regression
+passes = 0.75 * 1.9 <= slope <= 1.25 * 1.9                        # W/m2/K
 ```
 
 ### I.3b Midlatitude geostrophic balance

@@ -188,8 +188,9 @@ tier1:
     tier: I
     requirement: required
     slope_reference: 3.0               # ° / PW
-    slope_rel_tolerance: 0.50          # ±50%
-    corr_min: 0.9
+    slope_rel_tolerance: 0.30          # ±30% → [2.1, 3.9] (Duncan 2026-09-21: tightened
+                                       # from ±50%; CMIP6 slopes span 1.9–3.6, median 2.65)
+    corr_min: 0.85                     # Duncan 2026-09-21: loosened from 0.9 (35/58 → 54/58)
     # Months the ITCZ latitude lags the cross-equatorial AMET (Donohoe et al.
     # 2013's seasonal-cycle lag; real-data fix, see physics.itcz_efe_regression).
     # Regressing the two series in phase (0) mixes points from opposite sides

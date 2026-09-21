@@ -27,7 +27,6 @@ import numpy as np
 from cf_units import Unit
 from esmvalcore.preprocessor import (
     annual_statistics,
-    anomalies,
     area_statistics,
     climate_statistics,
     regrid,
@@ -402,26 +401,41 @@ class ClosureGate(CB2ComplexDiagnostic):
 
 
 # ---------------------------------------------------------------------------
-# I.3a — Clear-sky longwave feedback (historical)
+# I.3a — Clear-sky longwave feedback (forced response, abrupt-4xCO2)
 # ---------------------------------------------------------------------------
 
 
 class ClearSkyFeedbackGate(CB2ComplexDiagnostic):
-    """I.3a: area-mean gridpoint ∂rlutcs/∂Ts within ±25% of 2.2 W/m²/K.
+    """I.3a: forced clear-sky LW feedback within ±25% of 1.9 W/m²/K.
 
-    The regression is on **deseasonalised monthly anomalies** at each grid
-    point (paper App. B): annual means would suppress the seasonal covariance
-    that carries most of the signal and shorten the sample by 12×.
+    Redefined 2026-09-21 (Duncan, ratified): the paper's own gridpoint
+    regression of monthly `historical` anomalies (β ≈ 0.71 on CNRM-CM6-1)
+    probes interannual variability, a different physical regime from
+    Koll & Cronin's (2018) 2.2 W/m²/K fixed-RH column value that the old
+    reference quoted. Zhang, Jeevanjee & Fueglistaler (2020, GRL,
+    doi:10.1029/2020GL089235) show GCMs instead give a robust *global-mean*
+    clear-sky LW feedback of ≈1.9 W/m²/K in the forced abrupt-4xCO2 response
+    (locally negative over tropical oceans, compensated globally) — smaller
+    than the fixed-RH column value, which GCMs undershoot.
+
+    The statistic is now the OLS slope of the annual global-mean anomaly of
+    `rlutcs` on the annual global-mean anomaly of `ts`, over the same
+    ``picontrol``/``4xco2`` inputs as the I.6c ECS gate, both anomalies
+    relative to the piControl long-term mean (the same baseline convention
+    as ``climateeval.diags.complex.ECS``). Evaluated over the first
+    ``tier1.clear_sky_lw_feedback.n_years`` (150) of the abrupt-4xCO2 record,
+    or the whole record if shorter (with a warning); the number of years
+    actually used is emitted as ``clear_sky_lw_feedback_n_years``.
     """
 
-    _required_data_keys = ("historical",)
+    _required_data_keys = ("picontrol", "4xco2")
 
     _reference = float(get_threshold("tier1.clear_sky_lw_feedback.reference"))
     _tolerance = float(get_threshold("tier1.clear_sky_lw_feedback.rel_tolerance"))
     _gate_checks = (
         GateCheck(
             check_id="clear_sky_lw_feedback",
-            column="clear_sky_lw_beta",
+            column="clear_sky_lw_feedback",
             lower=_reference * (1.0 - _tolerance),
             upper=_reference * (1.0 + _tolerance),
             requirement=gate_requirement("tier1.clear_sky_lw_feedback"),
@@ -433,22 +447,41 @@ class ClearSkyFeedbackGate(CB2ComplexDiagnostic):
         self,
         complex_data_source: ComplexDataSource,
     ) -> dict[Variable, Cube]:
-        historical = complex_data_source.data["historical"]
-        rlutcs = self._cube(historical, _mon("rlutcs"))
-        ts = self._cube(historical, _mon("ts"))
-        with setup_esmvaltool_config_and_logging():
-            rlutcs = anomalies(rlutcs, period="month")
-            ts = anomalies(ts, period="month")
-        n = min(rlutcs.shape[0], ts.shape[0])
-        beta_field = physics.gridpoint_regression_slope(
-            np.asarray(rlutcs.data[:n], dtype=float),
-            np.asarray(ts.data[:n], dtype=float),
+        data = complex_data_source.data
+        n_years = int(get_threshold("tier1.clear_sky_lw_feedback.n_years"))
+
+        pi_rlutcs, _pi_rlutcs_years = self._annual_global_series_years(
+            data["picontrol"],
+            _mon("rlutcs"),
         )
-        beta = physics.area_weighted_mean(
-            beta_field,
-            rlutcs.coord("latitude").points.astype(float),
+        pi_ts, _pi_ts_years = self._annual_global_series_years(
+            data["picontrol"],
+            _mon("ts"),
         )
-        return self._scalar_outputs({"clear_sky_lw_beta": beta})
+
+        a4x_rlutcs = self._annual_global_series(data["4xco2"], _mon("rlutcs"))
+        a4x_ts = self._annual_global_series(data["4xco2"], _mon("ts"))
+        n_available = min(a4x_rlutcs.size, a4x_ts.size)
+        n = min(n_available, n_years)
+        if n_available < n_years:
+            logger.warning(
+                f"Diagnostic '{self.name}': abrupt-4xCO2 has {n_available} yr, "
+                f"fewer than the {n_years} yr window of I.3a; using the whole "
+                f"record",
+            )
+
+        delta_ts = a4x_ts[:n] - pi_ts.mean()
+        delta_rlutcs = a4x_rlutcs[:n] - pi_rlutcs.mean()
+        slope, intercept, r2 = physics.gregory_regression(delta_ts, delta_rlutcs)
+
+        return self._scalar_outputs(
+            {
+                "clear_sky_lw_feedback": slope,
+                "clear_sky_lw_feedback_intercept": intercept,
+                "clear_sky_lw_feedback_r2": r2,
+                "clear_sky_lw_feedback_n_years": float(n),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -219,35 +219,92 @@ def test_energy_balance_gate_short_control_uses_whole_record(monkeypatch) -> Non
     assert values["toa_net_mean_abs"] == pytest.approx(0.05)
 
 
-def test_clear_sky_feedback_gate_regresses_monthly_anomalies() -> None:
-    """I.3a: β from deseasonalised monthly anomalies, not annual means.
+def _clear_sky_experiments(
+    *,
+    slope: float,
+    n_years: int = 150,
+    seed: int = 3,
+) -> dict:
+    """PiControl (steady) + abrupt-4xCO2 ``rlutcs``/``ts`` with a known forced slope.
 
-    ``ts`` carries a large seasonal cycle, fast (monthly) variability that
-    ``rlutcs`` responds to with the target β = 2.2 W/m²/K, and slow (annual)
-    variability it responds to with a much larger slope. Annual averaging
-    keeps only the slow component and would report β ≈ 4 — outside the
-    ±25% gate — so this test fails if the regression reverts to annual means.
+    piControl carries no trend, so its long-term global mean is exactly
+    ``ts0``/``rlutcs0`` — the baseline the gate subtracts (paper I.3a's
+    baseline convention, shared with ``climateeval.diags.complex.ECS``). The
+    abrupt-4xCO2 branch approaches a warmer equilibrium (an asymptotic ΔTs
+    trajectory, like a real Gregory run) with small noise, and Δrlutcs
+    tracks it at exactly ``slope`` plus small noise, so the annual
+    global-mean OLS slope recovers ``slope`` to within a small tolerance.
     """
-    rng = np.random.default_rng(7)
-    n_time = N_YEARS * 12
-    month = np.arange(n_time) % 12
-    fast = rng.normal(0.0, 1.0, n_time)
-    slow = np.repeat(rng.normal(0.0, 1.0 / np.sqrt(12.0), N_YEARS), 12)
-    seasonal = 5.0 * np.sin(2 * np.pi * month / 12.0)
-
-    ts = _monthly_cube("ts", 288.0, "K", series=seasonal + fast + slow)
-    rlutcs = _monthly_cube(
-        "rlutcs",
-        240.0,
-        "W m-2",
-        series=2.2 * fast + 6.0 * slow,
+    rng = np.random.default_rng(seed)
+    ts0, rlutcs0 = 288.0, 240.0
+    picontrol = CubeList(
+        [
+            _monthly_cube("ts", ts0, "K", n_years=30),
+            _monthly_cube("rlutcs", rlutcs0, "W m-2", n_years=30),
+        ],
     )
+    delta_ts = 8.0 * (1.0 - np.exp(-np.arange(n_years) / 40.0))
+    delta_ts = delta_ts + rng.normal(0.0, 0.05, n_years)
+    delta_rlutcs = slope * delta_ts + rng.normal(0.0, 0.02, n_years)
+    a4x = CubeList(
+        [
+            _monthly_cube(
+                "ts",
+                ts0,
+                "K",
+                n_years=n_years,
+                series=np.repeat(delta_ts, 12),
+            ),
+            _monthly_cube(
+                "rlutcs",
+                rlutcs0,
+                "W m-2",
+                n_years=n_years,
+                series=np.repeat(delta_rlutcs, 12),
+            ),
+        ],
+    )
+    return {"picontrol": picontrol, "4xco2": a4x}
+
+
+def test_clear_sky_feedback_gate_recovers_the_forced_slope() -> None:
+    """I.3a: OLS slope of annual global-mean Δrlutcs on Δts, abrupt-4xCO2.
+
+    Zhang et al. (2020)'s GCM-consensus forced feedback is 1.9 W/m²/K; a
+    model built with exactly that slope (plus small noise) over 150 years
+    must recover it to within ±0.05 and pass the ±25% gate.
+    """
+    data = _clear_sky_experiments(slope=1.9)
     diag = ClearSkyFeedbackGate("clear_sky_feedback", fail_on_missing_data=True)
-    output = diag.get_output({"historical": CubeList([ts, rlutcs])}, _info())
+    output = diag.get_output(data, _info())
     metrics = output.metrics.to_pandas().set_index("var_id")
-    beta = metrics.loc["clear_sky_lw_feedback", "value"]
-    assert 2.2 <= beta <= 2.75  # monthly anomalies; annual means give ~4
+    slope = metrics.loc["clear_sky_lw_feedback", "value"]
+    assert slope == pytest.approx(1.9, abs=0.05)
     assert metrics.loc["clear_sky_lw_feedback", "passes"] == 1.0
+
+    raw = output.raw_output.to_pandas()
+    assert {
+        "clear_sky_lw_feedback",
+        "clear_sky_lw_feedback_intercept",
+        "clear_sky_lw_feedback_r2",
+        "clear_sky_lw_feedback_n_years",
+    } <= set(raw.columns)
+    # Each scalar output is its own row (NaN elsewhere), like EnergyBalanceGate's
+    # raw_output — so pick out the row that actually carries n_years rather than
+    # assuming a row position.
+    n_years_col = raw["clear_sky_lw_feedback_n_years"].dropna()
+    assert n_years_col.iloc[0] == 150
+
+
+def test_clear_sky_feedback_gate_fails_a_weaker_forced_slope() -> None:
+    """A forced slope of 1.0 W/m²/K sits outside ±25% of 1.9 → fails."""
+    data = _clear_sky_experiments(slope=1.0, seed=4)
+    diag = ClearSkyFeedbackGate("clear_sky_feedback", fail_on_missing_data=True)
+    output = diag.get_output(data, _info())
+    metrics = output.metrics.to_pandas().set_index("var_id")
+    slope = metrics.loc["clear_sky_lw_feedback", "value"]
+    assert slope == pytest.approx(1.0, abs=0.05)
+    assert metrics.loc["clear_sky_lw_feedback", "passes"] == 0.0
 
 
 def test_superset_keys_accepted() -> None:

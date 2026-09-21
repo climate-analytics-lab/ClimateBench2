@@ -37,7 +37,7 @@
   diagnostic: climatebench2.diags.ClosureGate
   additional_diagnostic_kwargs: {}
 
-- name: clear_sky_feedback            # I.3a — historical
+- name: clear_sky_feedback            # I.3a — piControl + abrupt-4xCO2
   diagnostic: climatebench2.diags.ClearSkyFeedbackGate
   additional_diagnostic_kwargs: {}
 

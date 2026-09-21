@@ -52,12 +52,22 @@ tier1:
     requirement: required
     residual_abs_max: 2.0              # W m-2, |Q_rad − (L·P + SHF)|
 
-  # I.3a Clear-sky LW feedback (gridpoint ∂rlutcs/∂Ts, historical)
+  # I.3a Clear-sky LW feedback (forced response, abrupt-4xCO2 vs piControl)
+  # Redefined 2026-09-21 (Duncan, ratified): the paper's gridpoint regression
+  # of monthly `historical` anomalies probes interannual variability, not the
+  # forced/spatial relation Koll & Cronin (2018) describe; on CNRM-CM6-1 it
+  # gave β = 0.71, far below the old [1.65, 2.75] window. Zhang, Jeevanjee &
+  # Fueglistaler (2020, GRL, doi:10.1029/2020GL089235) find GCMs instead give
+  # a robust *global-mean* clear-sky LW feedback ≈1.9 W m-2 K-1 in the forced
+  # abrupt-4xCO2 response (locally negative over tropical oceans, compensated
+  # globally). 2.2 (Koll & Cronin 2018) is the fixed-RH column value, which
+  # GCMs undershoot; 1.9 is the GCM consensus this gate now targets.
   clear_sky_lw_feedback:
     tier: I
     requirement: required
-    reference: 2.2                     # W m-2 K-1 (CERES; Koll & Cronin 2018)
-    rel_tolerance: 0.25                # ±25% → [1.65, 2.75]
+    reference: 1.9                     # W m-2 K-1 (Zhang et al. 2020 GCM consensus)
+    rel_tolerance: 0.25                # ±25% → [1.425, 2.375]
+    n_years: 150                       # yr of abrupt-4xCO2 used (whole record if shorter)
 
   # I.3b Midlatitude geostrophic balance (daily 850 hPa, 30–60°)
   # Required, but declarable N/A for submissions with no dynamical

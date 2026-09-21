@@ -213,6 +213,27 @@ them is stale by construction.
   `applicable` is 0.0 with NaN `value`/`passes` for a check the submission declared
   N/A (`climatebench2 score --not-applicable NAME`), which is distinct from a check
   that did not run and wrote no row at all.
+- A gate's raw statistic (e.g. `itcz_efe.raw_output.itcz_efe_r_abs`,
+  `energy_balance.raw_output.toa_net_mean_abs`) is cached in `raw_output` by every
+  `_gate_checks` entry across `climatebench2/diags/` (confirmed by inspection of every
+  `_calculate_raw_output`/`_scalar_outputs` call and, for the `_UpstreamGate` wrappers
+  around ClimateEval's own complex diagnostics — `ecs_gate`, `land_ocean_warming`,
+  `arctic_amplification`, `meridional_heat_transport` — the upstream diagnostic's own
+  scalar output columns). So a `thresholds.yml` bound change never needs the suite
+  re-run to reach an existing database: `climatebench2 leaderboard --regate DB…`
+  (`climatebench2/regate.py`) re-reads each check's cached raw statistic and rewrites
+  `passes`/`bound_lower`/`bound_upper`/`requirement`/`tier` in place, leaving `value`,
+  Tier II/III `scorer` rows and declared-N/A rows untouched; idempotent, like
+  `--rescore`. The two checks whose column is *conditionally* absent
+  (`enso_teleconnection_ts`/`_pr` when the observations could not be fetched,
+  `precip_buoyancy` when neither the observations nor `tier1.precip_buoyancy.
+  reference_slope` are available) are documented "no gate row written" cases, not a
+  missing-cache bug — `--regate` logs a warning and leaves any existing row alone
+  wherever a check's column turns out to be genuinely absent from `raw_output`.
+  Because a DuckDB schema (named after the suite YAML's `name:`) never records which
+  `diagnostic:` class produced it, `--regate` recovers that mapping the same way
+  `Suite._get_diagnostics` does at run time: by re-reading every packaged
+  `climatebench2/suites/*.yml` (`regate.schema_diagnostic_paths`).
 - Status legend: ✅ implemented per the (2026-09) spec · 🟡 implemented but deviates
   from spec · ❌ missing · ⬆ generic physics now provided by ClimateEval `main`
   (CB2 should keep only the threshold wrapper). **A ✅ is a statement about the code,

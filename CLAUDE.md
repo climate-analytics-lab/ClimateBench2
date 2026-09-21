@@ -140,6 +140,13 @@ climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scorecard (HTML
 climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb  # re-run the Tier II pass
 #   --rescore is also how a thresholds.yml change reaches existing databases; the
 #   pass is idempotent (it deletes its own `scorer` rows before rewriting them)
+climatebench2 leaderboard --regate MyModel_climatebench2/*.ddb  # re-gate Tier I/III
+#   --regate is how a thresholds.yml change reaches a Tier I/III GATE's passes/
+#   bound_lower/bound_upper/requirement/tier WITHOUT re-running the suite (hours per
+#   model): it re-reads each check's already-computed raw statistic from
+#   <schema>.raw_output and re-evaluates it against the current bound
+#   (climatebench2/regate.py). Idempotent; never touches Tier II/III scorer rows or
+#   declared-not-applicable rows.
 climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report
 
 # Tests (ClimateEval pixi env + this repo on PYTHONPATH; see tests/README.md)

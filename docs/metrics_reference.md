@@ -198,7 +198,11 @@ them is stale by construction.
   carrying those windows and prints every one it had to clip, and the self-fetching
   diagnostics (the Tier II scalars, the baseline/EOF-basis entries, I.3c's reference)
   clip through `clip_to_source`. The window is a property of the *reference*, so it is
-  the same for every model scored on that variable.
+  the same for every model scored on that variable. The window is resolved **per suite
+  entry**: the regime-(a) entries (`tier2.anomaly_baseline`) are *loaded* from 1985 —
+  they are scored on anomalies about each source's own 1985–2014 climatology — and
+  then scored over the post-2015 part only, while the maps, the annual cycles, the
+  zonal lines and the EOF projection keep the nominal test window.
 - Every bound is read from `climatebench2/thresholds.yml` through
   `climatebench2._thresholds.get_threshold("tier1.ecs.range")`; gate outcomes are
   `metrics` rows
@@ -262,7 +266,7 @@ what the paper says and the paper's number looks unreachable.
 5. **§4.3 cross-reference.** The ENSO paragraph cites `app:implementation` where
    `app:tier1` is meant. → discrepancy #21.
 
-### B. Protocol interpretations made in code — ratify or overrule (23)
+### B. Protocol interpretations made in code — ratify or overrule (29)
 
 Each of these is a reading CB2 had to commit to in order to compute anything. All are
 implemented and unit-tested; none is claimed to be the paper's own words.
@@ -366,6 +370,36 @@ implemented and unit-tested; none is claimed to be the paper's own words.
     entries (`clt`, `clwvi`, `clivi`) stay in the suite but are **outside** the figure
     set — ESACCI-CLOUD ends in 2016, so their scored window is two years.
     → Tier II status table, `9192aaf`.
+27. **The regime-(a) anomaly baseline is per `data_id`, i.e. per ensemble member**
+    (2026-09-21). The paper says "anomaly series" without saying *whose* climatology.
+    CB2 subtracts each source's **own** 1985–2014 climatology, and for a multi-member
+    submission that means **each member's own**, not one model-mean climatology. The
+    reading: each member is an independent realization whose own mean state is what
+    the anomaly removes, and using a model-mean climatology would leak information
+    between members and shrink the ensemble spread the fair CRPS is measuring. The
+    alternative (one climatology per model, shared by its members) is a one-line
+    change in `scoring_pass.anomalise_raw_output` if Duncan prefers it. Note this is
+    deliberately the **opposite** convention from regime (b), item B.5, where the
+    anomaly is taken about the **reference's** climatology so the mean bias is
+    scored: (a) scores the trajectory, (b) scores the climatology.
+    → Tier II preamble "(a) Time-resolved quantities", `tier2.anomaly_baseline`.
+28. **Minimum baseline coverage = 10 years, not 20** (`tier2.anomaly_baseline.min_years`,
+    2026-09-21). A source covering fewer baseline years than this is left unscored with
+    a reason. 10 matches the existing `tier2.climatology_baseline_min_years`; 20 would
+    be the more conventional climatological minimum, **but CERES-EBAF starts 2000-03**,
+    so a 20-year rule would leave `rsut`, `rlut`, `rtnt`, `rsutcs` and `rlutcs` — five
+    of the paper's nine figure variables — with no Tier II score at all. Duncan's call:
+    keep 10, or accept losing the TOA fluxes, or define a shorter TOA-specific baseline.
+    → `thresholds.yml tier2.anomaly_baseline`.
+29. **Which suite entries are anomaly-scored is a list, not an inference**
+    (`tier2.anomaly_baseline.diagnostics`, 2026-09-21): `annual_mean_timeseries`,
+    `sst`, `ohc`, `sea_ice_minimum`. Keyed by suite entry name exactly as
+    `window_labels` is, which is what lets `leaderboard --rescore` resolve it from a
+    finished database. `default: false` deliberately excludes
+    `ClimateBench2_TierII_daily`'s `tas_annual_max` (an in-sample block maximum over
+    the full record) and everything in Tier I. A new scored time-series entry must be
+    added to the list or it will be scored on absolute values — flagged here because
+    that is the one silent failure mode left. → `thresholds.yml tier2.anomaly_baseline`.
 
 ### C. Placeholder data — must be replaced before publication (3)
 
@@ -1463,6 +1497,15 @@ parallel headline numbers:
   reason rather than half-sampled. *Not* added to `ClimateBench2_TierII_daily`: its
   statistic is an annual block maximum, for which an area-mean baseline series would
   be the wrong sample.
+
+  ✅ **It is now a baseline in the same units as everything else** (2026-09-21). Since
+  regime (a) scores anomalies (see "(a) Time-resolved quantities" below), the
+  pseudo-members are shifted by the same 1985–2014 climatology as the series they are
+  scored against, which makes this baseline exactly the protocol's statement "no
+  change since 1985–2014" rather than "the absolute values of 1985–2014". For the
+  entries with no `ReferenceBaselineRecord` stanza — OHC and the two sea-ice extents —
+  the reference's own pre-test rows now supply the sample, because the entry is loaded
+  from 1985 anyway, so those variables have a no-skill floor for the first time.
 - **pattern-scaling baseline** — multi-linear: global-mean temperature trajectory from a
   two-layer EBM calibrated to observations **through 2014**, multiplied by a fixed CMIP6
   multi-model-mean response pattern; the simplest defensible emulator.
@@ -1512,6 +1555,51 @@ as **common draws**: the fair CRPS is averaged over pseudo-observations
 see identical draws (`tier2.obs_uncertainty`). ✅ all three implemented 2026-09-14
 (`a4c5948`); σ_obs itself is still 0 everywhere because no observational error field
 is plumbed through (HadCRUT5's is the first candidate).
+
+✅ **"Anomaly" now means anomaly** (2026-09-21). Until this fix the pass scored the
+**absolute** series ClimateEval's `AnnualMeanTimeSeries`/`MeanTimeSeries` emit —
+`annual_mean_timeseries.raw_output` holds `tas` ≈ 287–289 K — so the fair CRPS was
+dominated by each field's **mean-state bias** rather than by the forced trajectory
+and internal variability the protocol asks about. On the real Tier II run
+CNRM-CM6-1's 1.1 K cold absolute GMST bias against HadCRUT5 alone produced
+CRPS ≈ 1.0 K and skill −2.85, with a perfectly reasonable post-2015 trajectory.
+What the pass does now, for the suite entries the protocol lists under
+`tier2.anomaly_baseline` (`annual_mean_timeseries`, `sst`, `ohc`,
+`sea_ice_minimum`):
+
+- every `data_id` — **each ensemble member**, the reference, and every comparison
+  member — is reduced to an anomaly about **its own** climatology over
+  `tier2.climatology_baseline_period` (1985–2014): the per-calendar-month mean for a
+  monthly series, the window mean for an annual one;
+- **only then** is the series cut to `tier2.test_window_start`–present, so `n_time`
+  still counts scored post-2015 steps and the baseline years are never scored;
+- a source covering fewer than `tier2.anomaly_baseline.min_years` distinct baseline
+  years is **not scored at all** — an `_empty_row` `reason` row ("no baseline
+  window") keeps it on the scorecard. There is **no fall back to absolute values**,
+  ever: that would silently make the row mean something different from its
+  neighbours. An existing database that holds post-2015 rows only therefore comes
+  out entirely unscored-with-reason under `leaderboard --rescore`, which is the
+  correct answer, not a regression.
+
+The window plumbing that makes this possible: the listed entries are loaded from the
+**baseline window's first year** rather than from 2015 (`windows.extend_to_baseline`,
+applied per suite entry by `reference_windows.apply_reference_windows`), for the
+submission, the reference and every `other_data` comparison member alike. The
+end of the window is still clipped to the reference's staged record, and the entries
+that are *not* anomaly-scored — the maps, the zonal lines, the annual cycles and the
+regime-(b) EOF projection — keep the nominal test window, because their statistic
+*is* the test-window field.
+
+Two consequences worth stating:
+
+- the **Climatology baseline** is shifted by the same offsets, so it is now literally
+  the protocol's "no change since 1985–2014" forecast rather than "the absolute
+  1985–2014 values"; and where no `ReferenceBaselineRecord` entry exists (OHC, the
+  sea-ice extents) the reference's own pre-test rows become that sample, so those
+  variables get a Climatology row for the first time;
+- **PatternScaling is not double-differenced**: `calibrate_two_layer_ebm` re-anchors
+  both series to the baseline window itself, so a constant offset cancels whichever
+  way the input is expressed (unit-tested).
 
 **(b) Aggregated diagnostics and spatial fields** — climatologies, trends, variability
 amplitudes, seasonal-cycle amplitude/phase. Scored with fair CRPS in a projected basis:
@@ -1668,6 +1756,7 @@ gone.
 |---|---|---|---|
 | Deterministic metrics (weighted RMSE / Pearson / EMD; maps, zonal lines, annual cycles) | — | ✅ from ClimateEval for every suite variable; shown by `climateeval report` and `climatebench2 leaderboard --csv` — display only, EMD is **not** a protocol score | ClimateEval `SimpleDiagnostic` metrics |
 | **Fair** CRPS of ensemble time series | (a) | ✅ (2026-09-14, gap item 3, `a4c5948`/`732e860`) `scoring.crps_fair` — spread term `1/(2M(M−1))ΣᵢΣⱼ\|xᵢ−xⱼ\|`, i.e. the average over the i ≠ j pairs; **M < 2 raises** (never \|x−y\|), and a single-member model is reported as `n/a (single member)`. The empirical `crps_ensemble` is deleted rather than left as a trap. Unit-tested for the two-member analytic case and for size-independence (M = 2 vs M = 20) | `climatebench2/scoring.py`, `scoring_pass.py` |
+| **Anomaly, not absolute, series** | (a) | ✅ (2026-09-21) The paper scores "monthly and annual **anomaly** series"; the pass scored the absolute series the ClimateEval time-series diagnostics emit (`tas` ≈ 287–289 K), so the fair CRPS measured each field's mean-state bias — CNRM-CM6-1's 1.1 K cold GMST bias alone gave CRPS ≈ 1.0 K and skill −2.85 on a perfectly good trajectory. `scoring_pass.anomalise_raw_output` now reduces **every `data_id`** (per ensemble member, the reference, every comparison member) to an anomaly about its **own** 1985–2014 climatology — per calendar month for a monthly series — and only then cuts to the post-2015 steps, so `n_time` is unchanged. Which entries: `tier2.anomaly_baseline` (`annual_mean_timeseries`, `sst`, `ohc`, `sea_ice_minimum`), keyed by suite entry name like `window_labels`, so `--rescore` resolves it as the run did; `default: false` leaves Tier I and the daily suite's full-record block maxima alone. The entries are loaded from 1985 (`windows.extend_to_baseline`, applied per entry by `reference_windows`); the maps / annual cycles / zonal lines / EOF projection keep the test window. A source with fewer than `tier2.anomaly_baseline.min_years` (10) baseline years gets a "no baseline window" `reason` row — **never** a fall back to absolute values | `scoring_pass.anomalise_raw_output`, `windows.scores_anomalies`, `reference_windows.apply_reference_windows`, `thresholds.yml tier2.anomaly_baseline` |
 | ESS correction on the reported SE | (a) | ✅ `crps_ess_score` (lag-1 r → T_eff; `crps_se`, `t_eff`, `r1` emitted) | `scoring.py` |
 | Fair CRPS on fixed pre-2015 **reference** EOFs, standardised coefficients, block bootstrap | (b) | ✅ (2026-09-14, gap item 3b, `a3ff255`) `ReferenceEOFProjection` loads the reference over the pre-2015 window, forms monthly anomalies against that window's monthly climatology, builds the **area-weighted** basis truncated by `tier2.eof.variance_explained` = 0.9 (cap `max_modes` = 20) and projects the test-window climatological anomaly of the model (per member), of the reference and of every comparison source onto it, standardising each coefficient by its pre-2015 PC σ; one `raw_output` row per (source, variable, mode). `scoring_pass.score_eof_output` takes the fair CRPS per coefficient, its equal-weight mean as the variable score, and the same `E_ref`/skill as (a). ⚠ two interpretations flagged in the preamble: the bootstrap axis and the definition of the model anomaly. The old model-variability `field_consistency` z-test is left in place, unwired. **Real-data fix (`309ad6b`): the basis must not read a masked reference's fill value.** `np.ma.filled(np.asarray(cube.data, float), np.nan)` is a no-op — `np.asarray` has already discarded the mask — so for the two masked references (HadCRUT5 `tas`, EN4 `tos`) the pre-2015 sample carried 1e18–1e20 wherever coverage changed month to month. The leading EOF *was* the coverage pattern (σ_pre2015 = 3.03e18 for `tas`, 6.64e16 for `tos`; one or two modes instead of twenty), every source's standardised coefficient was dominated by the same enormous common term, and model, reference and all eleven comparison members came out with **identical** coefficients — a fair CRPS of exactly 0.0, `E_ref` 0.0 and no skill, for `tas` and `tos` only. Both reads go through `_filled` now: on the staged HadCRUT5 `tas` over 1985–2014, 14213 valid points, 20 modes, pc_std = 0.361 / 0.311 / 0.279 K | `diags/tier2_reference.py`, `scoring.eof_basis`/`standardised_coefficients`, `scoring_pass.score_eof_output` |
 | Ensemble-consistency test — complementary | (c) | 🟡 → ✅ **wired** (2026-09-14, gap item 3b, `a3ff255`): the test moved out of `TrendConsistency` (a thin alias now, dropped from the Tier II YAML) into `scoring_pass`, the only place that has the members grouped by model, the reference and the σ_int rows. σ_total² = var(**member** trends) + σ_int² + σ_obs², with σ_int from `InternalVariability`'s piControl chunks and σ_obs from `tier2.obs_sigma` + the inter-product spread, converted to a trend σ by `scoring.ols_trend_sigma` (⚠ CB2 interpretation). Rows keep the old columns plus `sigma_internal`/`sigma_obs`. The **aggregated scalars** of §II.1 — the realized warming level, both GMST trends, the Pinatubo cooling and the NH−SH trend difference — get the same test through `score_scalar_output`, each naming its (variable, statistic, window) triple in `tier2.scalar_consistency` (gap item 6, `9d4b7a9`). Still 🟡 versus the paper: a **Gaussian null** (no Mahalanobis, no empirically calibrated null), and Pinatubo's ~2.5-yr window is matched to the nearest reported σ_int length (⚠ decision B.21) | `scoring.py`, `scoring_pass.trend rows`/`score_scalar_output`, `tier2_scores.InternalVariability` |
@@ -3177,6 +3266,23 @@ peak is independently known to be 39.9°N, a parabolic fit would not change the 
 pass/fail outcome (39.9 still falls outside the `45 ± 5` bound *and* outside its own
 one-cell-wide 2° neighbourhood), so this is a numerical refinement for whichever models
 straddle a bound at the grid scale, not a resolution of E.3.
+
+**A tenth Real-data fix (2026-09-21): regime (a) was scoring absolute values.** The
+paper defines regime (a) over **anomaly** series and this document said so, but the
+pass scored the absolute series ClimateEval's `AnnualMeanTimeSeries`/`MeanTimeSeries`
+emit — `annual_mean_timeseries.raw_output` holds `tas` ≈ 287–289 K. In
+`tier2_full/out_fast/tas_score/ClimateBench2_TierII.ddb`, CNRM-CM6-1 has a **1.1 K
+cold absolute GMST bias** against HadCRUT5 and scores **CRPS ≈ 1.0 K, skill −2.85**,
+while its post-2015 *trajectory* is fine. Every Tier II time-series cell was therefore
+ranking models by mean-state bias, not by the forced trajectory plus internal
+variability the protocol is about. The fix reduces every `data_id` — each ensemble
+member, the reference and every comparison member — to an anomaly about its own
+1985–2014 climatology before scoring, and extends the load window of the scored
+entries back to 1985 to make that possible (see "(a) Time-resolved quantities" and
+decisions B.27–B.29). **Every Tier II database written before 2026-09-21 holds
+absolute-series scores and must be re-run**, not merely `--rescore`d: the pre-2015
+rows the anomaly needs are not in them, so a `--rescore` correctly produces "no
+baseline window" reason rows rather than numbers.
 
 **What this does NOT license.**
 

@@ -25,7 +25,7 @@ Two documents govern all work here:
   "Decisions needed from Duncan" section is where every ⚠ / `TODO(Duncan)`
   lives — add to it rather than inventing a value.
 
-**Current state (2026-09-20): 333 tests pass.** Every test fixture is still
+**Current state (2026-09-21): 350 tests pass.** Every test fixture is still
 synthetic, so the test suite alone never licenses "working" — but the code is
 no longer untried on real data. Tier I has run end to end on **CNRM-CM6-1**
 (every Required gate produces a row) and Tier II on **MPI-ESM1-2-LR** against a
@@ -116,8 +116,12 @@ climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --mem
 #   per-suite data paths (_cli.SUITE_REGISTRY): experiments load in FULL for the
 #   complex suites, the variability suite takes piControl, the monthly Tier II suite
 #   takes the post-2015 test window (tier2.test_window_start) once per ensemble
-#   member, and TierII_daily takes the FULL record (its extremes/PDF/diurnal
-#   climatologies are defined over it, so every entry there is in-sample)
+#   member -- but its SCORED TIME-SERIES entries (tier2.anomaly_baseline) are LOADED
+#   from the 1985 baseline start, because regime (a) scores anomalies about each
+#   source's own 1985-2014 climatology; only the post-2015 steps are scored, and the
+#   maps/annual cycles/EOF basis keep the test window -- and TierII_daily takes the
+#   FULL record (its extremes/PDF/diurnal climatologies are defined over it, so
+#   every entry there is in-sample)
 climatebench2 score MODEL --name MyModel -o /work/run/MyModel --data-root /work/staged
 #   -o/--out is the run's output directory (default <name>_climatebench2/); --data-root
 #   is the staged reference tree AND, unless $CLIMATEBENCH2_STAGED_CMIP6_ROOT overrides

@@ -14,8 +14,27 @@
 # job is to put the right series and fields in the database.
 #
 # The suite is cut to the reserved post-2015 test window (_cli.SUITE_REGISTRY),
-# which also cuts the *reference*. Two entries deliberately reach back past
-# that cut, through their own copy of the variable's timerange:
+# which also cuts the *reference* -- but the cut is applied PER ENTRY
+# (climatebench2.reference_windows.apply_reference_windows), because the
+# entries do not all want the same window:
+#
+#   * the SCORED TIME SERIES (annual_mean_timeseries, sst, ohc,
+#     sea_ice_minimum -- the entries listed under `tier2.anomaly_baseline`)
+#     are loaded from 1985, the first year of the baseline window. Regime (a)
+#     scores ANOMALIES about each source's own 1985-2014 climatology -- of the
+#     submission, of the reference and of every `other_data` comparison member
+#     alike -- so the climatology has to be in the cube. The scoring pass
+#     computes the anomaly per `data_id` (i.e. per ensemble member) and then
+#     keeps only the post-2015 steps, so what is SCORED is still the test
+#     window; a source that does not reach far enough into the baseline
+#     window is left unscored with a reason, never scored on absolute values.
+#   * every other entry (annual_cycle, map, zonal_line, eof_projection,
+#     sea_ice_annual_cycle, and the sst_* equivalents) keeps the nominal test
+#     window: their statistic IS the test-window field, and a longer cube
+#     would silently redefine it.
+#
+# Two entries deliberately reach back past that cut on their own, through
+# their own copy of the variable's timerange:
 #   reference_baseline  the reference's 1985-2014 area-mean series, from which
 #                       the pass builds the Climatology baseline's pseudo-
 #                       members (without it there is no no-skill floor);

@@ -17,6 +17,17 @@ What it computes (metrics_reference.md Tier II preamble, §II.0)
 **Regime (a) — time series.** For every ``raw_output`` with a ``time``
 column and a ``reference`` data source, and every variable in it:
 
+0. where the protocol says the entry is scored on **anomalies**
+   (``tier2.anomaly_baseline``, keyed by suite entry name), reduce every
+   ``data_id`` — each ensemble member, the reference and every comparison
+   member — to an anomaly about **its own** climatology over
+   ``tier2.climatology_baseline_period`` (per calendar month for a monthly
+   series), then cut the table to ``tier2.test_window_start`` onwards. The
+   paper defines regime (a) over anomaly series; scoring the absolute
+   series instead makes the fair CRPS a measure of each field's mean-state
+   bias. A source that does not reach far enough into the baseline window
+   is **not scored at all** — it gets a ``reason`` row, never a silent
+   fall back to absolute values (:func:`anomalise_raw_output`);
 1. group the non-reference rows **by model name** — the ``data_sources``
    table maps each ``data_id`` to ``(name, category)``, so the members of one
    model come back together, the CMIP6 comparison models stay apart, and an
@@ -35,10 +46,12 @@ column and a ``reference`` data source, and every variable in it:
 4. summarise: time-mean score, ESS-corrected standard error, and a
    moving-block-bootstrap confidence interval (``tier2.bootstrap``);
 5. add the **Climatology** baseline — the distribution of the reference's
-   1985-2014 values for each calendar month. Those values are outside the
-   test window the suite is cut to, so they come from the
-   ``reference_baseline`` rows that
-   :class:`climatebench2.diags.ReferenceBaselineRecord` writes — and, for a
+   1985-2014 values for each calendar month, shifted into the same anomaly
+   space as everything else, so it is the protocol's "no change since
+   1985-2014" forecast. Those values come from the ``reference_baseline``
+   rows that :class:`climatebench2.diags.ReferenceBaselineRecord` writes,
+   or from the reference's own pre-test rows where no such entry exists
+   (OHC, the sea-ice extents) — and, for a
    GMST-type annual series, the **PatternScaling** baseline: a two-layer EBM
    driven by the packaged ERF table with one parameter calibrated on the
    observations through 2014, displaced into pseudo-members by the detrended

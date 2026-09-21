@@ -6,14 +6,22 @@ behind the pattern-scaling baseline (``erf_ar6_ssp245.csv``, read by
 :func:`climatebench2.baselines.load_erf_series`).
 
 Model output and observations never live here — they come from ClimateEval
-DataSources (docs/climateeval_delineation_plan.md, the ownership test). The one
-thing that does live here is a *discovery policy*, not data:
-:class:`~climatebench2.data.cmip6_staged.StagedCMIP6HistoricalSSP245` finds the
-CMIP6 historical+SSP2-4.5 comparison ensemble in a pre-staged root instead of
-globbing the pool, with the protocol's member policy and member cap applied at
-staging time. It yields ClimateEval data sources with ids identical to
-:class:`climateeval.data.CMIP6HistoricalSSP245`, which stays the documented
-alternative.
+DataSources (docs/climateeval_delineation_plan.md, the ownership test). Two
+things that do:
+
+* :class:`~climatebench2.data.cmip6_staged.StagedCMIP6HistoricalSSP245` — a
+  *discovery policy*, not data: it finds the CMIP6 historical+SSP2-4.5
+  comparison ensemble in a pre-staged root instead of globbing the pool, with
+  the protocol's member policy and member cap applied at staging time. It
+  yields ClimateEval data sources with ids identical to
+  :class:`climateeval.data.CMIP6HistoricalSSP245`, which stays the documented
+  alternative.
+* :class:`~climatebench2.data.imerg.IMERG` — the daily-precipitation
+  observational reference the paper's Table 2 names, which ClimateEval has no
+  DataSource for. It is a plain :class:`climateeval.data.DataSource` over
+  staged files and **belongs upstream**; it is here only because ClimateEval
+  is a pinned dependency CB2 does not patch, and it is written so that moving
+  it is a file copy.
 """
 
 from climatebench2.data.cmip6_staged import (
@@ -21,8 +29,10 @@ from climatebench2.data.cmip6_staged import (
     StagedCMIP6HistoricalSSP245,
     staged_root,
 )
+from climatebench2.data.imerg import IMERG
 
 __all__ = [
+    "IMERG",
     "STAGED_ROOT_ENV",
     "StagedCMIP6HistoricalSSP245",
     "staged_root",

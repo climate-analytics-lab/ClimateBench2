@@ -390,6 +390,13 @@ implemented and unit-tested; none is claimed to be the paper's own words.
     so a 20-year rule would leave `rsut`, `rlut`, `rtnt`, `rsutcs` and `rlutcs` — five
     of the paper's nine figure variables — with no Tier II score at all. Duncan's call:
     keep 10, or accept losing the TOA fluxes, or define a shorter TOA-specific baseline.
+    A corollary worth stating: because the loaded window is clipped to the reference's
+    record, the **effective** baseline is the intersection of 1985–2014 with that
+    record, and it is the same for every source of that variable. On the staged tree
+    that is 1985–2014 for `tas`/`tos`/`siconc` but **2001–2014** for the five CERES-EBAF
+    fluxes (their materialised window is `20010101/20241231`). Self-consistent — model,
+    reference and every comparison member use the same years — but not
+    `climatology_baseline_period` as written.
     → `thresholds.yml tier2.anomaly_baseline`.
 29. **Which suite entries are anomaly-scored is a list, not an inference**
     (`tier2.anomaly_baseline.diagnostics`, 2026-09-21): `annual_mean_timeseries`,

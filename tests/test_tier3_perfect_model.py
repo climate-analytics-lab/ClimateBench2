@@ -142,12 +142,17 @@ def test_materialise_truth_suite_keeps_the_suite_stem(tmp_path) -> None:  # noqa
 # ---------------------------------------------------------------------------
 
 
-def _series(data_id: str, data_type: str, values: np.ndarray) -> pd.DataFrame:
+def _series(
+    data_id: str,
+    data_type: str,
+    values: np.ndarray,
+    start: str = "2015-01-01",
+) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "data_id": data_id,
             "data_type": data_type,
-            "time": pd.date_range("2015-01-01", periods=values.size, freq="YS"),
+            "time": pd.date_range(start, periods=values.size, freq="YS"),
             "tas": values,
         },
     )
@@ -156,14 +161,20 @@ def _series(data_id: str, data_type: str, values: np.ndarray) -> pd.DataFrame:
 def _perfect_model_db(tmp_path, *, pred_spread: float, n_truth: int = 4):  # noqa: ANN001, ANN201
     """A database with a truth reference, truth members and a submission."""
     rng = np.random.default_rng(0)
-    n_time = 20
+    # 1985-2034: the baseline window the anomalies are taken about, plus the
+    # 20 scored test-window years. A perfect-model run loads the same
+    # extended window as an observational one.
+    start = "1985-01-01"
+    n_time = 50
     signal = np.linspace(0.0, 1.0, n_time)
     truth_members = [
         signal + rng.normal(0, 1.0, n_time) for _ in range(n_truth)
     ]
-    frames = [_series("truth_ref", "reference", signal + rng.normal(0, 1.0, n_time))]
+    frames = [
+        _series("truth_ref", "reference", signal + rng.normal(0, 1.0, n_time), start),
+    ]
     frames += [
-        _series(f"truth_CESM2_held-out_r{i}", "other", values)
+        _series(f"truth_CESM2_held-out_r{i}", "other", values, start)
         for i, values in enumerate(truth_members)
     ]
     frames += [
@@ -171,6 +182,7 @@ def _perfect_model_db(tmp_path, *, pred_spread: float, n_truth: int = 4):  # noq
             f"model_Emulator_ssp245_r{i}",
             "to_benchmark",
             signal + rng.normal(0, pred_spread, n_time),
+            start,
         )
         for i in range(4)
     ]

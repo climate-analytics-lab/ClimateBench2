@@ -96,7 +96,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
-from climatebench2 import baselines, scoring
+from climatebench2 import baselines, scoring, windows
 from climatebench2._thresholds import get_threshold
 
 if TYPE_CHECKING:
@@ -235,6 +235,12 @@ _SIGMA_INT_RE = re.compile(
 
 #: Suffix marking a regime-(c) row in ``var_id``.
 TREND_CONSISTENCY_SUFFIX = "_trend_consistency"
+
+#: ``reason`` written for a source that cannot be reduced to an anomaly
+#: because its record does not reach far enough into the baseline window.
+#: The protocol never falls back to absolute values: a mean-state bias would
+#: dominate the fair CRPS and the row would silently mean something else.
+NO_BASELINE_REASON = "no baseline window"
 
 #: The scoring columns, with their DuckDB types. Text columns stay text;
 #: everything else is DOUBLE so the table remains numeric-friendly.
@@ -452,11 +458,284 @@ def stack_members(
 
 
 def is_monthly(times: pd.Series) -> bool:
-    """Whether a time axis steps by roughly a month rather than a year."""
-    stamps = pd.to_datetime(times)
+    """Whether a time axis steps by roughly a month rather than a year.
+
+    The times are sorted first: a ``raw_output`` table holds several sources
+    one after another, so an unsorted slice can otherwise show negative
+    steps and read as "monthly".
+    """
+    stamps = pd.to_datetime(pd.Series(times)).sort_values()
     if stamps.size < 2:  # noqa: PLR2004 - a single step tells us nothing
         return False
     return bool(stamps.diff().dropna().dt.days.median() < _MONTHLY_MAX_DAYS)
+
+
+# ---------------------------------------------------------------------------
+# Regime (a): anomalies about each source's own baseline climatology
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AnomalyContext:
+    """What :func:`anomalise_raw_output` made of one ``raw_output`` table.
+
+    ``raw``
+        The table with every scorable value replaced by its anomaly about
+        that ``data_id``'s **own** baseline-window climatology, and cut to
+        the steps the protocol actually scores (``tier2.test_window_start``
+        onwards) — so ``n_time`` counts post-2015 steps and nothing else.
+    ``baseline``
+        The ``reference_baseline`` frames, shifted by the *same* offsets, so
+        the Climatology baseline's pseudo-members live in the same anomaly
+        space and that baseline means what the protocol says it means: "no
+        change since 1985–2014".
+    ``missing``
+        ``(data_id, variable)`` pairs whose record does not reach far enough
+        into the baseline window. Their values are blanked, never left
+        absolute, and the caller writes a ``reason`` row for them.
+    ``reference_missing``
+        Variables whose *reference* could not be anomalised: nothing in that
+        variable can be scored, because there is no target.
+    """
+
+    raw: pd.DataFrame
+    baseline: dict[tuple[str, str], pd.DataFrame] | None
+    missing: set[tuple[str, str]] = field(default_factory=set)
+    reference_missing: set[str] = field(default_factory=set)
+
+
+def baseline_climatology(
+    times: pd.Series,
+    values: np.ndarray,
+    *,
+    monthly: bool,
+    min_years: int | None = None,
+) -> dict[int, float] | None:
+    """One source's climatology over ``tier2.climatology_baseline_period``.
+
+    Returns ``{calendar month: mean}`` for a monthly series and ``{0: mean}``
+    for an annual one, or ``None`` when the record covers fewer than
+    ``tier2.anomaly_baseline.min_years`` distinct years of the window — in
+    which case the protocol does **not** score the source at all rather than
+    anomalise it about a climatology it does not have.
+    """
+    if min_years is None:
+        min_years = windows.anomaly_min_baseline_years()
+    first, last = windows.baseline_window_years()
+    stamps = pd.to_datetime(pd.Series(times)).reset_index(drop=True)
+    years = stamps.dt.year.to_numpy()
+    in_window = (years >= first) & (years <= last) & np.isfinite(values)
+    if int(np.unique(years[in_window]).size) < int(min_years):
+        return None
+    if not monthly:
+        return {0: float(np.mean(values[in_window]))}
+    months = stamps.dt.month.to_numpy()
+    return {
+        int(month): float(np.mean(values[in_window & (months == month)]))
+        for month in np.unique(months[in_window])
+    }
+
+
+def apply_climatology(
+    times: pd.Series,
+    values: np.ndarray,
+    climatology: dict[int, float],
+    *,
+    monthly: bool,
+) -> np.ndarray:
+    """``values`` minus their climatology (per calendar month, if monthly).
+
+    A step whose calendar month is absent from the climatology becomes NaN:
+    it has no baseline, so it is dropped rather than scored against a
+    neighbouring month's mean.
+    """
+    if not monthly:
+        return values - climatology[0]
+    months = pd.to_datetime(pd.Series(times)).reset_index(drop=True).dt.month
+    offsets = np.array(
+        [climatology.get(int(month), np.nan) for month in months],
+        dtype=float,
+    )
+    return values - offsets
+
+
+def anomalise_raw_output(
+    raw_df: pd.DataFrame,
+    baseline: dict[tuple[str, str], pd.DataFrame] | None,
+    var_columns: list[str],
+) -> AnomalyContext:
+    """Reduce a scored time-series table to anomalies, then cut to the window.
+
+    The paper defines regime (a) over **anomaly** series (§scoring), and the
+    anomaly is taken per ``data_id`` — that is, per ensemble member, about
+    *that member's* own climatology, not about the model's or the
+    reference's. Scoring the absolute series instead makes the fair CRPS a
+    statement about each field's mean-state bias: on the first full Tier II
+    run CNRM-CM6-1's 1.1 K cold GMST bias alone gave CRPS ≈ 1.0 K and skill
+    −2.85 with a perfectly reasonable post-2015 trajectory.
+
+    The submission, the reference and every comparison member are treated
+    identically. The reference may take its climatology from the
+    ``reference_baseline`` rows when its own rows do not reach back (which
+    is what an older, test-window-only database has), and those rows are
+    shifted by the same offsets so the Climatology baseline stays in the
+    same space.
+
+    Only then is the table cut to ``tier2.test_window_start`` onwards: the
+    baseline years define the anomaly, they are never scored.
+    """
+    frame = raw_df.reset_index(drop=True).copy()
+    min_years = windows.anomaly_min_baseline_years()
+    first, last = windows.baseline_window_years()
+    context = AnomalyContext(raw=frame, baseline=dict(baseline or {}))
+    reference_ids = {
+        str(i) for i in frame.loc[frame["data_type"] == "reference", "data_id"]
+    }
+    positions = {
+        str(data_id): index
+        for data_id, index in frame.groupby(frame["data_id"].astype(str)).groups.items()
+    }
+
+    for column in var_columns:
+        if column not in frame.columns:
+            continue
+        reference_offsets: dict[int, float] | None = None
+        reference_monthly = False
+        reference_index: pd.Index | None = None
+        for data_id, index in positions.items():
+            values = frame.loc[index, column].to_numpy(float)
+            if not np.isfinite(values).any():
+                continue  # this source does not carry this variable
+            times = frame.loc[index, "time"]
+            monthly = is_monthly(times)
+            offsets = baseline_climatology(
+                times,
+                values,
+                monthly=monthly,
+                min_years=min_years,
+            )
+            own_window = offsets is not None
+            if offsets is None and data_id in reference_ids:
+                offsets = _recorded_climatology(
+                    baseline,
+                    column,
+                    monthly=monthly,
+                    min_years=min_years,
+                )
+            if offsets is None:
+                context.missing.add((data_id, column))
+                if data_id in reference_ids:
+                    context.reference_missing.add(column)
+                # Never leave an absolute value next to anomalies: it would
+                # corrupt sigma_obs and any group it shares a model with.
+                frame.loc[index, column] = np.nan
+                continue
+            frame.loc[index, column] = apply_climatology(
+                times,
+                values,
+                offsets,
+                monthly=monthly,
+            )
+            if data_id in reference_ids:
+                reference_offsets, reference_monthly = offsets, monthly
+                reference_index = index if own_window else None
+
+        # Order matters: the recorded `reference_baseline` rows are still
+        # absolute and must be shifted, whereas the reference's own rows
+        # have already been anomalised in place and must not be shifted
+        # twice.
+        if reference_offsets is not None:
+            _shift_recorded_baseline(
+                context,
+                column,
+                reference_offsets,
+                monthly=reference_monthly,
+            )
+        if reference_index is not None:
+            _record_own_baseline(
+                context,
+                frame.loc[reference_index],
+                column,
+                monthly=reference_monthly,
+                years=(first, last),
+            )
+
+    start = int(get_threshold("tier2.test_window_start"))
+    scored = pd.to_datetime(frame["time"]).dt.year >= start
+    context.raw = frame[scored].reset_index(drop=True)
+    return context
+
+
+def _recorded_climatology(
+    baseline: dict[tuple[str, str], pd.DataFrame] | None,
+    column: str,
+    *,
+    monthly: bool,
+    min_years: int,
+) -> dict[int, float] | None:
+    """The reference's climatology from its ``reference_baseline`` rows."""
+    recorded = _baseline_window_series(baseline, column, monthly=monthly)
+    if recorded is None:
+        return None
+    return baseline_climatology(
+        recorded["time"],
+        recorded[column].to_numpy(float),
+        monthly=monthly,
+        min_years=min_years,
+    )
+
+
+def _record_own_baseline(
+    context: AnomalyContext,
+    reference_rows: pd.DataFrame,
+    column: str,
+    *,
+    monthly: bool,
+    years: tuple[int, int],
+) -> None:
+    """Use the reference's own pre-test rows as the Climatology sample.
+
+    ``ReferenceBaselineRecord`` only runs for the suite entries that name it
+    (``reference_baseline`` / ``sst_baseline``), so OHC and the sea-ice
+    extents never had a Climatology row. Now that the scored entries load
+    from the baseline window anyway, the reference carries its own sample
+    and that baseline exists for them too.
+    """
+    key = (column, "monthly" if monthly else "annual")
+    if key in (context.baseline or {}):
+        return
+    stamps = pd.to_datetime(reference_rows["time"])
+    window = reference_rows[(stamps.dt.year >= years[0]) & (stamps.dt.year <= years[1])]
+    series = window[["time", column]].dropna().sort_values("time")
+    if not series.empty and context.baseline is not None:
+        context.baseline[key] = series
+
+
+def _shift_recorded_baseline(
+    context: AnomalyContext,
+    column: str,
+    climatology: dict[int, float],
+    *,
+    monthly: bool,
+) -> None:
+    """Put the Climatology baseline's sample in the same anomaly space.
+
+    The pseudo-members are the baseline window's own values, so subtracting
+    the same climatology turns that baseline into exactly what the protocol
+    intends it to be: "no change since 1985–2014".
+    """
+    key = (column, "monthly" if monthly else "annual")
+    recorded = (context.baseline or {}).get(key)
+    if recorded is None or recorded.empty or context.baseline is None:
+        return
+    shifted = recorded.copy()
+    shifted[column] = apply_climatology(
+        recorded["time"],
+        recorded[column].to_numpy(float),
+        climatology,
+        monthly=monthly,
+    )
+    context.baseline[key] = shifted
 
 
 # ---------------------------------------------------------------------------
@@ -1152,6 +1431,12 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
 ) -> list[dict[str, Any]]:
     """Score one diagnostic's ``raw_output`` table; returns metrics rows.
 
+    Where the protocol says so (``tier2.anomaly_baseline``, resolved by suite
+    entry name — which is this ``diagnostic``), the table is first reduced to
+    **anomalies about each source's own baseline-window climatology** and cut
+    to the scored window (:func:`anomalise_raw_output`), so everything below
+    works on the quantity the paper defines regime (a) over.
+
     Pure pandas/numpy — the database plumbing is in :func:`score_database`.
     """
     if "time" not in raw_df.columns or "data_id" not in raw_df.columns:
@@ -1160,8 +1445,21 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
     names = source_names(data_sources)
     categories = source_categories(data_sources)
     var_columns = [c for c in raw_df.columns if c not in _META_COLUMNS]
+    if raw_df.empty or not var_columns:
+        return []
+
+    anomalies = windows.scores_anomalies(diagnostic)
+    no_baseline: set[tuple[str, str]] = set()
+    unscorable: list[str] = []
+    if anomalies:
+        context = anomalise_raw_output(raw_df, baseline, var_columns)
+        raw_df, baseline = context.raw, context.baseline
+        no_baseline = context.missing
+        unscorable = [c for c in var_columns if c in context.reference_missing]
+        var_columns = [c for c in var_columns if c not in context.reference_missing]
+
     references = raw_df[raw_df["data_type"] == "reference"]
-    if references.empty or not var_columns:
+    if references.empty and not unscorable:
         return []
     groups = group_members(raw_df, names)
     ids = group_ids(raw_df, names)
@@ -1172,6 +1470,22 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
     perfect_model = is_perfect_model(raw_df, categories)
 
     rows: list[dict[str, Any]] = []
+    # A variable whose *reference* has no baseline window has no target at
+    # all, so nothing in it can be scored — but it stays on the scorecard,
+    # with the reason, instead of vanishing.
+    for column in unscorable:
+        rows.extend(
+            _empty_row(name, data_type, column, f"reference has {NO_BASELINE_REASON}")
+            for data_type, name in groups
+        )
+        rows.append(
+            _empty_row(
+                CLIMATOLOGY_DATA_ID,
+                "baseline",
+                column,
+                f"reference has {NO_BASELINE_REASON}",
+            ),
+        )
     for column in var_columns:
         reference = reference_for_variable(references, column)
         if reference is None:
@@ -1208,6 +1522,20 @@ def score_raw_output(  # noqa: C901, PLR0912, PLR0915
                     "not a comparison model)",
                 )
                 continue
+            if no_baseline:
+                # Members whose record does not reach into the baseline
+                # window are dropped from the ensemble, never scored on
+                # absolute values next to their anomalised siblings; a group
+                # that loses all of them keeps a `reason` row.
+                usable = [
+                    f
+                    for f in member_frames
+                    if (str(f["data_id"].iloc[0]), column) not in no_baseline
+                ]
+                if not usable:
+                    scored[key] = _empty_row(name, data_type, column, NO_BASELINE_REASON)
+                    continue
+                member_frames = usable  # noqa: PLW2901
             members, obs, times = stack_members(member_frames, reference, column)
             if obs.size < _MIN_OVERLAP:
                 continue

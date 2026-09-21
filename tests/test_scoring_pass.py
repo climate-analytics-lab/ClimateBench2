@@ -74,7 +74,11 @@ def _tables(rng: np.random.Generator) -> tuple[pd.DataFrame, pd.DataFrame]:
     truth_all = _truth(ALL_YEARS, rng)
     raw_rows, sources = [], []
     for name, category, variants, data_type, spread in SOURCES:
-        years = ALL_YEARS if data_type == "reference" else list(TEST_YEARS)
+        # Every source carries the baseline window as well as the test
+        # window: regime (a) scores anomalies about each source's own
+        # 1985-2014 climatology, so that is what the suite now loads
+        # (`windows.extend_to_baseline`).
+        years = ALL_YEARS
         exp = "" if data_type == "reference" else "historical"
         base = truth_all[-len(years) :] if years != ALL_YEARS else truth_all
         for variant in variants:
@@ -179,9 +183,9 @@ def test_stack_members_aligns_on_common_times() -> None:
     frames = groups[("to_benchmark", "MyModel")]
     frames = [frames[0].iloc[2:], *frames[1:]]  # first member misses 2 years
     members, obs, times = stack_members(frames, reference, "tas")
-    assert members.shape == (3, len(TEST_YEARS) - 2)
-    assert obs.shape == (len(TEST_YEARS) - 2,)
-    assert times.size == len(TEST_YEARS) - 2
+    assert members.shape == (3, len(ALL_YEARS) - 2)
+    assert obs.shape == (len(ALL_YEARS) - 2,)
+    assert times.size == len(ALL_YEARS) - 2
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +211,9 @@ def test_score_raw_output_stacks_members_and_scores_baselines() -> None:
         (by_id.index == "MyModel") & (by_id["data_type"] == "to_benchmark")
     ].iloc[0]
     assert submission["n_members"] == 3  # the three variants, one ensemble
-    assert submission["n_time"] == len(TEST_YEARS)
+    # Scored absolutely here (`diagnostic=""` is not an anomaly entry), so
+    # every loaded year is a scored step; the anomaly path is exercised below.
+    assert submission["n_time"] == len(ALL_YEARS)
     assert submission["crps"] > 0
     assert submission["crps_se"] > 0
     assert submission["crps_ci_lo"] < submission["crps"] < submission["crps_ci_hi"]
@@ -732,7 +738,13 @@ def test_trend_consistency_rows_carry_sigma_internal_and_sigma_obs() -> None:
         _sigma_internal_rows(0.004),
     )
     rows = pd.DataFrame(
-        score_raw_output(raw, sources, settings=FAST, sigma_internal=sigma_internal),
+        score_raw_output(
+            raw,
+            sources,
+            settings=FAST,
+            sigma_internal=sigma_internal,
+            diagnostic=DIAGNOSTIC,  # the real entry: 30 scored post-2015 years
+        ),
     )
     trend = rows[rows["var_id"] == "tas_trend_consistency"]
     assert not trend.empty
@@ -1166,3 +1178,221 @@ def test_eof_pattern_scaling_is_a_reason_row_until_pr_44() -> None:
     # ... and it does not disturb E_ref, which is still the CMIP6 median
     model = rows[(rows["data_id"] == "MyModel") & (rows["data_type"] == "to_benchmark")]
     assert np.isfinite(model["e_ref"].iloc[0])
+
+
+# ---------------------------------------------------------------------------
+# Regime (a) is scored on ANOMALIES about each source's own baseline window
+# ---------------------------------------------------------------------------
+
+
+def _offset_tables(
+    offset: float,
+    seed: int,
+    *,
+    years: list[int] | None = None,
+    monthly: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """A reference and a 3-member model that differ only by ``offset``.
+
+    The model tracks the observed trajectory exactly and sits ``offset``
+    above it — a pure mean-state bias, which is precisely what the paper
+    says regime (a) must NOT be measuring.
+    """
+    rng = np.random.default_rng(seed)
+    years = years or ALL_YEARS
+    if monthly:
+        times = pd.date_range(f"{years[0]}-01-01", f"{years[-1]}-12-01", freq="MS")
+        signal = 0.02 * (times.year - 1985) + 5.0 * np.sin(
+            2 * np.pi * (times.month - 1) / 12,
+        )
+    else:
+        times = _times(years)
+        signal = 0.02 * (np.array(years, dtype=float) - 1985.0)
+    truth = signal + rng.normal(0.0, 0.1, times.size)
+    frames = [
+        pd.DataFrame(
+            {
+                "data_id": "observation_OBS",
+                "data_type": "reference",
+                "time": times,
+                "tas": truth,
+            },
+        ),
+    ]
+    rows = [{"id": "observation_OBS", "name": "OBS", "category": "observation"}]
+    for variant in ("r1i1p1f1", "r2i1p1f1", "r3i1p1f1"):
+        data_id = f"model_MyModel_historical_{variant}"
+        frames.append(
+            pd.DataFrame(
+                {
+                    "data_id": data_id,
+                    "data_type": "to_benchmark",
+                    "time": times,
+                    "tas": truth + offset + rng.normal(0.0, 0.05, times.size),
+                },
+            ),
+        )
+        rows.append({"id": data_id, "name": "MyModel", "category": "model"})
+    return pd.concat(frames, ignore_index=True), pd.DataFrame(rows)
+
+
+def _submission(rows: pd.DataFrame) -> pd.Series:
+    return rows[
+        (rows["data_id"] == "MyModel") & (rows["data_type"] == "to_benchmark")
+    ].iloc[0]
+
+
+def test_a_constant_offset_is_removed_before_scoring() -> None:
+    """The defect this regime exists to avoid: a mean-state bias as the score."""
+    raw, sources = _offset_tables(5.0, 100)
+
+    absolute = _submission(
+        pd.DataFrame(score_raw_output(raw, sources, settings=FAST)),
+    )
+    anomaly = _submission(
+        pd.DataFrame(
+            score_raw_output(raw, sources, settings=FAST, diagnostic=DIAGNOSTIC),
+        ),
+    )
+    # Scored absolutely, the 5 K offset IS the score ...
+    assert absolute["crps"] == pytest.approx(5.0, abs=0.2)
+    # ... and once both sides are anomalies about their own 1985-2014 mean,
+    # a model that tracks the observed trajectory scores ~ 0.
+    assert anomaly["crps"] < 0.1
+    assert anomaly["reason"] == ""
+
+
+def test_n_time_counts_only_the_post_2015_steps() -> None:
+    """The baseline years define the anomaly; they are never scored."""
+    raw, sources = _offset_tables(0.3, 101)
+    rows = pd.DataFrame(
+        score_raw_output(raw, sources, settings=FAST, diagnostic=DIAGNOSTIC),
+    )
+    assert _submission(rows)["n_time"] == len(TEST_YEARS)
+    # The climatology baseline is scored on exactly the same steps
+    clim = rows[rows["data_id"] == CLIMATOLOGY_DATA_ID].iloc[0]
+    assert clim["n_time"] == len(TEST_YEARS)
+    assert clim["n_members"] == len(BASELINE_YEARS)
+
+
+def test_monthly_anomalies_are_taken_per_calendar_month() -> None:
+    raw, sources = _offset_tables(3.0, 102, years=ALL_YEARS, monthly=True)
+    reference = raw[raw["data_type"] == "reference"]
+    climatology = scoring_pass.baseline_climatology(
+        reference["time"],
+        reference["tas"].to_numpy(float),
+        monthly=True,
+    )
+    assert set(climatology) == set(range(1, 13))
+    # The 5 K seasonal cycle is in the climatology, not in the anomaly
+    assert max(climatology.values()) - min(climatology.values()) > 9.0
+    anomaly = scoring_pass.apply_climatology(
+        reference["time"],
+        reference["tas"].to_numpy(float),
+        climatology,
+        monthly=True,
+    )
+    assert np.nanstd(anomaly) < 1.0
+
+    rows = pd.DataFrame(
+        score_raw_output(raw, sources, settings=FAST, diagnostic=DIAGNOSTIC),
+    )
+    submission = _submission(rows)
+    assert submission["n_time"] == 12 * len(TEST_YEARS)
+    assert submission["block_length"] == FAST["block_length_monthly"]
+    # The seasonal cycle and the 3 K offset are both gone
+    assert submission["crps"] < 0.1
+
+
+def test_a_source_without_a_baseline_window_gets_a_reason_row() -> None:
+    """Never a silent fall back to absolute values (the whole point)."""
+    raw, sources = _offset_tables(5.0, 103)
+    years = pd.to_datetime(raw["time"]).dt.year
+    # The reference keeps its full record; the model starts in 2015, as an
+    # SSP-only submission (or an older database) would.
+    cut = raw[(raw["data_type"] == "reference") | (years >= min(TEST_YEARS))]
+    rows = pd.DataFrame(
+        score_raw_output(cut, sources, settings=FAST, diagnostic=DIAGNOSTIC),
+    )
+    submission = _submission(rows)
+    assert np.isnan(submission["crps"])
+    assert submission["reason"] == scoring_pass.NO_BASELINE_REASON
+
+
+def test_a_reference_without_a_baseline_window_leaves_the_row_visible() -> None:
+    """No target, no score — but the model does not vanish from the card."""
+    raw, sources = _offset_tables(5.0, 104)
+    years = pd.to_datetime(raw["time"]).dt.year
+    cut = raw[years >= min(TEST_YEARS)]
+    rows = pd.DataFrame(
+        score_raw_output(cut, sources, settings=FAST, diagnostic=DIAGNOSTIC),
+    )
+    submission = _submission(rows)
+    assert np.isnan(submission["crps"])
+    assert scoring_pass.NO_BASELINE_REASON in submission["reason"]
+    # The climatology baseline says the same thing rather than disappearing
+    clim = rows[rows["data_id"] == CLIMATOLOGY_DATA_ID].iloc[0]
+    assert scoring_pass.NO_BASELINE_REASON in clim["reason"]
+
+
+def test_a_test_window_only_database_rescores_without_crashing(tmp_path) -> None:  # noqa: ANN001
+    """An existing .ddb holds post-2015 rows only: unscored WITH A REASON."""
+    raw, sources = _offset_tables(5.0, 105)
+    years = pd.to_datetime(raw["time"]).dt.year
+    cut = raw[years >= min(TEST_YEARS)].reset_index(drop=True)
+    db_path = tmp_path / "ClimateBench2_TierII.ddb"
+    con = duckdb.connect(str(db_path))
+    con.execute(f'CREATE SCHEMA "{DIAGNOSTIC}"')
+    for table, frame in (("raw_output", cut), ("data_sources", sources)):
+        con.register("frame", frame)
+        con.execute(f'CREATE TABLE "{DIAGNOSTIC}"."{table}" AS SELECT * FROM frame')
+        con.unregister("frame")
+    con.close()
+
+    first = score_database(db_path, settings=FAST)
+    second = score_database(db_path, settings=FAST)  # --rescore is idempotent
+    assert first.rows == second.rows
+    metrics = _metrics(db_path)
+    assert metrics["crps"].isna().all()
+    assert metrics["reason"].str.contains(scoring_pass.NO_BASELINE_REASON).all()
+    assert set(metrics["window"]) == {scoring_pass.WINDOW_HELD_OUT}
+
+
+def test_the_climatology_baseline_lives_in_the_same_anomaly_space() -> None:
+    """"No change since 1985-2014" — so its forecast is ~ zero anomaly."""
+    raw, sources = _offset_tables(0.0, 106)
+    reference = raw[raw["data_type"] == "reference"]
+    context = scoring_pass.anomalise_raw_output(
+        raw,
+        scoring_pass.baseline_records(
+            reference.assign(data_type=scoring_pass.BASELINE_ANNUAL_DATA_TYPE),
+        ),
+        ["tas"],
+    )
+    recorded = context.baseline[("tas", "annual")]
+    window = recorded[pd.to_datetime(recorded["time"]).dt.year <= max(BASELINE_YEARS)]
+    assert float(window["tas"].mean()) == pytest.approx(0.0, abs=1e-9)
+    # ... and the scored rows only cover the test window
+    assert pd.to_datetime(context.raw["time"]).dt.year.min() == min(TEST_YEARS)
+
+
+def test_pattern_scaling_is_not_double_differenced() -> None:
+    """The EBM re-anchors to the baseline, so an anomaly input is fine."""
+    raw, sources = _offset_tables(0.0, 107)
+    rows = pd.DataFrame(
+        score_raw_output(raw, sources, settings=FAST, diagnostic=DIAGNOSTIC),
+    )
+    row = _pattern_row(rows)
+    assert row["reason"] == ""
+    assert np.isfinite(row["crps"])
+    low, high = get_threshold("tier2.pattern_scaling.lambda_bounds")
+    assert low <= row["value"] <= high
+
+
+def test_only_the_listed_suite_entries_are_scored_as_anomalies() -> None:
+    """Tier I and the daily suite's full-record series keep absolute values."""
+    assert scoring_pass.windows.scores_anomalies("annual_mean_timeseries")
+    assert scoring_pass.windows.scores_anomalies("sst")
+    assert not scoring_pass.windows.scores_anomalies("tas_annual_max")
+    assert not scoring_pass.windows.scores_anomalies("enso_gate")
+    assert not scoring_pass.windows.scores_anomalies("")

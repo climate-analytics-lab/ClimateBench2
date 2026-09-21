@@ -520,7 +520,8 @@ def test_upstream_gate_wrappers_carry_the_protocol_thresholds() -> None:
     assert bounds["omet_peak"] == ("omet_peak", 1.5, 2.0)
     assert bounds["omet_peak_lat"] == ("omet_peak_lat", 15.0, 20.0)
     assert bounds["amet_peak"] == ("amet_peak", 4.0, 5.0)
-    assert bounds["amet_peak_lat"] == ("amet_peak_lat", 40.0, 50.0)
+    # 41 +/- 2.5 degN since 00f4e49 (Duncan 2026-09-21); was 45 +/- 5
+    assert bounds["amet_peak_lat"] == ("amet_peak_lat", 38.5, 43.5)
 
 
 def test_upstream_gate_wrappers_feed_thresholds_into_upstream_kwargs() -> None:

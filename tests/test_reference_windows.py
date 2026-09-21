@@ -374,3 +374,47 @@ def test_the_pre_test_cap_is_the_year_before_the_test_window() -> None:
     from climatebench2 import windows
 
     assert windows.pre_test_last_year() == 2014
+
+
+def test_cli_materialises_the_real_daily_suite_against_a_staged_imerg(tmp_path) -> None:  # noqa: ANN001
+    """The CLI branch, on the shipped YAML: only the IMERG entries move.
+
+    `materialise_windowed_suite(..., nominal=None)` is what
+    `SuiteSpec.reference_overlap` triggers for `ClimateBench2_TierII_daily`.
+    """
+    yaml = pytest.importorskip("yaml")
+    pytest.importorskip("climateeval")
+
+    from climatebench2._cli import _resolve_suite, materialise_windowed_suite
+
+    _imerg_files(tmp_path)
+    out_dir = tmp_path / "windowed"
+    out_dir.mkdir()
+    target, used = materialise_windowed_suite(
+        _resolve_suite("ClimateBench2_TierII_daily"),
+        out_dir,
+        None,
+        tmp_path,
+    )
+
+    # Every moved window is IMERG's overlap, and nothing else moved at all.
+    assert set(used.values()) == {("20010101/20141231", reference_windows.FULL_RECORD)}
+    assert set(used) == {
+        "extremes/pr",
+        "perkins/pr_intensity_land",
+        "perkins/pr_intensity_tropics",
+    }
+
+    written = yaml.safe_load(open(target, encoding="utf-8"))  # noqa: PTH123, SIM115
+    by_entry = {entry["name"]: entry["variables"] for entry in written}
+    # The held-out series keeps the whole record: it needs the baseline too
+    assert all(
+        "timerange" not in variable
+        for variable in by_entry["pr_extremes_series"]
+    )
+    # ... as do the temperature extremes, which have no reference at all
+    assert all(
+        "timerange" not in variable
+        for variable in by_entry["extremes"]
+        if variable["var_name"] != "pr"
+    )

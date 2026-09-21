@@ -12,13 +12,18 @@ Subcommands
     the Tier II scoring pass over them (``--no-score`` skips it).
 ``climatebench2 leaderboard DB [DB ...]``
     Build the ClimateBench2 leaderboard from result databases;
-    ``--rescore`` re-runs the Tier II scoring pass over them first.
+    ``--rescore`` re-runs the Tier II scoring pass over them first, and
+    ``--regate`` re-evaluates every Tier I/III gate's pass/fail against the
+    current ``thresholds.yml`` first (:mod:`climatebench2.regate`) — cheap,
+    unlike re-running the suite that computed the raw statistic.
 
 The Tier II scores are a **post-processing pass**
 (:mod:`climatebench2.scoring_pass`), not a diagnostic: ensemble members are
 ingested as separate data sources, so a model's fair CRPS can only be formed
 once every member has run. The pass is idempotent — it replaces the rows it
-wrote before — so it is safe to re-run at any time.
+wrote before — so it is safe to re-run at any time. The gate re-evaluation
+pass (:mod:`climatebench2.regate`) is likewise idempotent but does not touch
+Tier II/III scorer rows or declared-not-applicable gate rows.
 
 ClimateBench2 deliberately has no data-loading or report machinery of its
 own — ``score`` delegates to ClimateEval (``load_cmor_dir`` + ``Suite``), and
@@ -741,6 +746,28 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
     )
 
 
+def run_regate_pass(db_paths: list[Path]) -> None:
+    """Re-evaluate every Tier I/III gate against the current thresholds.yml.
+
+    Unlike :func:`run_scoring_pass`, this never re-runs a suite: it re-reads
+    each gate's already-computed raw statistic from ``<schema>.raw_output``
+    and re-applies the current ``thresholds.yml`` bound
+    (``climatebench2.regate``). It is how a ``thresholds.yml`` edit reaches
+    an existing database's ``passes``/``bound_lower``/``bound_upper`` without
+    the hours-per-model cost of re-running the suite; idempotent.
+    """
+    from climatebench2.regate import regate_databases
+
+    print(
+        "\nRe-gating Tier I/III checks against the current thresholds.yml…",
+        file=sys.stderr,
+    )
+    for report in regate_databases(db_paths):
+        print(f"  {report.summary()}", file=sys.stderr)
+        for message in report.messages:
+            print(f"  {message}", file=sys.stderr)
+
+
 def run_scoring_pass(db_paths: list[Path]) -> None:
     """Run the Tier II scoring pass over the given databases, reporting to stderr.
 
@@ -764,6 +791,9 @@ def _cmd_leaderboard(args: argparse.Namespace) -> None:
         if not path.exists():
             msg = f"Database not found: {path}"
             raise SystemExit(msg)
+
+    if args.regate:
+        run_regate_pass(db_paths)
 
     if args.rescore:
         run_scoring_pass(db_paths)
@@ -1035,6 +1065,19 @@ def build_parser() -> argparse.ArgumentParser:
             "the pass; use this on databases written with --no-score, on ones "
             "written before the pass existed, or after changing "
             "thresholds.yml. The pass is idempotent."
+        ),
+    )
+    leaderboard.add_argument(
+        "--regate",
+        action="store_true",
+        help=(
+            "Re-evaluate every Tier I/III gate's pass/fail against the "
+            "CURRENT thresholds.yml, without re-running the suite: rewrites "
+            "`passes`/`bound_lower`/`bound_upper`/`requirement`/`tier` from "
+            "each gate's already-computed raw statistic (`raw_output`). Use "
+            "this after a thresholds.yml edit instead of re-running `score` "
+            "(hours per model); never touches Tier II/III scorer rows or "
+            "n/a rows. Idempotent."
         ),
     )
     leaderboard.set_defaults(func=_cmd_leaderboard)

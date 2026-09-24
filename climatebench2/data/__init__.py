@@ -6,7 +6,7 @@ behind the pattern-scaling baseline (``erf_ar6_ssp245.csv``, read by
 :func:`climatebench2.baselines.load_erf_series`).
 
 Model output and observations never live here — they come from ClimateEval
-DataSources (docs/climateeval_delineation_plan.md, the ownership test). Two
+DataSources (docs/climateeval_delineation_plan.md, the ownership test). Three
 things that do:
 
 * :class:`~climatebench2.data.cmip6_staged.StagedCMIP6HistoricalSSP245` — a
@@ -22,6 +22,10 @@ things that do:
   staged files and **belongs upstream**; it is here only because ClimateEval
   is a pinned dependency CB2 does not patch, and it is written so that moving
   it is a file copy.
+* :class:`~climatebench2.data.modis.MODIS` — the monthly cloud reference
+  (``clt``, ``clwvi``, ``clivi``, ``lwp``) from MODIS Aqua MYD08_M3, staged
+  because ESMValTool's MODIS CMORizer output is in the unreadable Tier-3
+  pool. Same shape as ``IMERG``, same "belongs upstream" caveat.
 """
 
 from climatebench2.data.cmip6_staged import (
@@ -30,9 +34,11 @@ from climatebench2.data.cmip6_staged import (
     staged_root,
 )
 from climatebench2.data.imerg import IMERG
+from climatebench2.data.modis import MODIS
 
 __all__ = [
     "IMERG",
+    "MODIS",
     "STAGED_ROOT_ENV",
     "StagedCMIP6HistoricalSSP245",
     "staged_root",

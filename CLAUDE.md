@@ -58,8 +58,10 @@ climatebench2/
 ├── data/                # packaged protocol tables (the ERF series behind the EBM)
 │   ├── cmip6_staged.py  #   + StagedCMIP6HistoricalSSP245: the CMIP6 comparison
 │   │                    #     ensemble behind E_ref, found in a staged root
-│   └── imerg.py         #   + IMERG: the daily-pr observational reference (paper
-│                        #     Table 2). Belongs upstream; here because the pin
+│   ├── imerg.py         #   + IMERG: the daily-pr observational reference (paper
+│   │                    #     Table 2). Belongs upstream; here because the pin
+│   └── modis.py         #   + MODIS: the monthly cloud reference (clt/clwvi/clivi/
+│                        #     lwp, MYD08_M3), staged the same way as IMERG
 ├── leaderboard/         # .ddb results → scores table → static HTML page
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 ```

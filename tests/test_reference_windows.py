@@ -418,3 +418,126 @@ def test_cli_materialises_the_real_daily_suite_against_a_staged_imerg(tmp_path) 
         for variable in by_entry["extremes"]
         if variable["var_name"] != "pr"
     )
+
+
+# ---------------------------------------------------------------------------
+# The Tier II suite's cloud and CRE columns (2026-09-24): MODIS and CERES
+# ---------------------------------------------------------------------------
+
+
+def _modis_files(root, last_year: int) -> None:  # noqa: ANN001
+    """MODIS's shape: monthly from 2002-07 to ``last_year + 1``-06, yearly files.
+
+    Named ``YYYY01-YYYY12`` even for the partial first and last years, as
+    ``fetch_modis.py`` writes them. The partial year after ``last_year``
+    stands for "the record runs into the current year".
+    """
+    for var_name in ("clt", "clwvi", "clivi", "lwp"):
+        var_dir = root / "observation_MODIS" / "mon" / var_name
+        for year in range(2002, last_year + 2):
+            _write(
+                var_dir / f"{var_name}_Amon_MODIS_MYD08-M3_{year}01-{year}12.nc",
+                year,
+                7 if year == 2002 else 1,
+                year,
+                6 if year == last_year + 1 else 12,
+            )
+
+
+def _ceres_files(root) -> None:  # noqa: ANN001
+    """CERES-EBAF's staged record, 2000-03 .. 2025-09, for the four TOA fluxes."""
+    for var_name in ("rsut", "rsutcs", "rlut", "rlutcs", "rsdt"):
+        _write(
+            root / "observation_CERES-EBAF" / "mon" / var_name / "a.nc",
+            2000,
+            3,
+            2025,
+            9,
+        )
+
+
+def test_the_tier2_cloud_and_cre_windows_on_the_shipped_suite(tmp_path) -> None:  # noqa: ANN001
+    """What `climatebench2 score` resolves for clt/clwvi/clivi and swcre/lwcre.
+
+    * MODIS starts 2002-07, so its first complete year is 2003: the
+      regime-(a) entry loads the clouds from **2003** (the 1985 baseline
+      start, clipped), i.e. the anomaly baseline is **2003–2014**, 12 years,
+      above `tier2.anomaly_baseline.min_years`; the scored steps still run
+      to the last complete year.
+    * The CREs are derived from CERES-EBAF, whose coverage is the
+      intersection of the all-sky and clear-sky fluxes' — 2001–2024.
+    * The entries that are not anomaly-scored keep the test window.
+    """
+    yaml = pytest.importorskip("yaml")
+    pytest.importorskip("climateeval")
+
+    from climatebench2 import windows
+    from climatebench2._cli import (
+        _resolve_suite,
+        default_tier2_timerange,
+        materialise_windowed_suite,
+    )
+
+    last = windows.last_complete_year()
+    _modis_files(tmp_path, last)
+    _ceres_files(tmp_path)
+    out_dir = tmp_path / "windowed"
+    out_dir.mkdir()
+    nominal = default_tier2_timerange()
+    target, used = materialise_windowed_suite(
+        _resolve_suite("ClimateBench2_TierII"),
+        out_dir,
+        nominal,
+        tmp_path,
+    )
+
+    ceres_last = min(2024, last)
+    for var_id in ("clt", "clwvi", "clivi"):
+        assert used[f"annual_mean_timeseries/{var_id}"][0] == f"20030101/{last}1231"
+        for entry in ("eof_projection", "map", "reference_baseline", "annual_cycle"):
+            assert used[f"{entry}/{var_id}"][0] == f"20150101/{last}1231", entry
+    for var_id in ("swcre", "lwcre"):
+        assert used[f"annual_mean_timeseries/{var_id}"][0] == (
+            f"20010101/{ceres_last}1231"
+        )
+        assert used[f"eof_projection/{var_id}"][0] == f"20150101/{ceres_last}1231"
+
+    # The anomaly baseline those windows imply is long enough to score.
+    _, last_baseline = windows.baseline_window_years()
+    assert last_baseline - 2003 + 1 == 12
+    assert last_baseline - 2003 + 1 >= windows.anomaly_min_baseline_years()
+
+    written = yaml.safe_load(open(target, encoding="utf-8"))  # noqa: PTH123, SIM115
+    by_entry = {entry["name"]: entry["variables"] for entry in written}
+    clt = next(v for v in by_entry["annual_mean_timeseries"] if v["id"] == "clt")
+    assert clt["timerange"] == f"20030101/{last}1231"
+    assert clt["reference_data"] == "climatebench2.data.MODIS"
+
+
+def test_the_reference_diagnostics_reach_back_to_2003_for_modis(tmp_path) -> None:  # noqa: ANN001
+    """`reference_baseline` and the EOF basis ask for 1985–2014 themselves.
+
+    `clip_to_source` narrows that to the part MODIS has (2003–2014), and for
+    a derived CERES variable to the intersection of its inputs (2001–2014).
+    """
+    pytest.importorskip("climateeval")
+
+    _modis_files(tmp_path, 2025)
+    _ceres_files(tmp_path)
+    baseline = "19850101/20141231"
+    for var_name in ("clt", "clwvi", "clivi"):
+        assert reference_windows.clip_to_source(
+            baseline,
+            tmp_path,
+            "observation_MODIS",
+            "mon",
+            var_name,
+        ) == "20030101/20141231"
+    for var_name in ("swcre", "lwcre"):
+        assert reference_windows.clip_to_source(
+            baseline,
+            tmp_path,
+            "observation_CERES-EBAF",
+            "mon",
+            var_name,
+        ) == "20010101/20141231"

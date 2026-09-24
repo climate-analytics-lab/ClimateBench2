@@ -1,9 +1,10 @@
 """Clip the Tier II test window to what each reference product actually covers.
 
 The reserved test window is ``tier2.test_window_start`` → the last **complete**
-calendar year (:mod:`climatebench2.windows`), which in 2026 is 2015–2025. No
-observational product is that current: HadCRUT5 ends 2023-09, GPCP 2024-09,
-HadISST's ``siconc`` 2021-12, ESACCI-CLOUD 2016-12. ClimateEval treats a
+calendar year (:mod:`climatebench2.windows`), which in 2026 is 2015–2025.
+Most observational products are not that current: HadCRUT5 ends 2023-09,
+GPCP 2024-09, CERES-EBAF 2025-09, HadISST's ``siconc`` 2021-12 (MODIS, which
+runs into the current year, is the exception). ClimateEval treats a
 requested range the data does not cover as an error, not as something to clip::
 
     climateeval._utils._check_data

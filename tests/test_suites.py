@@ -155,15 +155,84 @@ def test_realized_warming_level_emits_no_gate_row() -> None:
 
 
 def test_tier2_suite_covers_the_protocol_variables() -> None:
-    """Clear-sky TOA, condensed-water paths and both OHC layers are wired."""
+    """Clear-sky TOA, CREs, condensed-water paths and both OHC layers are wired."""
     suite = Suite(_resolve_suite("ClimateBench2_TierII"))._get_diagnostics()
     core = {v.id for v in suite["annual_mean_timeseries"]._variables}
-    assert {"rsutcs", "rlutcs", "clwvi", "clivi"} <= core
+    assert {"rsutcs", "rlutcs", "swcre", "lwcre", "clt", "clwvi", "clivi"} <= core
     # ... and every one of them carries a reference, or the pass cannot score
     referenced = {v.id for v in suite["annual_mean_timeseries"]._reference_data}
     assert core <= referenced
     ohc = {v.id for v in suite["ohc"]._variables}
     assert {"phcint_total", "phcint_2000m", "phcint_100m"} <= ohc
+
+
+#: The entries of the Tier II suite that carry the shared core-variable list
+#: (the `*core_variables` anchor): every core variable is in all six.
+CORE_ENTRIES = (
+    "annual_mean_timeseries",
+    "reference_baseline",
+    "annual_cycle",
+    "map",
+    "eof_projection",
+    "zonal_line",
+)
+
+
+def test_tier2_clouds_are_referenced_to_modis_and_cre_to_ceres() -> None:
+    """2026-09-24: the clouds and the CREs join the paper's figure set.
+
+    ESACCI-CLOUD ends in 2016, so the clouds had a two-year scored window;
+    MODIS (staged) covers the whole test window. `swcre`/`lwcre` are the
+    derived CERES-EBAF cloud-radiative effects. Every one of them sits in
+    every core entry, with the CMIP6 comparison ensemble alongside.
+    """
+    from climatebench2.data import MODIS
+
+    suite = Suite(_resolve_suite("ClimateBench2_TierII"))._get_diagnostics()
+    expected = {
+        "clt": MODIS,
+        "clwvi": MODIS,
+        "clivi": MODIS,
+        "swcre": climateeval.data.CERESEBAF,
+        "lwcre": climateeval.data.CERESEBAF,
+    }
+    for entry in CORE_ENTRIES:
+        references = {v.id: s for v, s in suite[entry]._reference_data.items()}
+        for var_id, source in expected.items():
+            assert type(references[var_id]) is source, (entry, var_id)
+        assert "ESACCI-CLOUD" not in {s.name for s in references.values()}
+
+    # ... and every one carries the comparison ensemble (read off the YAML:
+    # the generator yields nothing without a staged root)
+    yaml = pytest.importorskip("yaml")
+    with open(_resolve_suite("ClimateBench2_TierII"), encoding="utf-8") as stream:
+        definition = yaml.safe_load(stream)
+    for entry in definition:
+        if entry["name"] not in CORE_ENTRIES:
+            continue
+        by_id = {v["id"]: v for v in entry["variables"]}
+        for var_id in expected:
+            assert by_id[var_id]["other_data"] == [
+                "climatebench2.data.StagedCMIP6HistoricalSSP245",
+            ], (entry["name"], var_id)
+
+
+def test_the_cre_variables_derive_from_all_and_clear_sky_fluxes() -> None:
+    """The CRE ids CB2 uses exist in ClimateEval's registry as derived variables.
+
+    ESMValCore's derivations: swcre = rsutcs - rsut, lwcre = rlutcs - rlut.
+    Those inputs are what both the CERES reference and a comparison member
+    must have staged.
+    """
+    from climateeval import Variable
+
+    required = {
+        name: sorted(v.var_name for v in Variable(name, name, "mon").get_required_variables())
+        for name in ("swcre", "lwcre")
+    }
+    assert required == {"swcre": ["rsut", "rsutcs"], "lwcre": ["rlut", "rlutcs"]}
+    assert Variable("swcre", "swcre", "mon").derived
+    assert Variable("lwcre", "lwcre", "mon").derived
 
 
 def test_complex_gates_accept_the_not_applicable_kwarg() -> None:

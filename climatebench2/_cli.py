@@ -599,8 +599,8 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
         #   * a reference that stops short of the requested range is DROPPED
         #     by ClimateEval, not clipped, so a window running to the last
         #     complete year would delete `tas` (HadCRUT5 ends 2023-09),
-        #     `siconc` (HadISST 2021-12) and the clouds (ESACCI-CLOUD 2016)
-        #     from the scorecard entirely;
+        #     `siconc` (HadISST 2021-12) and the TOA fluxes (CERES-EBAF
+        #     2025-09) from the scorecard entirely;
         #   * the regime-(a) entries are scored on ANOMALIES about each
         #     source's own 1985-2014 climatology, so they load from 1985
         #     while the EOF basis, the maps and the annual cycles keep the

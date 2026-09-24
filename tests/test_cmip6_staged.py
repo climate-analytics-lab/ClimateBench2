@@ -158,3 +158,125 @@ def test_the_generator_enumerates_daily_directories_too(tmp_path, monkeypatch) -
     monthly = list(StagedCMIP6HistoricalSSP245().generate(Variable("pr", "pr", "mon")))
     assert len(monthly) == 2  # noqa: PLR2004
     clear_discovery_cache()
+
+
+#: CMOR standard names of the TOA fluxes the CRE derivations extract by name.
+_FLUX_STANDARD_NAMES = {
+    "rsut": "toa_outgoing_shortwave_flux",
+    "rsutcs": "toa_outgoing_shortwave_flux_assuming_clear_sky",
+    "rlut": "toa_outgoing_longwave_flux",
+    "rlutcs": "toa_outgoing_longwave_flux_assuming_clear_sky",
+}
+
+
+def _write_flux(path, var_name: str, value: float) -> None:  # noqa: ANN001
+    """A tiny CMOR-like monthly TOA-flux file (2015-01 .. 2016-12)."""
+    import numpy as np
+
+    netCDF4 = pytest.importorskip("netCDF4")  # noqa: N806
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lats = np.array([-45.0, 45.0])
+    lons = np.array([90.0, 270.0])
+    days = [(year - 2015) * 365.0 + month * 30.4 + 15.0
+            for year in (2015, 2016) for month in range(12)]
+    with netCDF4.Dataset(path, "w") as ds:
+        ds.createDimension("time", len(days))
+        ds.createDimension("lat", lats.size)
+        ds.createDimension("lon", lons.size)
+        time = ds.createVariable("time", "f8", ("time",))
+        time.units = "days since 2015-01-01"
+        time.calendar = "standard"
+        time.standard_name = "time"
+        time[:] = days
+        lat = ds.createVariable("lat", "f8", ("lat",))
+        lat.units = "degrees_north"
+        lat.standard_name = "latitude"
+        lat[:] = lats
+        lon = ds.createVariable("lon", "f8", ("lon",))
+        lon.units = "degrees_east"
+        lon.standard_name = "longitude"
+        lon[:] = lons
+        var = ds.createVariable(var_name, "f4", ("time", "lat", "lon"))
+        var.units = "W m-2"
+        var.standard_name = _FLUX_STANDARD_NAMES[var_name]
+        var.positive = "up"
+        var[:] = np.full((len(days), lats.size, lons.size), value, dtype="f4")
+
+
+def test_the_cre_variables_need_both_all_sky_and_clear_sky(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """swcre = rsutcs - rsut, lwcre = rlutcs - rlut: a member needs both fluxes.
+
+    Same rule as `rtnt` (dc1efc3): the CREs are never staged under their own
+    names, so the generator walks the ESMValCore derivation inputs, and a
+    member missing the clear-sky flux is NOT yielded for that CRE. The
+    yielded member then really derives the CRE from its staged fluxes.
+    """
+    from climateeval import Variable
+
+    full = "CMIP6_MPI-ESM1-2-LR_historical-ssp245_r1i1p1f1"
+    no_lw_clear = "CMIP6_UKESM1-0-LL_historical-ssp245_r1i1p1f2"
+    values = {"rsut": 100.0, "rsutcs": 55.0, "rlut": 240.0, "rlutcs": 268.0}
+    for source_id, var_names in (
+        (full, ("rsut", "rsutcs", "rlut", "rlutcs")),
+        (no_lw_clear, ("rsut", "rsutcs", "rlut")),
+    ):
+        model, member = source_id.split("_")[1], source_id.split("_")[-1]
+        for var_name in var_names:
+            _write_flux(
+                tmp_path / source_id / "mon" / var_name
+                / f"{var_name}_Amon_{model}_ssp245_{member}_gn_201501-201612.nc",
+                var_name,
+                values[var_name],
+            )
+    monkeypatch.setenv(STAGED_ROOT_ENV, str(tmp_path))
+    clear_discovery_cache()
+    try:
+        swcre = list(
+            StagedCMIP6HistoricalSSP245().generate(Variable("swcre", "swcre", "mon")),
+        )
+        lwcre = list(
+            StagedCMIP6HistoricalSSP245().generate(Variable("lwcre", "lwcre", "mon")),
+        )
+        assert [s.id for s in swcre] == [full, no_lw_clear]
+        assert [s.id for s in lwcre] == [full]
+
+        # ... and the member's own fluxes really give the CRE.
+        import numpy as np
+
+        cube = swcre[0].get_cube(
+            tmp_path,
+            Variable("swcre", "swcre", "mon"),
+            download_missing_data=False,
+        )
+        assert float(np.asarray(cube.data).mean()) == pytest.approx(55.0 - 100.0)
+        cube = lwcre[0].get_cube(
+            tmp_path,
+            Variable("lwcre", "lwcre", "mon"),
+            download_missing_data=False,
+        )
+        assert float(np.asarray(cube.data).mean()) == pytest.approx(268.0 - 240.0)
+    finally:
+        clear_discovery_cache()
+
+
+def test_the_ceres_reference_derives_the_cre_from_its_staged_fluxes(tmp_path) -> None:  # noqa: ANN001
+    """The reference side of the same derivation: nothing named swcre is staged."""
+    import numpy as np
+    from climateeval import Variable
+    from climateeval.data import CERESEBAF
+
+    values = {"rsut": 99.0, "rsutcs": 52.0, "rlut": 239.0, "rlutcs": 265.0}
+    for var_name, value in values.items():
+        _write_flux(
+            tmp_path / "observation_CERES-EBAF" / "mon" / var_name / f"{var_name}.nc",
+            var_name,
+            value,
+        )
+    for var_name, expected in (("swcre", 52.0 - 99.0), ("lwcre", 265.0 - 239.0)):
+        cube = CERESEBAF().get_cube(
+            tmp_path,
+            Variable(var_name, var_name, "mon"),
+            download_missing_data=False,
+        )
+        assert float(np.asarray(cube.data).mean()) == pytest.approx(expected)

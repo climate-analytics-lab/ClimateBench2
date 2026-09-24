@@ -46,11 +46,18 @@
 # the trends from `annual_mean_timeseries` and combines the ensemble spread
 # with the piControl sigma_int (Tier I suite) and sigma_obs.
 #
-# The paper's figure set is the nine variables tas, ts, pr, rsut, rlut, rsutcs,
-# rlutcs, tos, siconc (Duncan, 2026-09). The cloud entries below (clt, clwvi,
-# clivi) stay in the suite but are OUT of that set: their only reference,
-# ESACCI-CLOUD, ends in 2016, so their scored window is two years of the test
-# window and the fair CRPS falls below the scoring pass's minimum overlap.
+# The paper's figure set is tas, ts, pr, rsut, rlut, rsutcs, rlutcs, swcre,
+# lwcre, tos, siconc, clt, clwvi, clivi (Duncan, 2026-09-24). The clouds were
+# OUT of it until then: their only reference was ESACCI-CLOUD, which ends in
+# 2016, so their scored window was two years of the test window and the fair
+# CRPS fell below the scoring pass's minimum overlap. They are now referenced
+# to MODIS Aqua (climatebench2.data.MODIS, 2002-07 onwards), which covers the
+# whole test window; because MODIS starts mid-2002, their regime-(a) anomaly
+# baseline is 2003-2014 (12 of the 30 baseline years, above
+# `tier2.anomaly_baseline.min_years`), exactly as the CERES-EBAF fluxes'
+# is 2001-2014. The cloud-radiative effects swcre/lwcre are derived from the
+# CERES-EBAF all-sky and clear-sky fluxes, the only post-2015 cloud-radiative
+# reference.
 
 - name: annual_mean_timeseries
   diagnostic: climatebench2.diags.ScoredAnnualMeanTimeSeries
@@ -115,29 +122,51 @@
       frequency: mon
       reference_data: climateeval.data.CERESEBAF
       other_data: *comparison_ensemble
+    # Cloud-radiative effects, derived (ESMValCore): swcre = rsutcs - rsut,
+    # lwcre = rlutcs - rlut, both positive down (swcre < 0 cools, lwcre > 0
+    # warms). Like `rtnt`, neither is staged under its own name: CERES-EBAF
+    # derives them from its staged fluxes, and a comparison member needs BOTH
+    # the all-sky and the clear-sky flux staged or it is not yielded for the
+    # variable (StagedCMIP6HistoricalSSP245._required_var_names). The paper's
+    # "clouds" item has no post-2015 reference other than these and MODIS.
+    - id: swcre
+      var_name: swcre
+      frequency: mon
+      reference_data: climateeval.data.CERESEBAF
+      other_data: *comparison_ensemble
+    - id: lwcre
+      var_name: lwcre
+      frequency: mon
+      reference_data: climateeval.data.CERESEBAF
+      other_data: *comparison_ensemble
     - id: prw
       var_name: prw
       frequency: mon
       reference_data: climateeval.data.ERA5Monthly
       other_data: *comparison_ensemble
+    # Clouds: MODIS Aqua MYD08_M3 (staged; climatebench2/data/modis.py), not
+    # ESACCI-CLOUD, which ends in 2016 -- two years into the test window.
+    # MODIS starts 2002-07, so the regime-(a) anomaly baseline is 2003-2014.
     - id: clt
       var_name: clt
       frequency: mon
-      reference_data: climateeval.data.ESACCICloud
+      reference_data: climatebench2.data.MODIS
       other_data: *comparison_ensemble
     # Condensed-water paths (paper Tier II extended: "cloud properties —
-    # LWP, fraction"). ESACCI-CLOUD CMORizes clwvi/clivi/lwp alongside clt.
-    # Cloud-top temperature/pressure remain missing (no DataSource). Like
-    # `clt`, these are outside the paper's figure set: ESACCI-CLOUD ends 2016.
+    # LWP, fraction"), grid-box means as in ESMValTool's modis.ncl (MODIS
+    # retrieves IN-CLOUD paths; the staging converts them). MODIS also stages
+    # `lwp` (= clwvi - clivi), which is not scored here: it is the difference
+    # of the two columns below and adds no independent information.
+    # Cloud-top temperature/pressure remain missing (no DataSource).
     - id: clwvi
       var_name: clwvi
       frequency: mon
-      reference_data: climateeval.data.ESACCICloud
+      reference_data: climatebench2.data.MODIS
       other_data: *comparison_ensemble
     - id: clivi
       var_name: clivi
       frequency: mon
-      reference_data: climateeval.data.ESACCICloud
+      reference_data: climatebench2.data.MODIS
       other_data: *comparison_ensemble
 
 - name: reference_baseline

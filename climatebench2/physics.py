@@ -904,6 +904,22 @@ def exceedance_fraction(
     return unique, fraction * 100.0
 
 
+def _mask_years_without_data(
+    out: np.ndarray,
+    values: np.ndarray,
+    years: np.ndarray,
+) -> np.ndarray:
+    """NaN wherever a grid point has no finite day in that year.
+
+    Indices built from a windowed or run-length pass (Rx5day, CDD) turn a
+    masked point (ocean under a land mask) into a hard 0 rather than NaN,
+    and a 0 then enters the land-only region mean. Real-data fix
+    (2026-09-25): IMERG's global-land Rx5day came out *below* Rx1day.
+    """
+    _years, n_valid = _annual_reduce(np.isfinite(values).astype(float), years, "sum")
+    return np.where(n_valid > 0, out, np.nan)
+
+
 def annual_max_running_sum(
     values: np.ndarray,
     years: np.ndarray,
@@ -931,7 +947,8 @@ def annual_max_running_sum(
             [np.zeros((1, *x.shape[1:])), cumulative[: -n]],
             axis=0,
         )
-    return _annual_reduce(totals, years, "max")
+    years_out, out = _annual_reduce(totals, years, "max")
+    return years_out, _mask_years_without_data(out, x, years)
 
 
 def wet_day_percentile(
@@ -994,4 +1011,5 @@ def max_consecutive_dry_days(
     years_array = np.asarray(years, dtype=int)
     new_year = np.concatenate([[True], years_array[1:] != years_array[:-1]])
     runs = _forward_run_lengths(dry, reset=new_year)
-    return _annual_reduce(runs.astype(float), years, "max")
+    years_out, out = _annual_reduce(runs.astype(float), years, "max")
+    return years_out, _mask_years_without_data(out, x, years)

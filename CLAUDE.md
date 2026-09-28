@@ -25,7 +25,7 @@ Two documents govern all work here:
   "Decisions needed from Duncan" section is where every ⚠ / `TODO(Duncan)`
   lives — add to it rather than inventing a value.
 
-**Current state (2026-09-24): 400 tests pass.** Every test fixture is still
+**Current state (2026-09-28): 411 tests pass.** Every test fixture is still
 synthetic, so the test suite alone never licenses "working" — but the code is
 no longer untried on real data. Tier I has run end to end on **CNRM-CM6-1**
 (every Required gate produces a row) and Tier II on **MPI-ESM1-2-LR** against a
@@ -62,6 +62,8 @@ climatebench2/
 │   │                    #     Table 2). Belongs upstream; here because the pin
 │   └── modis.py         #   + MODIS: the monthly cloud reference (clt/clwvi/clivi/
 │                        #     lwp, MYD08_M3), staged the same way as IMERG
+├── shared_sources.py    # per-member cube suites: reference + comparison ensemble
+│                        #   loaded once for all members (`--no-cache` disables)
 ├── leaderboard/         # .ddb results → scores table → static HTML page
 └── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
 ```
@@ -144,6 +146,12 @@ climatebench2 score MODEL --truth /data/CESM2/ssp245 --truth-member r2i1p1f1=DIR
 #   instead of observations (window = perfect-model); truth members drive the
 #   large-ensemble spread test. No truth data is staged yet.
 climatebench2 score MODEL --no-score      # suites only; run the Tier II pass later
+climatebench2 score MODEL --member r1=DIR ... --member r10=DIR --no-cache
+#   a per-member CUBE suite runs diagnostic by diagnostic and loads its reference and
+#   the whole comparison ensemble ONCE for all members (climatebench2/shared_sources.py:
+#   memoises the preprocessed reference cubes + the comparison rows, dropped after
+#   each diagnostic; identical tables). --no-cache restores the old member-by-member
+#   loop (M members = M reads of the ensemble); experiment suites always use it
 climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scorecard (HTML)
 climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb  # re-run the Tier II pass
 #   --rescore is also how a thresholds.yml change reaches existing databases; the

@@ -721,3 +721,81 @@ def test_climateeval_loads_a_reference_once_per_suite_variable() -> None:
         "true upstream, the one-variable constraint in "
         "AnnualExtremeIndexSeries._check_variables can be relaxed"
     )
+
+
+def test_the_series_entry_loads_its_sources_once_across_members() -> None:
+    """The held-out daily job's fix: IMERG and the ensemble read ONCE.
+
+    `pr_extremes_series` ran once per submission member and re-read IMERG
+    and every comparison member each time (1,190 daily loads for 10 members,
+    12 h timeouts, 2026-09-26/28). Shared across the members
+    (`climatebench2.shared_sources`), the one instance loads each source
+    once and writes, member for member, exactly the rows a fresh instance
+    per member wrote.
+    """
+    from climatebench2.diags import AnnualExtremeIndexSeries
+    from climatebench2.shared_sources import share_member_invariant_stages
+
+    calls: list[str] = []
+    reference_cube = _series_cube({year: 30.0 for year in SERIES_YEARS})
+
+    class _Obs(_StubSource):
+        def get_cube(self, _root, variable, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+            calls.append(self.id)
+            return reference_cube.copy()
+
+    class _Member(_StubSource):
+        def __init__(self, index: int) -> None:
+            self.information = DataSourceInformation(  # type: ignore[misc]
+                name="CMIP",
+                category="model",
+                exp="historical-ssp245",
+                variant=f"r{index}i1p1f1",
+            )
+            self._spike = 10.0 * index
+
+        def get_cube(self, _root, variable, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+            calls.append(self.id)
+            return _series_cube({SERIES_FIRST_YEAR: self._spike})
+
+    class _Ensemble:
+        def generate(self, _variable):  # noqa: ANN001, ANN202
+            yield from (_Member(i) for i in (1, 2, 3))
+
+    def build():  # noqa: ANN202
+        return AnnualExtremeIndexSeries(
+            "pr_extremes_series",
+            {
+                _series_variable(): SimpleDiagnosticInputData(
+                    reference=_Obs,
+                    other=(_Ensemble,),
+                ),
+            },
+            fail_on_missing_data=True,
+            download_missing_data=False,
+        )
+
+    members = [
+        (CubeList([_series_cube({SERIES_LAST_YEAR: 40.0 + m})]), _info(f"r{m}i1p1f1"))
+        for m in (1, 2)
+    ]
+
+    fresh = [build().get_output(data, info) for data, info in members]
+    assert len(calls) == 2 * 4  # every member: IMERG + 3 comparison members
+    calls.clear()
+
+    shared_diag = build()
+    assert share_member_invariant_stages(shared_diag)
+    shared = [shared_diag.get_output(data, info) for data, info in members]
+    assert len(calls) == 4  # once, whatever the number of members
+    assert len(set(calls)) == 4
+
+    for before, after in zip(fresh, shared, strict=True):
+        for table in ("raw_output", "data_sources"):
+            old = getattr(before, table).to_pandas()
+            new = getattr(after, table).to_pandas()
+            order = sorted(old.columns)
+            pd.testing.assert_frame_equal(
+                old[order].sort_values(order).reset_index(drop=True),
+                new[order].sort_values(order).reset_index(drop=True),
+            )

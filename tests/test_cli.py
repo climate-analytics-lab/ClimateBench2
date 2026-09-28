@@ -229,10 +229,21 @@ def recorded_score(tmp_path, monkeypatch):  # noqa: ANN001, ANN201
         loads.append((str(path), timerange))
         return [f"cubes:{path}:{timerange}"]
 
+    seen: set[tuple[str, str]] = set()
+
     def fake_get_database(self, data, information, **kwargs):  # noqa: ANN001, ANN202
+        # A per-member cube suite runs one diagnostic at a time
+        # (`climatebench2.shared_sources.run_members`), so each (suite,
+        # member) arrives once per suite entry; record it once, which is
+        # what the old one-call-per-member loop produced.
+        key = (self.name, information.variant)
+        if key in seen:
+            return None
+        seen.add(key)
         runs.append(
             {
                 "suite": self.name,
+                "suite_class": type(self).__name__,
                 "data": data,
                 "variant": information.variant,
                 "append": kwargs.get("append", False),
@@ -252,6 +263,7 @@ def recorded_score(tmp_path, monkeypatch):  # noqa: ANN001, ANN201
     monkeypatch.setattr(Suite, "get_database", fake_get_database)
 
     def run(argv: list[str]) -> tuple[list, list]:
+        seen.clear()
         main(["score", *argv, "--out", str(tmp_path / "out")])
         return loads, runs
 
@@ -431,6 +443,41 @@ def test_tier2_events_runs_once_per_member_with_its_own_historical(
     tier1 = [r for r in runs if r["suite"] == "ClimateBench2_TierI"]
     assert len(tier1) == 1
     assert tier1[0]["variant"] == "r1i1p1f1"
+
+
+def test_per_member_cube_suites_share_sources_unless_no_cache(
+    tmp_path,  # noqa: ANN001
+    recorded_score,  # noqa: ANN001
+) -> None:
+    """The cube suites run entry by entry (sources loaded once per entry).
+
+    ``climatebench2.shared_sources.run_members`` hands ClimateEval one
+    single-entry ``EntrySuite`` per diagnostic; ``--no-cache`` restores the
+    member-by-member ``Suite.get_database`` loop, and the experiment suites
+    never leave it.
+    """
+    model = tmp_path / "MyModel"
+    _drs_tree(model, "historical", ["r1i1p1f1", "r2i1p1f1"])
+    suites = ["--suite", "ClimateBench2_TierII", "--suite", "ClimateBench2_TierII_events"]
+
+    _loads, runs = recorded_score([str(model), "--name", "MyModel", *suites])
+    classes = {(r["suite"], r["variant"]): r["suite_class"] for r in runs}
+    assert classes["ClimateBench2_TierII", "r1i1p1f1"] == "EntrySuite"
+    assert classes["ClimateBench2_TierII", "r2i1p1f1"] == "EntrySuite"
+    assert classes["ClimateBench2_TierII_events", "r2i1p1f1"] == "Suite"
+    tier2 = [r for r in runs if r["suite"] == "ClimateBench2_TierII"]
+    assert [r["append"] for r in tier2] == [False, True]
+
+    runs.clear()
+    recorded_score([str(model), "--name", "MyModel", *suites, "--no-cache"])
+    assert {r["suite_class"] for r in runs} == {"Suite"}
+
+
+def test_no_cache_flag_parses() -> None:
+    args = build_parser().parse_args(["score", "MODEL"])
+    assert args.no_cache is False
+    args = build_parser().parse_args(["score", "MODEL", "--no-cache"])
+    assert args.no_cache is True
 
 
 def test_explicit_historical_experiment_collapses_the_per_member_runs(

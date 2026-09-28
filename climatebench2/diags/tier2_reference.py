@@ -29,6 +29,7 @@ is done here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import ibis
@@ -112,6 +113,34 @@ class _ReferenceWindowDiagnostic(SimpleDiagnostic):
     """Shared plumbing: load a suite's reference over another window."""
 
     _output_metrics_table: ClassVar[bool] = False
+
+    #: Member-invariant results of :meth:`get_output`, while the diagnostic
+    #: is shared across a suite's per-member runs; ``None`` = not shared, so
+    #: every call recomputes (``climatebench2.shared_sources``).
+    _member_memo: dict[Any, Any] | None = None
+
+    def share_across_members(self) -> bool:
+        """Opt in to computing the reference/comparison part once per suite.
+
+        Both subclasses override ``get_output``, so the generic stage memo
+        of :mod:`climatebench2.shared_sources` cannot see inside them; they
+        memoise their own member-invariant part instead (everything except
+        the ``to_benchmark`` rows), which is what makes that safe.
+        """
+        self._member_memo = {}
+        return True
+
+    def release_member_cache(self) -> None:
+        """Drop what :meth:`share_across_members` memoised."""
+        self._member_memo = None
+
+    def _member_invariant(self, key: Any, compute: Any) -> Any:  # noqa: ANN401
+        """``compute()``, stored under ``key`` while shared across members."""
+        if self._member_memo is None:
+            return compute()
+        if key not in self._member_memo:
+            self._member_memo[key] = compute()
+        return self._member_memo[key]
 
     def _reference_cube_over(
         self,
@@ -212,9 +241,36 @@ class ReferenceBaselineRecord(_ReferenceWindowDiagnostic):
     ) -> DiagnosticOutput:
         """Write the reference's baseline-window series, nothing else."""
         first, last = windows.baseline_window_years()
+        tables, source_infos = self._member_invariant("baseline", self._baseline)
+        infos: list[DataSourceInformation] = [data_information, *source_infos]
+
+        if not tables:
+            logger.warning(
+                f"Diagnostic '{self.name}': no reference covers the "
+                f"{first}-{last} baseline window; the Climatology baseline "
+                f"cannot be formed for this suite",
+            )
+            return DiagnosticOutput(
+                raw_output=None,
+                metrics=None,
+                variables=None,  # type: ignore[arg-type] - Suite skips None tables
+                data_sources=None,  # type: ignore[arg-type]
+            )
+        return DiagnosticOutput(
+            raw_output=self._combine_raw_output_tables(*tables),
+            metrics=None,
+            variables=self._get_variables_table(self._variables),
+            data_sources=self._get_data_sources_table(infos),
+        )
+
+    def _baseline(
+        self,
+    ) -> tuple[list[ibis.Table], list[DataSourceInformation]]:
+        """``(raw-output tables, reference infos)`` — the member plays no part."""
+        first, last = windows.baseline_window_years()
         window = windows.baseline_timerange()
         tables: list[ibis.Table] = []
-        infos: list[DataSourceInformation] = [data_information]
+        infos: list[DataSourceInformation] = []
 
         for variable, source in self._reference_data.items():
             cube = self._reference_cube_over(source, variable, window)
@@ -240,25 +296,7 @@ class ReferenceBaselineRecord(_ReferenceWindowDiagnostic):
                 ),
             )
             infos.append(source.information)
-
-        if not tables:
-            logger.warning(
-                f"Diagnostic '{self.name}': no reference covers the "
-                f"{first}-{last} baseline window; the Climatology baseline "
-                f"cannot be formed for this suite",
-            )
-            return DiagnosticOutput(
-                raw_output=None,
-                metrics=None,
-                variables=None,  # type: ignore[arg-type] - Suite skips None tables
-                data_sources=None,  # type: ignore[arg-type]
-            )
-        return DiagnosticOutput(
-            raw_output=self._combine_raw_output_tables(*tables),
-            metrics=None,
-            variables=self._get_variables_table(self._variables),
-            data_sources=self._get_data_sources_table(infos),
-        )
+        return tables, infos
 
 
 class ReferenceEOFProjection(_ReferenceWindowDiagnostic):
@@ -417,33 +455,19 @@ class ReferenceEOFProjection(_ReferenceWindowDiagnostic):
         infos: list[DataSourceInformation] = [data_information]
 
         for variable, source in self._reference_data.items():
-            prepared = self._basis_for(variable, source)
-            if prepared is None:
-                continue
-            basis, valid, climatology = prepared
-            infos.append(source.information)
-            common = {
-                "variable": variable,
-                "basis": basis,
-                "valid": valid,
-                "climatology": climatology,
-            }
-
-            # The reference's own test-window anomaly: the target the model
-            # coefficients are scored against.
-            reference_cube = self._reference_cube_over(
-                source,
+            shared = self._member_invariant(
                 variable,
-                variable.timerange,
+                lambda variable=variable, source=source: self._invariant_rows(
+                    variable,
+                    source,
+                ),
             )
-            if reference_cube is None:
+            if shared is None:
                 continue
-            rows += self._coefficient_rows(
-                reference_cube,
-                data_id=source.id,
-                data_type=EOF_REFERENCE_DATA_TYPE,
-                **common,
-            )
+            infos.append(source.information)
+            if shared.reference_rows is None:
+                continue
+            rows += shared.reference_rows
 
             try:
                 model_cube = get_prepared_cube(data, variable)
@@ -454,26 +478,11 @@ class ReferenceEOFProjection(_ReferenceWindowDiagnostic):
                     model_cube,
                     data_id=data_information.id,
                     data_type="to_benchmark",
-                    **common,
+                    **shared.common,
                 )
 
-            for other in self._other_data.get(variable, ()):
-                try:
-                    other_cube = other.get_cube(
-                        self.data_root_dir,
-                        variable,
-                        download_missing_data=self._download_missing_data,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    self._handle_missing_data(other.id, (variable,), exc)
-                    continue
-                rows += self._coefficient_rows(
-                    other_cube,
-                    data_id=other.id,
-                    data_type="other",
-                    **common,
-                )
-                infos.append(other.information)
+            rows += shared.other_rows
+            infos += shared.other_infos
 
         if not rows:
             return DiagnosticOutput(
@@ -488,3 +497,81 @@ class ReferenceEOFProjection(_ReferenceWindowDiagnostic):
             variables=self._get_variables_table(self._variables),
             data_sources=self._get_data_sources_table(infos),
         )
+
+    def _invariant_rows(
+        self,
+        variable: Variable,
+        source: DataSource,
+    ) -> _ProjectionRows | None:
+        """Everything of one variable's projection that is not the member.
+
+        The basis, the reference's own coefficients and every comparison
+        source's coefficients depend on the reference and the comparison
+        ensemble alone, so a shared diagnostic computes them for the first
+        member only. ``None`` when there is no basis (the variable is then
+        skipped entirely); ``reference_rows is None`` when the reference does
+        not reach the test window (the basis's source is still recorded, as
+        it always was, but nothing is projected).
+        """
+        prepared = self._basis_for(variable, source)
+        if prepared is None:
+            return None
+        basis, valid, climatology = prepared
+        common = {
+            "variable": variable,
+            "basis": basis,
+            "valid": valid,
+            "climatology": climatology,
+        }
+
+        # The reference's own test-window anomaly: the target the model
+        # coefficients are scored against.
+        reference_cube = self._reference_cube_over(
+            source,
+            variable,
+            variable.timerange,
+        )
+        if reference_cube is None:
+            return _ProjectionRows(common=common, reference_rows=None)
+        reference_rows = self._coefficient_rows(
+            reference_cube,
+            data_id=source.id,
+            data_type=EOF_REFERENCE_DATA_TYPE,
+            **common,
+        )
+
+        other_rows: list[dict[str, Any]] = []
+        other_infos: list[DataSourceInformation] = []
+        for other in self._other_data.get(variable, ()):
+            try:
+                other_cube = other.get_cube(
+                    self.data_root_dir,
+                    variable,
+                    download_missing_data=self._download_missing_data,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._handle_missing_data(other.id, (variable,), exc)
+                continue
+            other_rows += self._coefficient_rows(
+                other_cube,
+                data_id=other.id,
+                data_type="other",
+                **common,
+            )
+            other_infos.append(other.information)
+        return _ProjectionRows(
+            common=common,
+            reference_rows=reference_rows,
+            other_rows=other_rows,
+            other_infos=other_infos,
+        )
+
+
+@dataclass(frozen=True)
+class _ProjectionRows:
+    """The member-invariant part of one variable's EOF projection."""
+
+    common: dict[str, Any]
+    reference_rows: list[dict[str, Any]] | None
+    other_rows: list[dict[str, Any]] = field(default_factory=list)
+    other_infos: list[DataSourceInformation] = field(default_factory=list)

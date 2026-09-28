@@ -756,13 +756,24 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
             + (f" for {len(runs)} members" if len(runs) > 1 else ""),
             file=sys.stderr,
         )
-        for index, (data, info) in enumerate(runs):
-            suite.get_database(
-                data,
-                info,
-                database_resource=f"duckdb://{db_path}",
-                append=index > 0,
-            )
+        # A per-member cube suite loads its reference and comparison
+        # ensemble ONCE for all members (climatebench2.shared_sources): it
+        # runs diagnostic by diagnostic, each shareable diagnostic built once
+        # and its reference/other stages memoised across the members. Same
+        # rows, same schema; before this, ten members meant ten reads of a
+        # 109-160-member ensemble (the held-out daily extremes timed out at
+        # 12 h on it). The experiment suites keep the member-by-member loop:
+        # their complex diagnostics have no such stages to share.
+        from climatebench2.shared_sources import run_members
+
+        report = run_members(
+            suite,
+            runs,
+            database_resource=f"duckdb://{db_path}",
+            share=spec.shape == "cubes" and not args.no_cache,
+        )
+        if len(runs) > 1:
+            print(f"Suite '{stem}': {report.summary()}", file=sys.stderr)
         print(f"Wrote database {db_path}", file=sys.stderr)
         db_paths.append(db_path)
 
@@ -1077,6 +1088,18 @@ def build_parser() -> argparse.ArgumentParser:
             "(fair CRPS over the stacked ensemble members, its bootstrap "
             "interval and the skill against the CMIP6 median). Run it later "
             "with `climatebench2 leaderboard --rescore DB ...`."
+        ),
+    )
+    score.add_argument(
+        "--no-cache",
+        action="store_true",
+        help=(
+            "Do not share the reference and CMIP6 comparison ensemble across "
+            "the members of a per-member cube suite. By default each such "
+            "diagnostic loads them once and reuses the result for every "
+            "--member (climatebench2.shared_sources), which writes the same "
+            "rows; with this flag every member re-loads them, as before "
+            "2026-09-28 (N members = N reads of the whole ensemble)."
         ),
     )
     score.add_argument("--institute", default="", help="Institute (provenance).")

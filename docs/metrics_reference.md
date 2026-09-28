@@ -1912,7 +1912,25 @@ get the model's cubes cut to the **post-2015 test window**
 `--timerange` overrides. Ensemble members come from `--member LABEL=PATH` or from
 auto-discovered sibling `r*i*p*f*` directories in a DRS tree, and each cube suite runs
 once per member (`DataSourceInformation(variant=LABEL)`, appending into the one DuckDB
-per suite). The data then go to `climateeval.suites.Suite.get_database`, which writes
+per suite). **Cost of the per-member runs (2026-09-28).** ClimateEval loads a suite's
+`reference_data` and every `other_data` source inside each `get_output` call, uncached, so
+M members used to mean M reads of the whole comparison ensemble — 10 × 119 = 1,190 daily
+`pr` loads (~1.2 min each) for the held-out `pr_extremes_series` entry, which timed out
+at 12 h twice. A per-member **cube** suite now runs **diagnostic by diagnostic**
+(`climatebench2.shared_sources.run_members`): each diagnostic is built once, runs every
+member, and memoises its member-invariant stages — the preprocessed reference cubes and
+the comparison sources' finished `raw_output`/`metrics` rows (never their cubes) — then
+drops them before the next diagnostic. So the ensemble is read **once per diagnostic**
+(≈ 119 + 10 loads there), peak memory is the one preprocessed reference cube a single
+run already held plus kilobytes of comparison rows per source, and every table is
+identical row for row (each diagnostic has its own schema, and members are still
+inserted in order). Upstream simple diagnostics and CB2's built on them share
+automatically; `ReferenceBaselineRecord`/`ReferenceEOFProjection` (own `get_output`) opt
+in and memoise everything but the member's projection; anything else — a complex
+diagnostic, an experiment suite such as `ClimateBench2_TierII_events` — keeps the old
+member-by-member loop, and `--no-cache` restores it everywhere. The rows are still
+re-emitted per member, so `scoring_pass.deduplicate_raw_output` is still needed.
+The data then go to `climateeval.suites.Suite.get_database`, which writes
 one DuckDB per suite
 (`raw_output`, `metrics`, `variables`, `data_sources`; `climatebench2 leaderboard`
 reads them with `climateeval.report._db.read_database`). Reference and comparison data

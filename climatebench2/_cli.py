@@ -117,12 +117,19 @@ class SuiteSpec:
     ``reference_overlap``
         Only for ``window == "full"``: whether a variable of this suite that
         *has* a staged observational reference should be cut to that
-        reference's own pre-2015 record rather than left on the model's whole
-        record (:func:`climatebench2.reference_windows.resolve_full_record_timerange`).
+        reference's own record rather than left on the model's whole record
+        (:func:`climatebench2.reference_windows.resolve_full_record_timerange`).
         True for the daily suite, whose in-sample statistics are climatologies
         — an Rx1day climatology over a model's 1850–2100 and one over IMERG's
         2001–2025 are different statistics, and an in-sample one must not
-        reach into the reserved window. False for
+        reach into the reserved window, so those entries are cut to the
+        reference's own pre-2015 record. The one entry scored as anomalies
+        (``pr_extremes_series``, ``tier2.anomaly_baseline``) is cut instead to
+        the baseline start through the reference's own last complete year —
+        2001–2024 for IMERG — because it needs the post-2015 steps too, but
+        it is still nowhere near the model's whole 1850–2100 record: reading
+        that full record for every comparison-ensemble member is what timed
+        out the 12 h daily job (2026-09-26). False for
         ``ClimateBench2_TierI_variability``, whose ``full`` window means "this
         is a piControl with its own calendar", where any clip is wrong.
     """
@@ -166,9 +173,13 @@ SUITE_REGISTRY: dict[str, SuiteSpec] = {
             "climatologies over it, not over the test window) — every entry "
             "is in-sample except `pr_extremes_series`, whose annual Rx1day/"
             "Rx5day series is scored held-out over the test window. A variable "
-            "with a STAGED reference is cut to that reference's own pre-2015 "
-            "record instead (IMERG: 2001–2014), so the model and the "
-            "observations give the same statistic"
+            "with a STAGED reference is cut to that reference's own record "
+            "instead: pre-2015 for the in-sample entries (IMERG: 2001–2014), "
+            "or the baseline start through the reference's own last complete "
+            "year for `pr_extremes_series` (IMERG: 2001–2024, since it also "
+            "scores the post-2015 steps) — so the model and the observations "
+            "give the same statistic, without reading the model's whole "
+            "1850–2100 record for every comparison-ensemble member"
         ),
     ),
     "ClimateBench2_TierII_events": SuiteSpec(
@@ -607,10 +618,16 @@ def _cmd_score(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR091
         #     test window (`windows.scores_anomalies`).
         #   * a full-record suite (the daily one) has no nominal window at
         #     all, but a variable with a STAGED reference still has to be cut
-        #     to that reference's own pre-2015 record: an in-sample
-        #     climatology has to be the same statistic for the model and the
-        #     observations, and must not reach into the reserved window
-        #     (`SuiteSpec.reference_overlap`).
+        #     to that reference's own record: an in-sample climatology has to
+        #     be the same statistic for the model and the observations, and
+        #     must not reach into the reserved window, so it is cut to the
+        #     reference's own pre-2015 years (`SuiteSpec.reference_overlap`).
+        #     The one entry scored as anomalies (`pr_extremes_series`) is cut
+        #     instead to the baseline start through the reference's own last
+        #     complete year, because it also scores the post-2015 steps —
+        #     but that is still only ~25 years, not the model's whole
+        #     1850-2100 record, which is what a 12 h daily job timed out
+        #     reading for every comparison-ensemble member (2026-09-26).
         suite_timerange_kwarg: str | None = timerange
         if timerange is not None or spec.reference_overlap:
             windowed_dir = out_dir / "_windowed_suites"

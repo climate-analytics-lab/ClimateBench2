@@ -38,6 +38,23 @@ at :func:`climatebench2.windows.pre_test_last_year`
 (:func:`resolve_full_record_timerange`) — 2001–2014 for IMERG — and every
 unreferenced variable keeps the full record untouched.
 
+A fourth case is a referenced variable of such a suite whose entry is
+listed in ``tier2.anomaly_baseline`` — ``pr_extremes_series``, the one
+HELD-OUT entry of the daily suite. It is scored as an **anomaly** about the
+reference's own baseline climatology and needs the post-2015 steps too, so
+it must not be capped at ``pre_test_last_year`` the way the in-sample
+entries are — but it does not need the model's whole 1850–2100 record
+either: nothing before the baseline start or after the reference's own last
+complete year is ever read by that score. So it is clipped to
+``max(baseline_first_year, reference_first_complete_year)`` .. the
+reference's own last complete year — 2001–2024 for IMERG, not the full
+record — and that window is loaded for every source: the submission, IMERG
+and every comparison-ensemble member alike. Leaving it on the full record,
+as an earlier version of this module did, meant reading each of the
+comparison ensemble's ~119 members' entire 1850–2100 daily ``pr`` record
+just to compute the same statistic; the fix is this same per-reference
+clip, just with a different upper bound (:func:`resolve_full_record_timerange`).
+
 So the window is resolved **per variable and per suite entry** against the
 reference actually staged, and the resolved window is what the suite
 carries. The protocol's
@@ -268,10 +285,28 @@ def resolve_full_record_timerange(
       (:func:`climatebench2.windows.pre_test_last_year`).
 
     So a referenced variable of such a suite is computed over the
-    **reference's own complete years, clipped to end before the test
-    window** — 2001–2014 for IMERG — and both the model and the reference
-    get that same window, because it is written into the ``Variable`` both
-    are loaded through.
+    reference's own complete years, and both the model and the reference get
+    that same window, because it is written into the ``Variable`` both are
+    loaded through. Where that window ends depends on how the entry is
+    scored:
+
+    * an **in-sample** entry (``windows.scores_anomalies`` false — the
+      ETCCDI climatologies, the Perkins PDFs, the diurnal harmonic) is
+      clipped to end before the test window
+      (:func:`climatebench2.windows.pre_test_last_year`) — 2001–2014 for
+      IMERG;
+    * an entry the protocol scores as **anomalies**
+      (``tier2.anomaly_baseline``, i.e. regime (a) — ``pr_extremes_series``,
+      the one HELD-OUT entry here) needs the 1985–2014 baseline *and* the
+      post-2015 steps, so it is **not** capped at ``pre_test_last_year``;
+      it runs from the later of the baseline start and the reference's own
+      first complete year through the reference's own **last** complete
+      year — 2001–2024 for IMERG today. That is still a fraction of the
+      model's 1850–2100 record: leaving this entry on the full record (an
+      earlier version of this function did, via an early ``return None``)
+      meant every comparison-ensemble member's entire daily ``pr`` record
+      was read to compute the same statistic, which is what timed out the
+      12 h daily job at ~66 members in (2026-09-26).
 
     ``None`` means "leave the full record alone", which is every case where
     clipping could only invent a window:
@@ -280,18 +315,14 @@ def resolve_full_record_timerange(
       not import;
     * **nothing staged** for the reference. An unstaged reference is going
       to be dropped by ClimateEval anyway, and capping the model's record at
-      2014 for an entry that will not be scored would only throw data away.
-      This is what keeps the ``perkins`` ``tas`` entries on the full record
-      today: ``ERA5Daily`` is merged upstream but no daily ERA5 is staged;
-    * an entry the protocol scores as **anomalies**
-      (``tier2.anomaly_baseline``, i.e. regime (a)). Those are the held-out
-      series: they need the 1985–2014 baseline *and* the post-2015 steps, so
-      the full record is exactly right and a pre-test cap would delete every
-      scored year;
+      2014 (or 2024) for an entry that will not be scored would only throw
+      data away. This is what keeps the ``perkins`` ``tas`` entries on the
+      full record today: ``ERA5Daily`` is merged upstream but no daily ERA5
+      is staged;
     * a reference whose record lies entirely after the test window starts,
       which cannot happen today and would be a staging error if it did.
     """
-    if data_root is None or windows.scores_anomalies(entry):
+    if data_root is None:
         return None
     reference = variable.get("reference_data")
     var_name = variable.get("var_name")
@@ -311,8 +342,12 @@ def resolve_full_record_timerange(
         )
     if coverage is None:
         return None
-    first = coverage[0]
-    last = min(coverage[1], windows.pre_test_last_year())
+    if windows.scores_anomalies(entry):
+        first = max(coverage[0], windows.baseline_window_years()[0])
+        last = coverage[1]
+    else:
+        first = coverage[0]
+        last = min(coverage[1], windows.pre_test_last_year())
     if first > last:
         return None
     return windows.timerange(first, last)
@@ -331,7 +366,9 @@ def apply_reference_windows(
     ``nominal`` is the suite's protocol window, or ``None`` for a suite that
     has none (``_cli.SuiteSpec.window == "full"``). With ``None`` the only
     thing that can move a window is a **staged reference**, and it moves it
-    to the reference's own pre-test record
+    to the reference's own record — the pre-test years for an in-sample
+    entry, or the baseline start through the reference's own last complete
+    year for an entry scored as anomalies
     (:func:`resolve_full_record_timerange`); a variable with no reference
     keeps the full record and gets no ``timerange`` key at all.
 

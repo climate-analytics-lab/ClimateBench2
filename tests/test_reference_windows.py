@@ -349,15 +349,55 @@ def test_a_reference_that_is_not_staged_does_not_clip(tmp_path) -> None:  # noqa
     assert used["perkins/tas_anomaly_land"] is None
 
 
-def test_the_held_out_series_keeps_the_whole_record(tmp_path) -> None:  # noqa: ANN001
+def test_the_held_out_series_is_clipped_to_the_baseline_and_the_reference(
+    tmp_path,
+) -> None:  # noqa: ANN001
     """`pr_extremes_series` is regime (a): it needs 1985–2014 AND post-2015.
 
-    It is listed in `tier2.anomaly_baseline`, so the pre-test cap must not
-    touch it — capping it at 2014 would delete every scored year.
+    It is listed in `tier2.anomaly_baseline`, so the pre-test cap the
+    in-sample entries get must not touch it — capping it at 2014 would
+    delete every scored year. But it is not left on the model's whole
+    1850–2100 record either: it is clipped to the LATER of the baseline
+    start (1985) and IMERG's own first complete year, through IMERG's own
+    LAST complete year (2024 for `_imerg_files`'s record, per
+    `source_coverage`) — a world away from the full record, which is what
+    reading it for every comparison-ensemble member timed out the 12 h daily
+    job doing (2026-09-26).
     """
     _imerg_files(tmp_path)
     used = _daily_windows(tmp_path)
-    assert used["pr_extremes_series/pr"] is None
+    assert used["pr_extremes_series/pr"] == "20010101/20241231"
+
+
+def test_the_held_out_series_keeps_its_last_partial_year_out(tmp_path) -> None:  # noqa: ANN001
+    """The real IMERG record (2000-06 .. 2025-09) drops its partial last year.
+
+    Same shape as the real staged root today: a September cutoff means 2025
+    is not a complete year, so the held-out series' upper bound is 2024, not
+    2025 — same rule the in-sample entries already followed.
+    """
+    _write(
+        tmp_path / "observation_IMERG" / "day" / "pr" / "a.nc",
+        2000,
+        6,
+        2025,
+        9,
+    )
+    used = _daily_windows(tmp_path)
+    assert used["pr_extremes_series/pr"] == "20010101/20241231"
+    # A monthly, nominal-window entry's own resolution is untouched by this
+    # change to the full-record path.
+    variable = {
+        "id": "tas",
+        "var_name": "tas",
+        "frequency": "mon",
+        "reference_data": "climateeval.data.HadCRUT5",
+    }
+    _write(tmp_path / "observation_HadCRUT5" / "mon" / "tas" / "a.nc", 1850, 1, 2023, 9)
+    assert (
+        reference_windows.resolve_variable_timerange(variable, NOMINAL, tmp_path)
+        == "20150101/20221231"
+    )
 
 
 def test_a_full_record_suite_without_a_data_root_is_untouched() -> None:
@@ -397,22 +437,33 @@ def test_cli_materialises_the_real_daily_suite_against_a_staged_imerg(tmp_path) 
         tmp_path,
     )
 
-    # Every moved window is IMERG's overlap, and nothing else moved at all.
-    assert set(used.values()) == {("20010101/20141231", reference_windows.FULL_RECORD)}
-    assert set(used) == {
-        "extremes/pr",
-        "perkins/pr_intensity_land",
-        "perkins/pr_intensity_tropics",
+    # Every moved window is IMERG's overlap: 2001-2014 for the in-sample
+    # entries, 2001-2024 for the held-out series (`source_coverage` reads
+    # `_imerg_files`'s last file as ending 2024, not 2014, since nothing
+    # caps its upper end at the pre-test year).
+    assert used == {
+        "extremes/pr": ("20010101/20141231", reference_windows.FULL_RECORD),
+        "perkins/pr_intensity_land": (
+            "20010101/20141231",
+            reference_windows.FULL_RECORD,
+        ),
+        "perkins/pr_intensity_tropics": (
+            "20010101/20141231",
+            reference_windows.FULL_RECORD,
+        ),
+        "pr_extremes_series/pr": (
+            "20010101/20241231",
+            reference_windows.FULL_RECORD,
+        ),
     }
 
     written = yaml.safe_load(open(target, encoding="utf-8"))  # noqa: PTH123, SIM115
     by_entry = {entry["name"]: entry["variables"] for entry in written}
-    # The held-out series keeps the whole record: it needs the baseline too
-    assert all(
-        "timerange" not in variable
-        for variable in by_entry["pr_extremes_series"]
-    )
-    # ... as do the temperature extremes, which have no reference at all
+    # The held-out series is clipped to the baseline and IMERG's own record,
+    # not left on the model's whole 1850-2100 record.
+    assert by_entry["pr_extremes_series"][0]["timerange"] == "20010101/20241231"
+    # ... but the temperature extremes, which have no reference at all, do
+    # keep the full record.
     assert all(
         "timerange" not in variable
         for variable in by_entry["extremes"]

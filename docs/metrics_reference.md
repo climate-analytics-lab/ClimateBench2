@@ -478,6 +478,12 @@ implemented and unit-tested; none is claimed to be the paper's own words.
     that has to be said in the paper.
     → §II.1 "Daily tas extremes / pr intensity PDF", `climatebench2/data/imerg.py`,
     `reference_windows.resolve_full_record_timerange`.
+    (iv) **the held-out `pr_extremes_series` is windowed too, just not to
+    2014** (2026-09-28, after a 12 h daily job timed out reading the full
+    record for every comparison-ensemble member): it needs the 1985–2014
+    baseline *and* the post-2015 steps, so it runs from the baseline start
+    through IMERG's own last complete year — **2001–2024** — not the
+    model's whole 1850–2100 record.
 31. **Clouds against MODIS, cloud-radiative effects against CERES-EBAF** (2026-09-24).
     ESACCI-CLOUD ends 2016-12 and the Tier-3 OBS pool that holds ESMValTool's MODIS
     CMORization is not readable here, so MODIS Aqua **MYD08_M3 C6.1** is fetched from
@@ -2562,11 +2568,17 @@ regime (a)'s shape, so
 `scoring_pass` scores it as a **fair CRPS over the reserved post-2015 window**
 against IMERG's own series, with the CMIP6 comparison ensemble for `E_ref`. It
 is the one `held-out` entry in the daily suite (`tier2.window_labels`) and the
-one daily entry in `tier2.anomaly_baseline`, which is also what keeps it on the
-**whole** record: regime (a) needs the 1985–2014 baseline *and* the post-2015
-steps, so the pre-test cap above must not touch it. IMERG contributes
-**2001–2014 = 14 baseline years**, above the `min_years: 10` floor of B.28 and
-the thinnest baseline of any scored entry.
+one daily entry in `tier2.anomaly_baseline`: regime (a) needs the 1985–2014
+baseline *and* the post-2015 steps, so the pre-test cap above must not touch
+it — but it is not left on the model's **whole** 1850–2100 record either. It is
+clipped to the reference's own record too, just to a different upper bound:
+the baseline start through IMERG's own last complete year, **2001–2024**
+(`reference_windows.resolve_full_record_timerange`, fixed 2026-09-28 — an
+earlier version left it on the literal full record, which meant reading every
+comparison-ensemble member's entire daily `pr` history and timed out a 12 h
+job at ~66 of 119 members). IMERG contributes **2001–2014 = 14 baseline
+years**, above the `min_years: 10` floor of B.28 and the thinnest baseline of
+any scored entry.
 
 ⚠ **Only Rx1day and Rx5day are held out** (CB2 reading). They are annual maxima
 of a running total, defined year by year with no reference to a base period, so
@@ -2593,12 +2605,13 @@ fair-CRPS row and their own regime-(c) trend-consistency companion.
 **Daily-`pr` loads per source, for the suite as configured.** Per *comparison
 member*: **2** — `extremes`/`pr` and `pr_extremes_series`, the only two
 variables carrying `other_data` (the Perkins entries have a reference but no
-comparison ensemble, so they cost the comparison members nothing). Per
+comparison ensemble, so they cost the comparison members nothing) — both
+clipped now (2001–2014 and 2001–2024 respectively), not the full record. Per
 *IMERG*: **4** — `extremes`/`pr`, the two Perkins `pr_intensity_*` variables
 and `pr_extremes_series`. Per *submission member*: the CLI loads the member's
 CubeList once, but each variable realises it independently, so also **4**
-(three of them clipped to 2001–2014). Before the one-load fix those numbers
-were 9, 11 and 11.
+(three of them clipped to 2001–2014, `pr_extremes_series` to 2001–2024).
+Before the one-load fix those numbers were 9, 11 and 11.
 
 The index in the series and the index behind the scalar are the **same**
 `physics.annual_max_running_sum` call with the same regional weighting on the
@@ -2609,9 +2622,14 @@ separately.
 ❗ Memory and cost: the whole daily record is realised as one `(time, lat, lon)`
 array on the 1° grid — fine for a few decades, heavy for a full historical run.
 The IMERG clip to 2001–2014 bounds that for the in-sample precipitation
-entries; `pr_extremes_series` does not have it — but it is **one** variable, not eight,
-so it realises each source's daily record once (see "one variable, eight
-columns" above). The comparison ensemble costs nothing
+entries; `pr_extremes_series` is clipped too (2001–2024, since it also scores
+the post-2015 steps), and it is **one** variable, not eight, so it realises
+each source's daily record once (see "one variable, eight columns" above). An
+earlier version left `pr_extremes_series` unclipped, on the theory that it
+"needs the whole record" for its baseline-plus-post-2015 anomaly — true of the
+*years* it needs, but not of the model's literal 1850–2100 record, and reading
+that for every comparison-ensemble member is what timed out a 12 h daily job.
+The comparison ensemble costs nothing
 until that data exists (`StagedCMIP6HistoricalSSP245` enumerates directories
 and yields only members that carry the variable at that frequency) and is the
 dominant cost the day it does. Like the other daily diagnostics (I.3b, I.5d)

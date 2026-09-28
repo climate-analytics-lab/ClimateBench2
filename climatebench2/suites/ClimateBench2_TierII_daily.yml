@@ -14,19 +14,26 @@
 # `climatebench2.reference_windows` and written into the copy of this file
 # under `<out>/_windowed_suites/` (the run prints every window it moved):
 #
-# * a variable with a **staged reference** is cut to that reference's own
-#   COMPLETE years, clipped to end at `tier2.test_window_start - 1`
-#   (`SuiteSpec.reference_overlap`). For IMERG, whose record starts
-#   2000-06-01, that is **2001–2014**. Both halves matter: a model's Rx1day
-#   climatology over 1850–2100 and IMERG's over 2001–2025 are not the same
-#   statistic, and an in-sample statistic must not reach into the reserved
-#   post-2015 window. A variable whose reference is NOT staged keeps the
-#   full record and is dropped by ClimateEval as before, so the `perkins`
-#   tas entries are unaffected until a daily ERA5 is staged;
-# * `pr_extremes_series` is exempt: it is the one HELD-OUT entry here, a
-#   regime-(a) anomaly series listed in `tier2.anomaly_baseline`, so it
-#   needs the 1985–2014 baseline AND the post-2015 steps — i.e. the whole
-#   record. See its own comment block below.
+# * an IN-SAMPLE variable with a **staged reference** is cut to that
+#   reference's own COMPLETE years, clipped to end at
+#   `tier2.test_window_start - 1` (`SuiteSpec.reference_overlap`). For
+#   IMERG, whose record starts 2000-06-01, that is **2001–2014**. Both
+#   halves matter: a model's Rx1day climatology over 1850–2100 and IMERG's
+#   over 2001–2025 are not the same statistic, and an in-sample statistic
+#   must not reach into the reserved post-2015 window. A variable whose
+#   reference is NOT staged keeps the full record and is dropped by
+#   ClimateEval as before, so the `perkins` tas entries are unaffected until
+#   a daily ERA5 is staged;
+# * `pr_extremes_series` is cut differently: it is the one HELD-OUT entry
+#   here, a regime-(a) anomaly series listed in `tier2.anomaly_baseline`, so
+#   it needs the 1985–2014 baseline AND the post-2015 steps, and is NOT
+#   capped at `tier2.test_window_start - 1` the way the entries above are.
+#   But that does not mean the whole record: it is cut to the LATER of the
+#   baseline start and the reference's own first complete year, through the
+#   reference's own LAST complete year — **2001–2024** for IMERG, not
+#   1850–2100. Reading the full record here, for every one of the ~119
+#   comparison-ensemble members, is what timed out the 12 h daily job
+#   (2026-09-26). See its own comment block below.
 #
 # Every other entry is labelled **in-sample** (thresholds.yml
 # `tier2.window_labels`).
@@ -108,15 +115,23 @@
 # of reads for eight reductions of one array. The diagnostic refuses a
 # second variable rather than letting that come back.
 #
-# WINDOW. No `timerange`, deliberately, and it must stay that way: this
-# entry is listed in `tier2.anomaly_baseline`, so every source (the
-# submission's members, IMERG, every comparison member) is reduced to an
-# anomaly about ITS OWN 1985-2014 climatology before the post-2015 steps are
-# scored. IMERG contributes 2001-2014 = 14 baseline years, above the
-# `tier2.anomaly_baseline.min_years` = 10 floor -- the thinnest baseline of
-# any scored entry, and the reason B.29 matters. That same listing is what
-# exempts it from the pre-test cap `reference_windows` puts on the entries
-# above.
+# WINDOW. No `timerange` in this file -- it is resolved at run time, same as
+# the entries above, but to a DIFFERENT range: this entry is listed in
+# `tier2.anomaly_baseline`, so every source (the submission's members,
+# IMERG, every comparison member) is reduced to an anomaly about ITS OWN
+# 1985-2014 climatology before the post-2015 steps are scored, so it must
+# NOT be capped at the pre-test cap the entries above get. But it is still
+# clipped to IMERG's own record, not left on the model's 1850-2100: it runs
+# from the LATER of 1985 and IMERG's first complete year through IMERG's
+# OWN LAST complete year -- 2001-2024, not the full record
+# (`reference_windows.resolve_full_record_timerange`). IMERG contributes
+# 2001-2014 = 14 baseline years, above the `tier2.anomaly_baseline.min_years`
+# = 10 floor -- the thinnest baseline of any scored entry, and the reason
+# B.29 matters. Leaving this entry on the literal full record (as an earlier
+# version of this suite did) meant reading every comparison-ensemble
+# member's ENTIRE daily `pr` record just to compute the same statistic,
+# which is what timed out the 12 h daily job at ~66 members in
+# (2026-09-26, see `docs/metrics_reference.md` decision B.30).
 #
 # Only the two BLOCK MAXIMA. Rx1day/Rx5day are defined year by year with no
 # reference to a base period, so a series of them stands on its own; TX90p,

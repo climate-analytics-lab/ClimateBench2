@@ -5,8 +5,8 @@
 # authoritative spec, keyed by its section numbers); CB2 diagnostics read their
 # bounds from here and must never hard-code them.
 #
-# Status: Phase 0 skeleton. Entries below are the paper-settled values; items
-# marked TODO await protocol resolution (metrics_reference.md tracks each one).
+# Entries are the paper-settled values; items marked TODO await protocol
+# resolution (docs/metrics_reference.md tracks each one).
 #
 # `requirement:` tags the protocol standing of every gate block (paper §7.1):
 #   required   — must be passed for the model to be scored (the entry ticket)

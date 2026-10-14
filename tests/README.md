@@ -1,6 +1,6 @@
 # Running the tests
 
-**333 tests, all passing (2026-09-20).** They need ClimateEval
+The tests need ClimateEval
 importable. The simplest way is the ClimateEval pixi environment with this repo
 on `PYTHONPATH`:
 
@@ -52,5 +52,5 @@ ignored under that config in its own repo (`S101` for `assert` in tests,
 CB2 files carry `# noqa` for). Judge the run by the real-defect subset:
 
 ```bash
-pixi run --frozen ruff check --select F,E9 <same paths>   # clean at d21be52
+pixi run --frozen ruff check --select F,E9 <same paths>
 ```

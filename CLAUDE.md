@@ -4,212 +4,147 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-ClimateBench v2 defines the **protocol for scoring and testing climate models**
-(tiered pass/fail gates + probabilistic scores + leaderboard). It is a **thin
-layer on top of [ClimateEval](https://github.com/climate-federation/ClimateEval)**,
-which owns all data loading, preprocessing, and generic physical diagnostics.
+ClimateBench v2 defines the **protocol for scoring and testing climate models and
+emulators** (Tier I pass/fail gates, Tier II probabilistic scores, Tier III
+out-of-sample tests, the leaderboard). It is a **thin layer on top of
+[ClimateEval](https://github.com/climate-federation/ClimateEval)**, which owns data
+loading, preprocessing, regridding and generic physical diagnostics.
 
-Two documents govern all work here:
+[docs/metrics_reference.md](docs/metrics_reference.md) is the authoritative spec
+(inputs, preprocessing, formula, threshold) of every check. **The paper is the truth**:
+fix a disagreement in the document, never by diverging in code; add open questions to
+its "Decisions needed" section rather than inventing a value.
+[docs/climateeval_delineation_plan.md](docs/climateeval_delineation_plan.md) covers the
+architecture and ownership boundary; check its §9 "Definition of done" before calling
+anything finished.
 
-- [docs/climateeval_delineation_plan.md](docs/climateeval_delineation_plan.md) —
-  the architecture, the CB2⟷ClimateEval ownership boundary, and the phased
-  migration (**Phases 0–7 done**; Phase 7 is the 2026-09-14 protocol
-  re-alignment). §7 lists the twelve upstream PRs (#44–#55): all twelve are
-  **merged locally** on the ClimateEval branch `cb2-integration` (`f8c925b` =
-  `main` `b0e941c` + the twelve), and all twelve are **still open upstream**, so
-  the pin in `pyproject.toml` stays at `b0e941c`.
-  Read its §9 "definition of done" before claiming anything is finished.
-- [docs/metrics_reference.md](docs/metrics_reference.md) — the authoritative
-  spec (inputs, formula, threshold) for every Tier I/II/III check. **The paper
-  is the truth**: fix a disagreement there, never by diverging in code. Its
-  "Decisions needed from Duncan" section is where every ⚠ / `TODO(Duncan)`
-  lives — add to it rather than inventing a value.
+**Ownership test:** code that loads or regrids data, or is a generic physical
+diagnostic, belongs in ClimateEval (as an upstream PR). Code that encodes a threshold,
+probabilistic score, baseline, tier structure or the leaderboard belongs here. The
+only data-touching code here is declared: `data/`, `diags/truth_reference.py` (an
+upstream candidate) and `reference_windows.py` (NetCDF headers only). `analysis/` holds
+standalone paper studies, not protocol code; the package never imports it.
 
-**Current state (2026-09-28): 411 tests pass.** Every test fixture is still
-synthetic, so the test suite alone never licenses "working" — but the code is
-no longer untried on real data. Tier I has run end to end on **CNRM-CM6-1**
-(every Required gate produces a row) and Tier II on **MPI-ESM1-2-LR** against a
-42-model / 160-member staged comparison ensemble; the 64-model Tier I ensemble
-and the full Tier II comparison run are in flight. What that first contact cost
-is the "Real-data fix" commits on this branch — see "What has run on real data"
-in `docs/metrics_reference.md` for the numbers and the caveats.
+## The ClimateEval dependency
 
-**Ownership test:** code that loads/regrids data or is a generic physical
-diagnostic belongs in ClimateEval (upstream PR); code that encodes a threshold,
-probabilistic score, baseline, tier structure, or the leaderboard belongs here.
+ClimateEval is third-party, pre-1.0 and not on PyPI; it is **pinned by commit** in
+`pyproject.toml`. **Never vendor or patch it**: contribute upstream or keep the code
+here. Some suite entries (e.g. the Tier II sea-ice extent diagnostics) need ClimateEval
+diagnostics from pull requests not yet merged upstream, which the pinned commit lacks,
+so development uses a local ClimateEval checkout carrying them:
+`pip install -e ../ClimateEval && pip install -e . --no-deps`.
 
 ## The package: `climatebench2/`
 
 ```
 climatebench2/
-├── diags/               # ClimateEval-compatible Diagnostic subclasses (the protocol)
-├── suites/              # CB2 suite YAMLs; may reference climatebench2.diags.* AND climateeval.diags.*
-├── thresholds.yml       # EVERY pass/fail bound + each gate's `requirement:` tag
-│                        #   (required/extended/extra/diagnostic) and `tier:` — never hard-code one
-├── _thresholds.py       # get_threshold("tier1.ecs.range") — the only reader of the above
+├── diags/               # Diagnostic subclasses: pass_fail (GateMixin), tier1_*, tier2_*, tier3_paleo
+├── suites/              # suite YAMLs; may reference climatebench2.diags.* AND climateeval.diags.*
+├── thresholds.yml       # EVERY bound/constant/window + each gate's `requirement:` and `tier:`
+├── _thresholds.py       # get_threshold("tier1.ecs.range"): the only reader of thresholds.yml
 ├── scoring.py           # pure fair-CRPS / bootstrap / consistency / EOF engine (numpy only)
-├── scoring_pass.py      # post-suite Tier II pass: stack members → fair CRPS → skill
-├── windows.py           # the protocol's time windows (test / 1985-2014 baseline / 1950-)
-├── reference_windows.py # the window each variable is REALLY scored over: the
-│                        #   protocol window clipped to the staged reference's
-│                        #   complete years (HadCRUT5 ends 2023-09, ...)
-├── physics.py           # pure Tier I physics + the ETCCDI indices (numpy only)
-├── baselines.py         # climatology pseudo-members, the calibrated two-layer EBM
-├── data/                # packaged protocol tables (the ERF series behind the EBM)
-│   ├── cmip6_staged.py  #   + StagedCMIP6HistoricalSSP245: the CMIP6 comparison
-│   │                    #     ensemble behind E_ref, found in a staged root
-│   ├── imerg.py         #   + IMERG: the daily-pr observational reference (paper
-│   │                    #     Table 2). Belongs upstream; here because the pin
-│   └── modis.py         #   + MODIS: the monthly cloud reference (clt/clwvi/clivi/
-│                        #     lwp, MYD08_M3), staged the same way as IMERG
-├── shared_sources.py    # per-member cube suites: reference + comparison ensemble
-│                        #   loaded once for all members (`--no-cache` disables)
-├── leaderboard/         # .ddb results → scores table → static HTML page
-└── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`
+├── scoring_pass.py      # post-suite Tier II pass: stack members -> fair CRPS -> skill
+├── regate.py            # re-evaluate stored Tier I/III gate statistics against thresholds.yml
+├── windows.py           # the protocol's time windows (test window, 1985-2014 baseline, ...)
+├── reference_windows.py # protocol window clipped to the staged reference's complete years
+├── physics.py           # pure Tier I physics + ETCCDI indices (numpy only)
+├── baselines.py         # climatology pseudo-members, calibrated two-layer EBM
+├── shared_sources.py    # reference + comparison ensemble loaded once for all members
+├── data/                # cmip6_staged.py (StagedCMIP6HistoricalSSP245: the ensemble behind
+│                        #   E_ref), imerg.py (daily pr), modis.py (clouds), ERF table (EBM)
+├── leaderboard/         # .ddb results -> scores table -> static HTML page
+└── _cli.py              # `climatebench2 score` / `climatebench2 leaderboard`; SUITE_REGISTRY
 ```
 
-Key integration facts (verified against ClimateEval `main`):
+## Key integration facts
 
-- ClimateEval's `Suite` loads any importable `diagnostic:` class path via
-  `str_to_object` — CB2 diagnostics need only subclass
-  `climateeval.diags._base.Diagnostic`.
-- Where ClimateEval already computes the quantity (ECS, land–ocean warming
-  ratio, Arctic amplification, meridional heat transport), the CB2 gate is a
-  **thin wrapper subclassing the upstream diagnostic** that only feeds
-  `thresholds.yml` constants into its kwargs and gates its output columns —
-  never a second copy of the physics.
-- Multi-experiment/ensemble inputs follow the `ECS` `ComplexDiagnostic`
-  precedent (`_required_data_keys` + `ComplexDataSource`). CB2 complex
-  diagnostics accept a *superset* of their required keys so one experiment
-  dict feeds a whole Tier I suite; `Suite.get_database` passes the same data
-  object to every diagnostic, so suites are split by data shape (cubes vs
-  experiment dict).
-- `_cli.SuiteSpec` says, per suite, which data shape and window it gets and
-  whether it runs **once per ensemble member** (`per_member`): the cube
-  suites and `ClimateBench2_TierII_events` do, Tier I and Tier III do not.
-  A per-member experiment suite gets that member's own record as
-  `historical`, which is what the Tier II aggregated scalars need.
-- All output goes to ClimateEval's standard DuckDB schema (`raw_output`,
-  `metrics`, `variables`, `data_sources` per diagnostic); CB2 scores add
-  columns to `metrics`, never a new schema. `scoring_pass` recognises three
-  `raw_output` shapes — a **time series** (regime a), an **EOF-coefficient**
-  table (regime b) and **aggregated scalars** with no time axis (§II.1) —
-  and every row it writes carries a `held-out` / `in-sample` / `perfect-model`
-  `window` label (`tier2.window_labels`; `perfect-model` whenever the
-  reference's `data_sources.category` is `truth`). Tier III's paleo rows are
-  written by the diagnostic itself in the same column vocabulary, tagged
-  `scorer = climatebench2.tier3` so `--rescore` does not delete them, and
-  every **gate** row carries its protocol `tier` (I/II/III) as well as its
-  `requirement`, which is what the leaderboard groups by. A CB2 **`ScalarTableDiagnostic`**
-  (`diags/tier2_daily.py`) is how a *simple* diagnostic writes that third
-  shape, so the suite's own `reference_data:` supplies the observed value.
-  A **skill** score that is not an error — the Perkins PDF overlap — is
-  written as a metric instead and never enters `E_ref`.
-- ClimateEval is a **third-party dependency** (DLR; `climate-federation` org),
-  pinned by commit in `pyproject.toml`. Never vendor or patch it; contribute
-  upstream via PR or keep the code here.
+- ClimateEval's `Suite` loads any importable `diagnostic:` class path (`str_to_object`);
+  a CB2 diagnostic need only subclass `climateeval.diags._base.Diagnostic`.
+- Where ClimateEval already computes the quantity (ECS, land-ocean warming ratio,
+  Arctic amplification, meridional heat transport), the CB2 gate is a **thin wrapper
+  subclassing the upstream diagnostic** (`GateMixin`) that feeds `thresholds.yml`
+  constants into its kwargs and gates its output columns. Never copy the physics.
+- Multi-experiment inputs follow the `ECS` `ComplexDiagnostic` pattern
+  (`_required_data_keys` + `ComplexDataSource`). CB2 complex diagnostics accept a
+  *superset* of their required keys so one experiment dict feeds a whole suite.
+  `Suite.get_database` passes the same data object to every diagnostic, so suites are
+  split by data shape (cubes vs experiment dict).
+- `_cli.SuiteSpec` (in `SUITE_REGISTRY`) says, per suite, which data shape and window
+  it gets and whether it runs **once per ensemble member** (`per_member`). The cube
+  Tier II suites and `ClimateBench2_TierII_events` are per member; Tier I, the
+  variability suite and Tier III are not. A per-member experiment suite gets each
+  member's own record as `historical`. Default suites: `TierI`, `TierI_variability`,
+  `TierII_events`, `TierII`; `TierII_daily` and `TierIII` need `--suite`.
+- Output uses ClimateEval's DuckDB schema (`raw_output`, `metrics`, `variables`,
+  `data_sources` per diagnostic). CB2 **adds columns to `metrics`, never a schema**.
+- `scoring_pass` recognises three `raw_output` shapes: a **time series** (regime a),
+  an **EOF-coefficient** table (regime b) and **aggregated scalars** with no time axis
+  (§II.1). A simple diagnostic writes the third shape through `ScalarTableDiagnostic`
+  (`diags/tier2_daily.py`). A skill score that is not an error (the Perkins PDF
+  overlap) is written as a metric and never enters `E_ref`.
+- Every scored row carries a `window` label (`held-out` / `in-sample` /
+  `perfect-model`) from `tier2.window_labels`; `perfect-model` whenever the reference's
+  `data_sources.category` is `truth`. The Tier II pass deletes and rewrites only its own
+  `scorer = climatebench2` rows; Tier III paleo rows (`scorer = climatebench2.tier3`)
+  are written by the diagnostic and survive `--rescore`.
+- Every **gate** row carries its protocol `tier` (I/II/III) and `requirement`
+  (required/extended/extra/diagnostic) plus `applicable`; the leaderboard groups by
+  (tier, requirement) and computes the entry ticket over the Required group.
+- **Every bound lives in `thresholds.yml`**, read via `_thresholds.get_threshold`;
+  never hard-code one in a diagnostic.
 
-### Commands
+## Commands
 
 ```bash
-pip install .                       # installs climateeval (pinned) + climatebench2
-# dev against a local checkout: pip install -e ../ClimateEval && pip install -e . --no-deps
-
-climatebench2 score /path/to/model/cmor/Amon --name MyModel   # → MyModel_climatebench2/*.ddb
-climatebench2 score MODEL --name MyEmulator --not-applicable geostrophic_balance
-#   declare a Tier I gate inapplicable: recorded as n/a, not a fail (paper §7.1)
-climatebench2 score MODEL --experiment picontrol=DIR --member r1i1p1f1=DIR --member r2i1p1f1=DIR
-#   per-suite data paths (_cli.SUITE_REGISTRY): experiments load in FULL for the
-#   complex suites, the variability suite takes piControl, the monthly Tier II suite
-#   takes the post-2015 test window (tier2.test_window_start) once per ensemble
-#   member -- but its SCORED TIME-SERIES entries (tier2.anomaly_baseline) are LOADED
-#   from the 1985 baseline start, because regime (a) scores anomalies about each
-#   source's own 1985-2014 climatology; only the post-2015 steps are scored, and the
-#   maps/annual cycles/EOF basis keep the test window -- and TierII_daily takes the
-#   FULL record (its extremes/PDF/diurnal climatologies are defined over it, so
-#   every entry there is in-sample EXCEPT `pr_extremes_series`, the held-out annual
-#   Rx1day/Rx5day series -- ONE suite variable emitting 8 columns, because
-#   ClimateEval re-loads a reference/other_data source once per VARIABLE). A variable of that suite with a STAGED reference is cut
-#   to the reference's own record clipped before 2015 (IMERG: 2001-2014), so the
-#   model and the observations give the same in-sample statistic
-climatebench2 score MODEL --name MyModel -o /work/run/MyModel --data-root /work/staged
-#   -o/--out is the run's output directory (default <name>_climatebench2/); --data-root
-#   is the staged reference tree AND, unless $CLIMATEBENCH2_STAGED_CMIP6_ROOT overrides
-#   it, the root the Tier II comparison ensemble is enumerated in
-#   (climatebench2.data.StagedCMIP6HistoricalSSP245). Point the env var at a subset to
-#   shrink that ensemble for a smoke run without restaging anything.
-climatebench2 score MODEL --experiment lgm=DIR --experiment picontrol=DIR \
+climatebench2 score /path/to/model/Amon --name MyModel --data-root /path/to/staged
+#   one .ddb per suite in MyModel_climatebench2/ (-o/--out DIR). --data-root holds the
+#   references (<source id>/<frequency>/<var>/*.nc) and the CMIP6 comparison ensemble
+#   (CMIP6_<model>_historical-ssp245_<member>) unless $CLIMATEBENCH2_STAGED_CMIP6_ROOT
+#   points the ensemble elsewhere (e.g. a subset for a smoke run).
+climatebench2 score MODEL --name MyModel --member r1i1p1f1=DIR --member r2i1p1f1=DIR \
+    --experiment picontrol=DIR --experiment 4xco2=DIR --experiment histaer=DIR
+#   members are auto-discovered from a DRS tree if not given. Tier I keys: picontrol,
+#   4xco2, histaer, day, amip, amip4xco2, patch_ep, patch_wp; gates missing a key skip.
+climatebench2 score MODEL --name MyEmu --not-applicable geostrophic_balance
+#   declare a Tier I gate inapplicable: recorded as n/a, not a fail
+climatebench2 score MODEL --name MyModel --suite ClimateBench2_TierIII \
+    --experiment picontrol=DIR --experiment lgm=DIR \
     --paleo-data-root paleo_scripts/paleo_data_cache/processed/observations
-#   Tier III: the paleo slices vs the pipeline's processed proxy NetCDFs
-climatebench2 score MODEL --truth /data/CESM2/ssp245 --truth-member r2i1p1f1=DIR
-#   Tier III.2 perfect model: the cube suites score against a HELD-OUT ESM run
-#   instead of observations (window = perfect-model); truth members drive the
-#   large-ensemble spread test. No truth data is staged yet.
-climatebench2 score MODEL --no-score      # suites only; run the Tier II pass later
-climatebench2 score MODEL --member r1=DIR ... --member r10=DIR --no-cache
-#   a per-member CUBE suite runs diagnostic by diagnostic and loads its reference and
-#   the whole comparison ensemble ONCE for all members (climatebench2/shared_sources.py:
-#   memoises the preprocessed reference cubes + the comparison rows, dropped after
-#   each diagnostic; identical tables). --no-cache restores the old member-by-member
-#   loop (M members = M reads of the ensemble); experiment suites always use it
-climatebench2 leaderboard MyModel_climatebench2/*.ddb          # scorecard (HTML)
-climatebench2 leaderboard --rescore MyModel_climatebench2/*.ddb  # re-run the Tier II pass
-#   --rescore is also how a thresholds.yml change reaches existing databases; the
-#   pass is idempotent (it deletes its own `scorer` rows before rewriting them)
-climatebench2 leaderboard --regate MyModel_climatebench2/*.ddb  # re-gate Tier I/III
-#   --regate is how a thresholds.yml change reaches a Tier I/III GATE's passes/
-#   bound_lower/bound_upper/requirement/tier WITHOUT re-running the suite (hours per
-#   model): it re-reads each check's already-computed raw statistic from
-#   <schema>.raw_output and re-evaluates it against the current bound
-#   (climatebench2/regate.py). Idempotent; never touches Tier II/III scorer rows or
-#   declared-not-applicable rows.
-climateeval report MyModel_climatebench2/*.ddb                 # interactive per-model report
+climatebench2 score MODEL --name MyModel --truth DIR --truth-name CESM2 \
+    --truth-member r2i1p1f1=DIR          # Tier III.2 perfect model (window = perfect-model)
+climatebench2 score MODEL --no-score     # suites only; run the Tier II pass later
+climatebench2 score MODEL --no-cache     # re-load reference + ensemble for every member
+#   other score flags: --timerange, --download, --institute/--exp/--variant (provenance)
+climatebench2 leaderboard MyModel_climatebench2/*.ddb -o board.html   # or --csv FILE
+climateeval report MyModel_climatebench2/*.ddb   # ClimateEval's per-model report
+climatebench2 leaderboard --rescore *.ddb  # re-run the Tier II pass (idempotent)
+climatebench2 leaderboard --regate *.ddb   # re-gate Tier I/III from stored raw_output
+#   --rescore/--regate carry a thresholds.yml edit into existing databases without
+#   re-running suites; --regate never touches scorer rows or n/a rows
 
-# Tests (ClimateEval pixi env + this repo on PYTHONPATH; see tests/README.md)
-cd ../ClimateEval && PYTHONPATH=$OLDPWD pixi run --frozen python -m pytest $OLDPWD/tests -q
+# Tests: SERIALLY (no pytest -n), in ClimateEval's pixi env with this repo on PYTHONPATH
+cd ../ClimateEval && PYTHONPATH=/path/to/ClimateBench2 \
+    pixi run --frozen python -m pytest /path/to/ClimateBench2/tests -q
 ```
+
+Every test fixture is synthetic (no network, no real model output), so a green suite
+does not prove a real run works. `tests/test_suites.py` builds every diagnostic of
+every suite in `SUITE_REGISTRY`; `tests/README.md` covers linting.
 
 ## Paleoclimate pipeline (`paleo_scripts/`)
 
-From the merged `paleo_data` PR (#114). This pipeline is **data preparation,
-not protocol**: it downloads and processes the proxy compilations of paper
-Appendix D, and `climatebench2/diags/tier3_paleo.py::PaleoProxyScore` scores
-the model against its output (one suite stanza per period/dataset/variable,
-reading `paleo_data_cache/processed/observations/<period>/<dataset>.nc`).
+Data preparation, not protocol: it downloads and processes the proxy compilations of
+paper Appendix D. `diags/tier3_paleo.py::PaleoProxyScore` scores the model against its
+output, `paleo_data_cache/processed/observations/<period>/<dataset>.nc`.
 
 ```bash
 cd paleo_scripts
-# Observations (proxy/reanalysis datasets)
-python download_paleo_observations.py                        # all datasets
-python download_paleo_observations.py --dataset lgmda lig127k
-python download_paleo_observations.py --list                 # show all dataset keys
-# CMIP6 model data (ESGF-generated wget scripts, named {period}_{variable}.sh)
-cd download_model_data && bash lgm_tas.sh && bash lgm_pr.sh
-
-# Processing
-python process_paleo_observations.py                         # all observation sources
-python process_paleo_models.py --model all --period all      # model monthly climatologies
-
-# Benchmark (spatial RMSE/MAE/CRPS)
-python paleo_benchmark.py --model AWI-ESM-1-1-LR --period lgm
-python paleo_benchmark.py --model all --period all
-python paleo_benchmark.py --model MIROC-ES2L --period lgm \
-    --picontrol-dir /data/MIROC-ES2L/piControl
+python download_paleo_observations.py [--dataset lgmda lig127k] [--list]
+cd download_model_data && bash lgm_tas.sh && cd ..   # ESGF wget scripts, {period}_{var}.sh
+python process_paleo_observations.py                 # all observation sources
+python process_paleo_models.py --model all --period all
+python paleo_benchmark.py --model MIROC-ES2L --period lgm --picontrol-dir DIR
 ```
 
-PI reference for anomaly computation: lgmDA Holocene (default) or the model's
-own piControl (`--picontrol-dir DIR`, a local directory or CMOR/DRS tree read
-with plain xarray). Precipitation benchmarks (Bartlein MAP, Scussolini LIG)
-require `--picontrol-dir` and processed `pr` data.
-
-## No legacy remnant (WP7, 2026-09-14)
-
-The bespoke pipeline was retired piecewise across migration Phases 1–5 (every
-deletion is one phase commit; see `git log`), and work package 7 removed the
-last of it: `constants.py`, `utils.py`, `benchmark_scrips/` (`DataFinder`:
-local → Pangeo GCS → ESGF) and `env.yml` are **deleted**, because
-`paleo_benchmark.py` takes `--picontrol-dir DIR` instead of `DataFinder` and
-the three helpers the paleo scripts still used moved to
-`paleo_scripts/paleo_utils.py`. There is no legacy conda environment any
-more; everything runs in the ClimateEval pixi env (see `tests/README.md`).
-Nothing outside `climatebench2/` and `paleo_scripts/` should reappear.
+PI reference for anomalies: the lgmDA Holocene field, or the model's own piControl via
+`--picontrol-dir` (required for the Bartlein MAP and Scussolini LIG pr benchmarks).

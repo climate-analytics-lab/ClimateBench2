@@ -1098,8 +1098,8 @@ def build_parser() -> argparse.ArgumentParser:
             "the members of a per-member cube suite. By default each such "
             "diagnostic loads them once and reuses the result for every "
             "--member (climatebench2.shared_sources), which writes the same "
-            "rows; with this flag every member re-loads them, as before "
-            "2026-09-28 (N members = N reads of the whole ensemble)."
+            "rows; with this flag every member re-loads them "
+            "(N members = N reads of the whole ensemble)."
         ),
     )
     score.add_argument("--institute", default="", help="Institute (provenance).")

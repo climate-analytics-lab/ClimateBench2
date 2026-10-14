@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "ClimateBench v2 — the protocol layer (thresholds, probabilistic scoring, leaderboard) on top of ClimateEval"
 readme = "README.md"
 requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
 authors = [
     { name = "Duncan Watson-Parris", email = "dwatsonparris@ucsd.edu" },
 ]

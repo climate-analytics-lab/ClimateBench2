@@ -293,7 +293,7 @@ what the paper says and the paper's number looks unreachable.
    Tier II/III scoring is. Either land PRs #50–#52 before submission or soften the
    sentence. → discrepancy #21, gap item 8.
 4. **Open Research org name.** The section places ClimateBench under `climate-federation`;
-   the repository is `climate-analytics-lab/ClimateBench2` (`climate-federation` is
+   the repository is `climate-federation/ClimateBench2` (`climate-federation` is
    ClimateEval's org). → discrepancy #21.
 5. **§4.3 cross-reference.** The ENSO paragraph cites `app:implementation` where
    `app:tier1` is meant. → discrepancy #21.
@@ -3127,7 +3127,7 @@ unchanged — is now built:
     the rest in "Decisions needed from Duncan", group A. App. E says "the Tier I–III diagnostics
     are hosted in the ClimateEval repository" — today 3 of 18 Tier I sub-checks and none
     of the Tier II/III scoring are; the Open Research section places ClimateBench under
-    `climate-federation`, but the repository is `climate-analytics-lab/ClimateBench2`;
+    `climate-federation`, but the repository is `climate-federation/ClimateBench2`;
     the ENSO paragraph in §4.3 cross-references `app:implementation` where `app:tier1`
     is meant.
 22. **NEW 2026-09-20 — the real-data class of bug: masked arrays and unaligned
